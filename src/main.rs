@@ -2,9 +2,10 @@ use gpui::*;
 use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{
-    Action, App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement,
-    Render, SharedString, Styled, Window, div, px, relative,
+    App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement, Render,
+    SharedString, Styled, Window, div, px, relative,
 };
+use gpui::prelude::FluentBuilder;
 
 use gpui_component::{
     ActiveTheme, IconName, Root, Theme, ThemeRegistry,
@@ -20,10 +21,6 @@ use gpui_component::{
     v_flex,
 };
 
-#[derive(Action, Clone, PartialEq, Eq)]
-#[action(namespace = sidebar_story, no_json)]
-pub struct SelectCompany(SharedString);
-
 pub struct SidebarElement {
     active_items: HashMap<Item, bool>,
     last_active_item: Item,
@@ -33,6 +30,7 @@ pub struct SidebarElement {
     dialog_title_input: Entity<InputState>,
     dialog_description_input: Entity<InputState>,
     theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
+    boards: Vec<Board>,
 }
 
 impl SidebarElement {
@@ -98,6 +96,7 @@ impl SidebarElement {
             dialog_title_input,
             dialog_description_input,
             theme_select,
+            boards: default_boards(),
         }
     }
 }
@@ -175,6 +174,112 @@ impl SubItem {
     }
 }
 
+#[derive(Clone, Copy)]
+struct DragInfo {
+    entry_id: u32,
+    from_board_id: u32,
+    color: Hsla,
+    position: Point<Pixels>,
+}
+
+impl DragInfo {
+    fn new(entry_id: u32, from_board_id: u32, color: Hsla) -> Self {
+        Self {
+            entry_id,
+            from_board_id,
+            color,
+            position: Point::default(),
+        }
+    }
+
+    fn position(mut self, pos: Point<Pixels>) -> Self {
+        self.position = pos;
+        self
+    }
+}
+
+impl Render for DragInfo {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        let size = gpui::size(px(120.), px(50.));
+
+        div()
+            .pl(self.position.x - size.width.half())
+            .pt(self.position.y - size.height.half())
+            .child(
+                div()
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .w(size.width)
+                    .h(size.height)
+                    .bg(self.color.opacity(0.5))
+                    .text_color(gpui::white())
+                    .text_xs()
+                    .shadow_md()
+                    .child(format!("Card {}", self.entry_id)),
+            )
+    }
+}
+
+#[derive(Clone)]
+struct Board {
+    id: u32,
+    title: String,
+    entries: Vec<Entry>,
+    drop_on: Option<DragInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct Entry {
+    id: u32,
+    title: String,
+    description: String,
+}
+
+impl Board {
+    fn new(id: u32, title: &str, entries: Vec<Entry>) -> Self {
+        Self {
+            id,
+            title: title.to_string(),
+            entries,
+            drop_on: None,
+        }
+    }
+}
+
+impl Entry {
+    fn new(id: u32, title: &str, description: &str) -> Self {
+        Self {
+            id,
+            title: title.to_string(),
+            description: description.to_string(),
+        }
+    }
+}
+
+fn default_boards() -> Vec<Board> {
+    vec![
+        Board::new(
+            1,
+            "To Do",
+            vec![
+                Entry::new(1, "Learn Rust", "Read ownership chapter"),
+                Entry::new(2, "Build project", "Start Trello clone"),
+            ],
+        ),
+        Board::new(
+            2,
+            "In Progress",
+            vec![Entry::new(1, "API Design", "Define endpoints")],
+        ),
+        Board::new(
+            3,
+            "Done",
+            vec![Entry::new(1, "Setup project", "Initialize cargo project")],
+        ),
+    ]
+}
+
 impl Focusable for SidebarElement {
     fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
@@ -189,9 +294,6 @@ impl Render for SidebarElement {
     ) -> impl gpui::IntoElement {
         let groups: Vec<Item> = vec![Item::Boards, Item::Notes];
         let dialog_layer = Root::render_dialog_layer(window, cx);
-
-        let dialog_title_input = self.dialog_title_input.clone();
-        let dialog_description_input = self.dialog_description_input.clone();
 
         h_flex()
             .rounded(cx.theme().radius)
@@ -297,18 +399,62 @@ impl Render for SidebarElement {
                             cx.notify();
                         }),
                     )
-                    .child(
+                    .children(self.boards.iter().map(|board| {
+                        let dialog_title_input = self.dialog_title_input.clone();
+                        let dialog_description_input = self.dialog_description_input.clone();
+                        let board_id = board.id;
+                        let drop_color = board.drop_on.map(|info| info.color);
+
                         v_flex()
+                            .id(board.id.to_string())
                             .gap_2()
                             .w_80()
                             .p_2()
                             .bg(cx.theme().secondary)
+                            .when_some(drop_color, |this, color| this.bg(color.opacity(0.2)))
                             .text_color(cx.theme().foreground)
                             .rounded(cx.theme().radius)
-                            .child(div().p_1().font_weight(FontWeight::MEDIUM).child("TODO's"))
+                            .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
+                                if info.from_board_id == board_id {
+                                    return;
+                                }
+
+                                let mut moving_entry: Option<Entry> = None;
+                                for board in this.boards.iter_mut() {
+                                    if board.id == info.from_board_id {
+                                        if let Some(index) =
+                                            board.entries.iter().position(|entry| {
+                                                entry.id == info.entry_id
+                                            })
+                                        {
+                                            moving_entry = Some(board.entries.remove(index));
+                                        }
+                                        break;
+                                    }
+                                }
+
+                                if let Some(entry) = moving_entry {
+                                    for board in this.boards.iter_mut() {
+                                        board.drop_on = None;
+                                        if board.id == board_id {
+                                            board.entries.push(entry.clone());
+                                            board.drop_on = Some(*info);
+                                        }
+                                    }
+                                }
+                            }))
                             .child(
                                 div()
-                                    .id("First Item")
+                                    .p_1()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(board.title.clone()),
+                            )
+                            .children(board.entries.iter().map(|entry| {
+                                let drag_info =
+                                    DragInfo::new(entry.id, board_id, cx.theme().primary);
+
+                                div()
+                                    .id(entry.id.to_string())
                                     .p_2()
                                     .bg(cx.theme().primary)
                                     .text_color(cx.theme().primary_foreground)
@@ -317,38 +463,14 @@ impl Render for SidebarElement {
                                         this.bg(cx.theme().primary_hover)
                                             .cursor(CursorStyle::PointingHand)
                                     })
+                                    .cursor_move()
                                     .text_sm()
                                     .w_full()
-                                    .child("First Item On the List"),
-                            )
-                            .child(
-                                div()
-                                    .id("Second Item")
-                                    .p_2()
-                                    .bg(cx.theme().primary)
-                                    .text_color(cx.theme().primary_foreground)
-                                    .text_sm()
-                                    .rounded(cx.theme().radius)
-                                    .hover(|this| {
-                                        this.bg(cx.theme().primary_hover).cursor(CursorStyle::Arrow)
+                                    .child(entry.title.clone())
+                                    .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
+                                        cx.new(|_| info.position(position))
                                     })
-                                    .w_full()
-                                    .child("Second Item On the List"),
-                            )
-                            .child(
-                                div()
-                                    .id("Third Item")
-                                    .p_2()
-                                    .bg(cx.theme().primary)
-                                    .text_color(cx.theme().primary_foreground)
-                                    .rounded(cx.theme().radius)
-                                    .hover(|this| {
-                                        this.bg(cx.theme().primary_hover).cursor(CursorStyle::Arrow)
-                                    })
-                                    .text_sm()
-                                    .w_full()
-                                    .child("Third Item On the List"),
-                            )
+                            }))
                             .child(
                                 div().w_full().child(
                                     Dialog::new(cx)
@@ -412,8 +534,8 @@ impl Render for SidebarElement {
                                             }
                                         }),
                                 ),
-                            ),
-                    ),
+                            )
+                    })),
             )
             .children(dialog_layer)
     }
