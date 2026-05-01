@@ -1,11 +1,11 @@
 use gpui::*;
+use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement, Render,
     SharedString, Styled, Window, div, px, relative,
 };
-use gpui::prelude::FluentBuilder;
 
 use gpui_component::{
     ActiveTheme, IconName, Root, Theme, ThemeRegistry,
@@ -174,21 +174,21 @@ impl SubItem {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct DragInfo {
     entry_id: u32,
     from_board_id: u32,
-    color: Hsla,
     position: Point<Pixels>,
+    title: Arc<str>,
 }
 
 impl DragInfo {
-    fn new(entry_id: u32, from_board_id: u32, color: Hsla) -> Self {
+    fn new(entry_id: u32, from_board_id: u32, title: Arc<str>) -> Self {
         Self {
             entry_id,
             from_board_id,
-            color,
             position: Point::default(),
+            title,
         }
     }
 
@@ -199,8 +199,8 @@ impl DragInfo {
 }
 
 impl Render for DragInfo {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        let size = gpui::size(px(120.), px(50.));
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let size = gpui::size(px(160.), px(40.));
 
         div()
             .pl(self.position.x - size.width.half())
@@ -208,15 +208,17 @@ impl Render for DragInfo {
             .child(
                 div()
                     .flex()
-                    .justify_center()
+                    .justify_start()
                     .items_center()
                     .w(size.width)
                     .h(size.height)
-                    .bg(self.color.opacity(0.5))
-                    .text_color(gpui::white())
-                    .text_xs()
+                    .p_2()
+                    .bg(cx.theme().primary.opacity(0.7))
+                    .text_color(cx.theme().primary_foreground)
+                    .rounded(cx.theme().radius)
+                    .text_sm()
                     .shadow_md()
-                    .child(format!("Card {}", self.entry_id)),
+                    .child(self.title.clone().to_string()),
             )
     }
 }
@@ -403,7 +405,6 @@ impl Render for SidebarElement {
                         let dialog_title_input = self.dialog_title_input.clone();
                         let dialog_description_input = self.dialog_description_input.clone();
                         let board_id = board.id;
-                        let drop_color = board.drop_on.map(|info| info.color);
 
                         v_flex()
                             .id(board.id.to_string())
@@ -411,7 +412,6 @@ impl Render for SidebarElement {
                             .w_80()
                             .p_2()
                             .bg(cx.theme().secondary)
-                            .when_some(drop_color, |this, color| this.bg(color.opacity(0.2)))
                             .text_color(cx.theme().foreground)
                             .rounded(cx.theme().radius)
                             .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
@@ -422,10 +422,10 @@ impl Render for SidebarElement {
                                 let mut moving_entry: Option<Entry> = None;
                                 for board in this.boards.iter_mut() {
                                     if board.id == info.from_board_id {
-                                        if let Some(index) =
-                                            board.entries.iter().position(|entry| {
-                                                entry.id == info.entry_id
-                                            })
+                                        if let Some(index) = board
+                                            .entries
+                                            .iter()
+                                            .position(|entry| entry.id == info.entry_id)
                                         {
                                             moving_entry = Some(board.entries.remove(index));
                                         }
@@ -438,7 +438,7 @@ impl Render for SidebarElement {
                                         board.drop_on = None;
                                         if board.id == board_id {
                                             board.entries.push(entry.clone());
-                                            board.drop_on = Some(*info);
+                                            board.drop_on = Some(info.clone());
                                         }
                                     }
                                 }
@@ -451,7 +451,7 @@ impl Render for SidebarElement {
                             )
                             .children(board.entries.iter().map(|entry| {
                                 let drag_info =
-                                    DragInfo::new(entry.id, board_id, cx.theme().primary);
+                                    DragInfo::new(entry.id, board_id, entry.title.clone().into());
 
                                 div()
                                     .id(entry.id.to_string())
@@ -468,7 +468,7 @@ impl Render for SidebarElement {
                                     .w_full()
                                     .child(entry.title.clone())
                                     .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
-                                        cx.new(|_| info.position(position))
+                                        cx.new(|_| info.clone().position(position))
                                     })
                             }))
                             .child(
