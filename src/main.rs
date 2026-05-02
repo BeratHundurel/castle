@@ -1,6 +1,6 @@
 use gpui::*;
 use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement, Render,
@@ -21,26 +21,27 @@ use gpui_component::{
     v_flex,
 };
 
-pub struct SidebarElement {
-    active_items: HashMap<Item, bool>,
-    last_active_item: Item,
-    active_subitem: Option<SubItem>,
+pub struct CastleApp {
+    active_items: HashMap<u32, bool>,
+    last_active_item_id: u32,
+    active_subitem: Option<Board>,
     focus_handle: gpui::FocusHandle,
     search_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
     dialog_description_input: Entity<InputState>,
     theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
-    boards: Vec<Board>,
+    projects: Vec<Project>,
 }
 
-impl SidebarElement {
+impl CastleApp {
     pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, cx))
     }
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let projects = default_projects();
         let mut active_items = HashMap::new();
-        active_items.insert(Item::Boards, true);
+        active_items.insert(projects[0].id, true);
 
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search..."));
         let dialog_title_input =
@@ -89,92 +90,54 @@ impl SidebarElement {
 
         Self {
             active_items,
-            last_active_item: Item::Boards,
+            last_active_item_id: projects[0].id,
             active_subitem: None,
             focus_handle: cx.focus_handle(),
             search_input,
             dialog_title_input,
             dialog_description_input,
             theme_select,
-            boards: default_boards(),
+            projects,
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Item {
-    Boards,
-    Notes,
+struct Project {
+    id: u32,
+    name: String,
+    boards: Vec<Board>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SubItem {
-    Board1,
-    Board2,
-}
-
-impl Item {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Boards => "Boards",
-            Self::Notes => "Notes",
-        }
-    }
-
-    pub fn icon(&self) -> IconName {
-        match self {
-            Self::Boards => IconName::SquareTerminal,
-            Self::Notes => IconName::Bot,
+impl Project {
+    fn new(id: u32, name: &str, boards: Vec<Board>) -> Self {
+        Self {
+            id,
+            name: name.to_string(),
+            boards,
         }
     }
 
     pub fn handler(
         &self,
-    ) -> impl Fn(&mut SidebarElement, &ClickEvent, &mut Window, &mut Context<SidebarElement>) + 'static
-    {
-        let item = *self;
-        move |this, _, window, cx| {
-            this.last_active_item = item;
-            this.active_subitem = None;
-            this.focus_handle.focus(window, cx);
-            cx.notify();
-        }
-    }
-
-    pub fn items(&self) -> Vec<SubItem> {
-        match self {
-            Self::Boards => vec![SubItem::Board1, SubItem::Board2],
-            Self::Notes => vec![],
-        }
-    }
-}
-
-impl SubItem {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Board1 => "ThemeSmith",
-            Self::Board2 => "Printomi",
-        }
-    }
-
-    pub fn handler(
-        &self,
-        item: &Item,
-    ) -> impl Fn(&mut SidebarElement, &ClickEvent, &mut Window, &mut Context<SidebarElement>) + 'static
-    {
-        let item = *item;
-        let subitem = *self;
-        move |this, _, window, cx| {
-            this.active_items.insert(item, true);
-            this.last_active_item = item;
-            this.active_subitem = Some(subitem);
-            this.focus_handle.focus(window, cx);
+    ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
+        let id = self.id;
+        move |app, _, window, cx| {
+            app.last_active_item_id = id;
+            app.active_subitem = None;
+            app.focus_handle.focus(window, cx);
             cx.notify();
         }
     }
 }
 
-#[derive(Clone)]
+fn default_projects() -> Vec<Project> {
+    vec![
+        Project::new(1, "ThemeSmith", default_boards_project_1()),
+        Project::new(2, "Castle", default_boards_project_2()),
+    ]
+}
+
+#[derive(Clone, PartialEq, Eq)]
 struct DragInfo {
     entry_id: u32,
     from_board_id: u32,
@@ -223,15 +186,16 @@ impl Render for DragInfo {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Board {
     id: u32,
     title: String,
+    project_id: u32,
     entries: Vec<Entry>,
     drop_on: Option<DragInfo>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     id: u32,
     title: String,
@@ -239,12 +203,28 @@ struct Entry {
 }
 
 impl Board {
-    fn new(id: u32, title: &str, entries: Vec<Entry>) -> Self {
+    fn new(id: u32, title: &str, project_id: u32, entries: Vec<Entry>) -> Self {
         Self {
             id,
             title: title.to_string(),
+            project_id,
             entries,
             drop_on: None,
+        }
+    }
+
+    pub fn handler(
+        &self,
+        project_id: u32,
+    ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
+        let board = self.clone();
+        let project_id = project_id;
+        move |app, _, window, cx| {
+            app.active_items.insert(project_id, true);
+            app.last_active_item_id = project_id;
+            app.active_subitem = Some(board.clone());
+            app.focus_handle.focus(window, cx);
+            cx.notify();
         }
     }
 }
@@ -259,11 +239,12 @@ impl Entry {
     }
 }
 
-fn default_boards() -> Vec<Board> {
+fn default_boards_project_1() -> Vec<Board> {
     vec![
         Board::new(
             1,
             "To Do",
+            1,
             vec![
                 Entry::new(1, "Learn Rust", "Read ownership chapter"),
                 Entry::new(2, "Build project", "Start Trello clone"),
@@ -272,29 +253,85 @@ fn default_boards() -> Vec<Board> {
         Board::new(
             2,
             "In Progress",
+            1,
             vec![Entry::new(1, "API Design", "Define endpoints")],
         ),
         Board::new(
             3,
             "Done",
+            1,
             vec![Entry::new(1, "Setup project", "Initialize cargo project")],
         ),
     ]
 }
 
-impl Focusable for SidebarElement {
+fn default_boards_project_2() -> Vec<Board> {
+    vec![
+        Board::new(
+            1,
+            "Backlog",
+            2,
+            vec![
+                Entry::new(
+                    1,
+                    "Research competitors",
+                    "Analyze similar task management apps",
+                ),
+                Entry::new(2, "Create wireframes", "Design initial UI mockups"),
+                Entry::new(3, "Database planning", "Draft schema for users and boards"),
+            ],
+        ),
+        Board::new(
+            2,
+            "In Development",
+            2,
+            vec![
+                Entry::new(1, "Authentication system", "Implement JWT login flow"),
+                Entry::new(
+                    2,
+                    "Kanban drag-and-drop",
+                    "Enable moving tasks between boards",
+                ),
+            ],
+        ),
+        Board::new(
+            3,
+            "Testing",
+            2,
+            vec![Entry::new(
+                1,
+                "API integration tests",
+                "Verify all endpoints work correctly",
+            )],
+        ),
+        Board::new(
+            4,
+            "Completed",
+            2,
+            vec![
+                Entry::new(
+                    1,
+                    "Project setup",
+                    "Initialized Rust workspace and dependencies",
+                ),
+                Entry::new(2, "CI pipeline", "Configured GitHub Actions workflow"),
+            ],
+        ),
+    ]
+}
+
+impl Focusable for CastleApp {
     fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for SidebarElement {
+impl Render for CastleApp {
     fn render(
         &mut self,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let groups: Vec<Item> = vec![Item::Boards, Item::Notes];
         let dialog_layer = Root::render_dialog_layer(window, cx);
 
         h_flex()
@@ -352,22 +389,20 @@ impl Render for SidebarElement {
                     )
                     .child(
                         SidebarGroup::new("Projects").child(SidebarMenu::new().children(
-                            groups.iter().enumerate().map(|(_, item)| {
-                                let is_active =
-                                    self.last_active_item == *item && self.active_subitem == None;
+                            self.projects.iter().map(|item| {
+                                let is_active = self.last_active_item_id == item.id
+                                    && self.active_subitem == None;
 
-                                SidebarMenuItem::new(item.label())
-                                    .icon(item.icon())
+                                SidebarMenuItem::new(item.name.clone())
+                                    .icon(IconName::FolderOpen)
                                     .active(is_active)
                                     .click_to_toggle(true)
                                     .collapsed(true)
-                                    .children(item.items().into_iter().enumerate().map(
-                                        |(_, sub_item)| {
-                                            SidebarMenuItem::new(sub_item.label())
-                                                .active(self.active_subitem == Some(sub_item))
-                                                .on_click(cx.listener(sub_item.handler(&item)))
-                                        },
-                                    ))
+                                    .children(item.boards.iter().map(|sub_item| {
+                                        SidebarMenuItem::new(sub_item.title.clone())
+                                            .active(self.active_subitem.as_ref() == Some(sub_item))
+                                            .on_click(cx.listener(sub_item.handler(item.id)))
+                                    }))
                                     .on_click(cx.listener(item.handler()))
                             }),
                         )),
@@ -401,100 +436,124 @@ impl Render for SidebarElement {
                             cx.notify();
                         }),
                     )
-                    .children(self.boards.iter().map(|board| {
-                        let dialog_title_input = self.dialog_title_input.clone();
-                        let dialog_description_input = self.dialog_description_input.clone();
-                        let board_id = board.id;
+                    .children(
+                        self.projects
+                            .iter()
+                            .find(|p| p.id == self.last_active_item_id)
+                            .map(|p| p.boards.as_slice())
+                            .unwrap_or(&[])
+                            .iter()
+                            .map(|board| {
+                                let dialog_title_input = self.dialog_title_input.clone();
+                                let dialog_description_input =
+                                    self.dialog_description_input.clone();
+                                let board_id = board.id;
 
-                        v_flex()
-                            .id(board.id.to_string())
-                            .gap_2()
-                            .w_80()
-                            .p_2()
-                            .bg(cx.theme().secondary)
-                            .text_color(cx.theme().foreground)
-                            .rounded(cx.theme().radius)
-                            .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
-                                if info.from_board_id == board_id {
-                                    return;
-                                }
-
-                                let mut moving_entry: Option<Entry> = None;
-                                for board in this.boards.iter_mut() {
-                                    if board.id == info.from_board_id {
-                                        if let Some(index) = board
-                                            .entries
-                                            .iter()
-                                            .position(|entry| entry.id == info.entry_id)
-                                        {
-                                            moving_entry = Some(board.entries.remove(index));
-                                        }
-                                        break;
-                                    }
-                                }
-
-                                if let Some(entry) = moving_entry {
-                                    for board in this.boards.iter_mut() {
-                                        board.drop_on = None;
-                                        if board.id == board_id {
-                                            board.entries.push(entry.clone());
-                                            board.drop_on = Some(info.clone());
-                                        }
-                                    }
-                                }
-                            }))
-                            .child(
-                                div()
-                                    .p_1()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(board.title.clone()),
-                            )
-                            .children(board.entries.iter().map(|entry| {
-                                let drag_info =
-                                    DragInfo::new(entry.id, board_id, entry.title.clone().into());
-
-                                div()
-                                    .id(entry.id.to_string())
+                                v_flex()
+                                    .id(board.id.to_string())
+                                    .gap_2()
+                                    .w_80()
                                     .p_2()
-                                    .bg(cx.theme().primary)
-                                    .text_color(cx.theme().primary_foreground)
+                                    .bg(cx.theme().secondary)
+                                    .text_color(cx.theme().foreground)
                                     .rounded(cx.theme().radius)
-                                    .hover(|this| {
-                                        this.bg(cx.theme().primary_hover)
-                                            .cursor(CursorStyle::PointingHand)
-                                    })
-                                    .cursor_move()
-                                    .text_sm()
-                                    .w_full()
-                                    .child(entry.title.clone())
-                                    .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
-                                        cx.new(|_| info.clone().position(position))
-                                    })
-                            }))
-                            .child(
-                                div().w_full().child(
-                                    Dialog::new(cx)
-                                        .trigger(
-                                            h_flex()
-                                                .id("Add Item")
-                                                .w_full()
-                                                .gap_2()
-                                                .p_1()
-                                                .text_color(cx.theme().secondary_foreground)
-                                                .text_sm()
-                                                .hover(|this| {
-                                                    this.bg(cx.theme().secondary_hover)
-                                                        .text_color(cx.theme().accent_foreground)
-                                                        .cursor(CursorStyle::PointingHand)
-                                                })
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(IconName::Plus)
-                                                .child("Add a card"),
-                                        )
-                                        .title("Add a new entry")
-                                        .content({
-                                            move |content, _, _| {
-                                                content
+                                    .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
+                                        if info.from_board_id == board_id {
+                                            return;
+                                        }
+
+                                        let active_project = this
+                                            .projects
+                                            .iter_mut()
+                                            .find(|p| p.id == this.last_active_item_id);
+
+                                        if let Some(project) = active_project {
+                                            let mut moving_entry: Option<Entry> = None;
+                                            for board in project.boards.iter_mut() {
+                                                if board.id == info.from_board_id {
+                                                    if let Some(index) = board
+                                                        .entries
+                                                        .iter()
+                                                        .position(|entry| entry.id == info.entry_id)
+                                                    {
+                                                        moving_entry =
+                                                            Some(board.entries.remove(index));
+                                                    }
+                                                    break;
+                                                }
+                                            }
+
+                                            if let Some(entry) = moving_entry {
+                                                for board in project.boards.iter_mut() {
+                                                    board.drop_on = None;
+                                                    if board.id == board_id {
+                                                        board.entries.push(entry.clone());
+                                                        board.drop_on = Some(info.clone());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }))
+                                    .child(
+                                        div()
+                                            .p_1()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(board.title.clone()),
+                                    )
+                                    .children(board.entries.iter().map(|entry| {
+                                        let drag_info = DragInfo::new(
+                                            entry.id,
+                                            board_id,
+                                            entry.title.clone().into(),
+                                        );
+
+                                        div()
+                                            .id(entry.id.to_string())
+                                            .p_2()
+                                            .bg(cx.theme().primary)
+                                            .text_color(cx.theme().primary_foreground)
+                                            .rounded(cx.theme().radius)
+                                            .hover(|this| {
+                                                this.bg(cx.theme().primary_hover)
+                                                    .cursor(CursorStyle::PointingHand)
+                                            })
+                                            .cursor_move()
+                                            .text_sm()
+                                            .w_full()
+                                            .child(entry.title.clone())
+                                            .on_drag(
+                                                drag_info,
+                                                |info: &DragInfo, position, _, cx| {
+                                                    cx.new(|_| info.clone().position(position))
+                                                },
+                                            )
+                                    }))
+                                    .child(
+                                        div().w_full().child(
+                                            Dialog::new(cx)
+                                                .trigger(
+                                                    h_flex()
+                                                        .id("Add Item")
+                                                        .w_full()
+                                                        .gap_2()
+                                                        .p_1()
+                                                        .text_color(cx.theme().secondary_foreground)
+                                                        .text_sm()
+                                                        .hover(|this| {
+                                                            this.bg(cx.theme().secondary_hover)
+                                                                .text_color(
+                                                                    cx.theme().accent_foreground,
+                                                                )
+                                                                .cursor(CursorStyle::PointingHand)
+                                                        })
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child(IconName::Plus)
+                                                        .child("Add a card"),
+                                                )
+                                                .title("Add a new entry")
+                                                .content({
+                                                    move |content, _, _| {
+                                                        content
                                                     .child(
                                                         DialogHeader::new()
                                                             .child(
@@ -531,11 +590,12 @@ impl Render for SidebarElement {
                                                                 ),
                                                             ),
                                                     )
-                                            }
-                                        }),
-                                ),
-                            )
-                    })),
+                                                    }
+                                                }),
+                                        ),
+                                    )
+                            }),
+                    ),
             )
             .children(dialog_layer)
     }
@@ -558,7 +618,7 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = SidebarElement::view(window, cx);
+                    let view = CastleApp::view(window, cx);
                     // This first level on the window, should be a Root.
                     cx.new(|cx| Root::new(view, window, cx))
                 },
@@ -570,21 +630,22 @@ fn main() {
 }
 
 fn init_themes(cx: &mut App) {
-    let themes_dir = PathBuf::from("themes");
-    if let Ok(entries) = std::fs::read_dir(&themes_dir) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Err(err) =
-                            ThemeRegistry::global_mut(cx).load_themes_from_str(&content)
-                        {
-                            eprintln!("Failed to load theme {:?}: {}", path, err);
-                        }
-                    }
-                }
-            }
+    let theme_contents = [
+        include_str!("../themes/alduin.json"),
+        include_str!("../themes/ayu.json"),
+        include_str!("../themes/catppuccin.json"),
+        include_str!("../themes/everforest.json"),
+        include_str!("../themes/gruvbox.json"),
+        include_str!("../themes/harper.json"),
+        include_str!("../themes/jellybeans.json"),
+        include_str!("../themes/molokai.json"),
+        include_str!("../themes/tokyonight.json"),
+        include_str!("../themes/twilight.json"),
+    ];
+
+    for content in theme_contents {
+        if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(content) {
+            eprintln!("Failed to load embedded theme: {}", err);
         }
     }
 
