@@ -23,8 +23,8 @@ use gpui_component::{
 
 pub struct CastleApp {
     active_items: HashMap<u32, bool>,
-    last_active_item_id: u32,
-    active_subitem: Option<Board>,
+    active_project_index: usize,
+    active_board_index: Option<usize>,
     focus_handle: gpui::FocusHandle,
     search_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
@@ -51,6 +51,7 @@ impl CastleApp {
             InputState::new(window, cx)
                 .placeholder("Give your description")
                 .multi_line(true)
+                .rows(3)
                 .auto_grow(1, 24)
                 .soft_wrap(true)
                 .searchable(true)
@@ -90,8 +91,8 @@ impl CastleApp {
 
         Self {
             active_items,
-            last_active_item_id: projects[0].id,
-            active_subitem: None,
+            active_project_index: 0,
+            active_board_index: Some(0),
             focus_handle: cx.focus_handle(),
             search_input,
             dialog_title_input,
@@ -119,11 +120,11 @@ impl Project {
 
     pub fn handler(
         &self,
+        index: usize,
     ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
-        let id = self.id;
         move |app, _, window, cx| {
-            app.last_active_item_id = id;
-            app.active_subitem = None;
+            app.active_project_index = index;
+            app.active_board_index = None;
             app.focus_handle.focus(window, cx);
             cx.notify();
         }
@@ -137,7 +138,7 @@ fn default_projects() -> Vec<Project> {
         .filter(|b| b.project_id == 1)
         .cloned()
         .collect();
-    
+
     let p2_boards = boards
         .iter()
         .filter(|b| b.project_id == 2)
@@ -153,16 +154,18 @@ fn default_projects() -> Vec<Project> {
 #[derive(Clone, PartialEq, Eq)]
 struct DragInfo {
     entry_id: u32,
-    from_board_id: u32,
+    source_board_id: u32,
+    source_card_id: u32,
     position: Point<Pixels>,
     title: Arc<str>,
 }
 
 impl DragInfo {
-    fn new(entry_id: u32, from_board_id: u32, title: Arc<str>) -> Self {
+    fn new(entry_id: u32, source_board_id: u32, source_card_id: u32, title: Arc<str>) -> Self {
         Self {
             entry_id,
-            from_board_id,
+            source_board_id,
+            source_card_id,
             position: Point::default(),
             title,
         }
@@ -236,13 +239,14 @@ impl Board {
     pub fn handler(
         &self,
         project_id: u32,
+        project_index: usize,
+        board_index: usize,
     ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
-        let board = self.clone();
         let project_id = project_id;
         move |app, _, window, cx| {
             app.active_items.insert(project_id, true);
-            app.last_active_item_id = project_id;
-            app.active_subitem = Some(board.clone());
+            app.active_project_index = project_index;
+            app.active_board_index = Some(board_index);
             app.focus_handle.focus(window, cx);
             cx.notify();
         }
@@ -449,21 +453,28 @@ impl Render for CastleApp {
                     )
                     .child(
                         SidebarGroup::new("Projects").child(SidebarMenu::new().children(
-                            self.projects.iter().map(|item| {
-                                let is_active = self.last_active_item_id == item.id
-                                    && self.active_subitem == None;
-
+                            self.projects.iter().enumerate().map(|(idx, item)| {
                                 SidebarMenuItem::new(item.name.clone())
                                     .icon(IconName::FolderOpen)
-                                    .active(is_active)
+                                    .active(
+                                        self.active_project_index == idx
+                                            && self.active_board_index == None,
+                                    )
+                                    .default_open(self.active_project_index == idx)
                                     .click_to_toggle(true)
-                                    .collapsed(true)
-                                    .children(item.boards.iter().map(|sub_item| {
-                                        SidebarMenuItem::new(sub_item.title.clone())
-                                            .active(self.active_subitem.as_ref() == Some(sub_item))
-                                            .on_click(cx.listener(sub_item.handler(item.id)))
-                                    }))
-                                    .on_click(cx.listener(item.handler()))
+                                    .children(item.boards.iter().enumerate().map(
+                                        |(b_idx, sub_item)| {
+                                            SidebarMenuItem::new(sub_item.title.clone())
+                                                .active(
+                                                    self.active_project_index == idx
+                                                        && self.active_board_index == Some(b_idx),
+                                                )
+                                                .on_click(cx.listener(
+                                                    sub_item.handler(item.id, idx, b_idx),
+                                                ))
+                                        },
+                                    ))
+                                    .on_click(cx.listener(item.handler(idx)))
                             }),
                         )),
                     )
@@ -496,26 +507,33 @@ impl Render for CastleApp {
                             cx.notify();
                         }),
                     )
-                    .children(
-                        self.active_subitem
-                            .as_ref()
-                            .or_else(|| {
-                                self.projects
-                                    .iter()
-                                    .find(|p| p.id == self.last_active_item_id)
-                                    .and_then(|p| p.boards.first())
-                            })
+                    .children({
+                        let dialog_title_input = self.dialog_title_input.clone();
+                        let dialog_description_input = self.dialog_description_input.clone();
+
+                        let active_board =
+                            self.projects.get(self.active_project_index).and_then(|p| {
+                                if let Some(b_idx) = self.active_board_index {
+                                    p.boards.get(b_idx)
+                                } else {
+                                    p.boards.first()
+                                }
+                            });
+
+                        let board_id_for_render = active_board.map(|b| b.id).unwrap_or(0);
+
+                        active_board
                             .map(|b| b.cards.as_slice())
                             .unwrap_or(&[])
                             .iter()
-                            .map(|card| {
-                                let dialog_title_input = self.dialog_title_input.clone();
-                                let dialog_description_input =
-                                    self.dialog_description_input.clone();
+                            .map(move |card| {
+                                let dialog_title_input = dialog_title_input.clone();
+                                let dialog_description_input = dialog_description_input.clone();
                                 let card_id = card.id;
+                                let board_id = board_id_for_render;
 
                                 v_flex()
-                                    .id(card.id.to_string())
+                                    .id(card.id as usize)
                                     .gap_2()
                                     .w_80()
                                     .p_2()
@@ -523,41 +541,50 @@ impl Render for CastleApp {
                                     .text_color(cx.theme().foreground)
                                     .rounded(cx.theme().radius)
                                     .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
-                                        if info.from_board_id == card_id {
+                                        if info.source_board_id == board_id
+                                            && info.source_card_id == card_id
+                                        {
                                             return;
                                         }
 
-                                        let active_project = this
-                                            .projects
-                                            .iter_mut()
-                                            .find(|p| p.id == this.last_active_item_id);
+                                        let active_project =
+                                            this.projects.get_mut(this.active_project_index);
 
                                         if let Some(project) = active_project {
                                             let mut moving_entry: Option<Entry> = None;
-                                            for b in project.boards.iter_mut() {
-                                                for c in b.cards.iter_mut() {
-                                                    if c.id == info.from_board_id {
-                                                        if let Some(index) =
-                                                            c.entries.iter().position(|entry| {
-                                                                entry.id == info.entry_id
-                                                            })
-                                                        {
-                                                            moving_entry =
-                                                                Some(c.entries.remove(index));
-                                                        }
-                                                        break;
+
+                                            if let Some(b) = project
+                                                .boards
+                                                .iter_mut()
+                                                .find(|b| b.id == info.source_board_id)
+                                            {
+                                                if let Some(source_card) = b
+                                                    .cards
+                                                    .iter_mut()
+                                                    .find(|c| c.id == info.source_card_id)
+                                                {
+                                                    if let Some(index) = source_card
+                                                        .entries
+                                                        .iter()
+                                                        .position(|entry| entry.id == info.entry_id)
+                                                    {
+                                                        moving_entry =
+                                                            Some(source_card.entries.remove(index));
                                                     }
                                                 }
                                             }
 
                                             if let Some(entry) = moving_entry {
-                                                for b in project.boards.iter_mut() {
-                                                    for c in b.cards.iter_mut() {
-                                                        c.drop_on = None;
-                                                        if c.id == card_id {
-                                                            c.entries.push(entry.clone());
-                                                            c.drop_on = Some(info.clone());
-                                                        }
+                                                if let Some(b) = project
+                                                    .boards
+                                                    .iter_mut()
+                                                    .find(|b| b.id == board_id)
+                                                {
+                                                    if let Some(c) =
+                                                        b.cards.iter_mut().find(|c| c.id == card_id)
+                                                    {
+                                                        c.entries.push(entry);
+                                                        c.drop_on = Some(info.clone());
                                                     }
                                                 }
                                             }
@@ -572,12 +599,13 @@ impl Render for CastleApp {
                                     .children(card.entries.iter().map(|entry| {
                                         let drag_info = DragInfo::new(
                                             entry.id,
+                                            board_id,
                                             card_id,
                                             entry.title.clone().into(),
                                         );
 
                                         div()
-                                            .id(entry.id.to_string())
+                                            .id(entry.id as usize)
                                             .p_2()
                                             .bg(cx.theme().primary)
                                             .text_color(cx.theme().primary_foreground)
@@ -604,6 +632,7 @@ impl Render for CastleApp {
                                                     h_flex()
                                                         .id("Add Item")
                                                         .w_full()
+                                                        .rounded(cx.theme().radius)
                                                         .gap_2()
                                                         .p_1()
                                                         .text_color(cx.theme().secondary_foreground)
@@ -663,8 +692,8 @@ impl Render for CastleApp {
                                                 }),
                                         ),
                                     )
-                            }),
-                    ),
+                            })
+                    }),
             )
             .children(dialog_layer)
     }
