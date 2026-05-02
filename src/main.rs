@@ -1,6 +1,6 @@
 use gpui::*;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement, Render,
@@ -131,9 +131,22 @@ impl Project {
 }
 
 fn default_projects() -> Vec<Project> {
+    let boards = default_boards();
+    let p1_boards = boards
+        .iter()
+        .filter(|b| b.project_id == 1)
+        .cloned()
+        .collect();
+    
+    let p2_boards = boards
+        .iter()
+        .filter(|b| b.project_id == 2)
+        .cloned()
+        .collect();
+
     vec![
-        Project::new(1, "ThemeSmith", default_boards_project_1()),
-        Project::new(2, "Castle", default_boards_project_2()),
+        Project::new(1, "ThemeSmith", p1_boards),
+        Project::new(2, "Castle", p2_boards),
     ]
 }
 
@@ -187,12 +200,20 @@ impl Render for DragInfo {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+struct Card {
+    id: u32,
+    title: String,
+    board_id: u32,
+    drop_on: Option<DragInfo>,
+    entries: Vec<Entry>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
 struct Board {
     id: u32,
     title: String,
     project_id: u32,
-    entries: Vec<Entry>,
-    drop_on: Option<DragInfo>,
+    cards: Vec<Card>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,13 +224,12 @@ struct Entry {
 }
 
 impl Board {
-    fn new(id: u32, title: &str, project_id: u32, entries: Vec<Entry>) -> Self {
+    fn new(id: u32, title: &str, project_id: u32, cards: Vec<Card>) -> Self {
         Self {
             id,
             title: title.to_string(),
             project_id,
-            entries,
-            drop_on: None,
+            cards,
         }
     }
 
@@ -239,9 +259,21 @@ impl Entry {
     }
 }
 
-fn default_boards_project_1() -> Vec<Board> {
+impl Card {
+    fn new(id: u32, title: &str, board_id: u32, entries: Vec<Entry>) -> Self {
+        Self {
+            id,
+            title: title.to_string(),
+            board_id,
+            entries,
+            drop_on: None,
+        }
+    }
+}
+
+fn default_cards_board_1() -> Vec<Card> {
     vec![
-        Board::new(
+        Card::new(
             1,
             "To Do",
             1,
@@ -250,13 +282,13 @@ fn default_boards_project_1() -> Vec<Board> {
                 Entry::new(2, "Build project", "Start Trello clone"),
             ],
         ),
-        Board::new(
+        Card::new(
             2,
             "In Progress",
             1,
             vec![Entry::new(1, "API Design", "Define endpoints")],
         ),
-        Board::new(
+        Card::new(
             3,
             "Done",
             1,
@@ -265,9 +297,9 @@ fn default_boards_project_1() -> Vec<Board> {
     ]
 }
 
-fn default_boards_project_2() -> Vec<Board> {
+fn default_cards_board_2() -> Vec<Card> {
     vec![
-        Board::new(
+        Card::new(
             1,
             "Backlog",
             2,
@@ -281,7 +313,7 @@ fn default_boards_project_2() -> Vec<Board> {
                 Entry::new(3, "Database planning", "Draft schema for users and boards"),
             ],
         ),
-        Board::new(
+        Card::new(
             2,
             "In Development",
             2,
@@ -294,7 +326,7 @@ fn default_boards_project_2() -> Vec<Board> {
                 ),
             ],
         ),
-        Board::new(
+        Card::new(
             3,
             "Testing",
             2,
@@ -304,7 +336,7 @@ fn default_boards_project_2() -> Vec<Board> {
                 "Verify all endpoints work correctly",
             )],
         ),
-        Board::new(
+        Card::new(
             4,
             "Completed",
             2,
@@ -317,6 +349,34 @@ fn default_boards_project_2() -> Vec<Board> {
                 Entry::new(2, "CI pipeline", "Configured GitHub Actions workflow"),
             ],
         ),
+    ]
+}
+
+fn default_cards_board_3() -> Vec<Card> {
+    vec![
+        Card::new(
+            1,
+            "Ideas",
+            3,
+            vec![
+                Entry::new(1, "New Theme", "Design a light theme"),
+                Entry::new(2, "Refactoring", "Clean up CSS"),
+            ],
+        ),
+        Card::new(
+            2,
+            "Reviewed",
+            3,
+            vec![Entry::new(1, "Dark Mode", "Approve dark mode palette")],
+        ),
+    ]
+}
+
+fn default_boards() -> Vec<Board> {
+    vec![
+        Board::new(1, "ThemeSmith Board", 1, default_cards_board_1()),
+        Board::new(2, "Castle Board", 2, default_cards_board_2()),
+        Board::new(3, "ThemeSmith Ideas", 1, default_cards_board_3()),
     ]
 }
 
@@ -437,20 +497,25 @@ impl Render for CastleApp {
                         }),
                     )
                     .children(
-                        self.projects
-                            .iter()
-                            .find(|p| p.id == self.last_active_item_id)
-                            .map(|p| p.boards.as_slice())
+                        self.active_subitem
+                            .as_ref()
+                            .or_else(|| {
+                                self.projects
+                                    .iter()
+                                    .find(|p| p.id == self.last_active_item_id)
+                                    .and_then(|p| p.boards.first())
+                            })
+                            .map(|b| b.cards.as_slice())
                             .unwrap_or(&[])
                             .iter()
-                            .map(|board| {
+                            .map(|card| {
                                 let dialog_title_input = self.dialog_title_input.clone();
                                 let dialog_description_input =
                                     self.dialog_description_input.clone();
-                                let board_id = board.id;
+                                let card_id = card.id;
 
                                 v_flex()
-                                    .id(board.id.to_string())
+                                    .id(card.id.to_string())
                                     .gap_2()
                                     .w_80()
                                     .p_2()
@@ -458,7 +523,7 @@ impl Render for CastleApp {
                                     .text_color(cx.theme().foreground)
                                     .rounded(cx.theme().radius)
                                     .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
-                                        if info.from_board_id == board_id {
+                                        if info.from_board_id == card_id {
                                             return;
                                         }
 
@@ -469,26 +534,30 @@ impl Render for CastleApp {
 
                                         if let Some(project) = active_project {
                                             let mut moving_entry: Option<Entry> = None;
-                                            for board in project.boards.iter_mut() {
-                                                if board.id == info.from_board_id {
-                                                    if let Some(index) = board
-                                                        .entries
-                                                        .iter()
-                                                        .position(|entry| entry.id == info.entry_id)
-                                                    {
-                                                        moving_entry =
-                                                            Some(board.entries.remove(index));
+                                            for b in project.boards.iter_mut() {
+                                                for c in b.cards.iter_mut() {
+                                                    if c.id == info.from_board_id {
+                                                        if let Some(index) =
+                                                            c.entries.iter().position(|entry| {
+                                                                entry.id == info.entry_id
+                                                            })
+                                                        {
+                                                            moving_entry =
+                                                                Some(c.entries.remove(index));
+                                                        }
+                                                        break;
                                                     }
-                                                    break;
                                                 }
                                             }
 
                                             if let Some(entry) = moving_entry {
-                                                for board in project.boards.iter_mut() {
-                                                    board.drop_on = None;
-                                                    if board.id == board_id {
-                                                        board.entries.push(entry.clone());
-                                                        board.drop_on = Some(info.clone());
+                                                for b in project.boards.iter_mut() {
+                                                    for c in b.cards.iter_mut() {
+                                                        c.drop_on = None;
+                                                        if c.id == card_id {
+                                                            c.entries.push(entry.clone());
+                                                            c.drop_on = Some(info.clone());
+                                                        }
                                                     }
                                                 }
                                             }
@@ -498,12 +567,12 @@ impl Render for CastleApp {
                                         div()
                                             .p_1()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .child(board.title.clone()),
+                                            .child(card.title.clone()),
                                     )
-                                    .children(board.entries.iter().map(|entry| {
+                                    .children(card.entries.iter().map(|entry| {
                                         let drag_info = DragInfo::new(
                                             entry.id,
-                                            board_id,
+                                            card_id,
                                             entry.title.clone().into(),
                                         );
 
