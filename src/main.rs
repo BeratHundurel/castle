@@ -16,6 +16,7 @@ use gpui_component::{
     },
     h_flex,
     input::{Input, InputState},
+    scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectDelegate, SelectEvent, SelectState},
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     v_flex,
@@ -77,13 +78,12 @@ impl CastleApp {
             &theme_select,
             |_, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
                 let SelectEvent::Confirm(theme_name) = event;
-                if let Some(theme_name) = theme_name {
-                    if let Some(theme_config) =
+                if let Some(theme_name) = theme_name
+                    && let Some(theme_config) =
                         ThemeRegistry::global(cx).themes().get(theme_name).cloned()
-                    {
-                        Theme::global_mut(cx).apply_config(&theme_config);
-                        cx.refresh_windows();
-                    }
+                {
+                    Theme::global_mut(cx).apply_config(&theme_config);
+                    cx.refresh_windows();
                 }
             },
         )
@@ -242,7 +242,6 @@ impl Board {
         project_index: usize,
         board_index: usize,
     ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
-        let project_id = project_id;
         move |app, _, window, cx| {
             app.active_items.insert(project_id, true);
             app.active_project_index = project_index;
@@ -306,6 +305,20 @@ fn default_cards_board_2() -> Vec<Card> {
         Card::new(
             1,
             "Backlog",
+            2,
+            vec![
+                Entry::new(
+                    1,
+                    "Research competitors",
+                    "Analyze similar task management apps",
+                ),
+                Entry::new(2, "Create wireframes", "Design initial UI mockups"),
+                Entry::new(3, "Database planning", "Draft schema for users and boards"),
+            ],
+        ),
+        Card::new(
+            5,
+            "New Card Test Scroll",
             2,
             vec![
                 Entry::new(
@@ -399,10 +412,11 @@ impl Render for CastleApp {
         let dialog_layer = Root::render_dialog_layer(window, cx);
 
         h_flex()
+            .id("main-container")
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .h_full()
+            .size_full()
             .child(
                 Sidebar::new("sidebar-story")
                     .w(px(260.))
@@ -458,7 +472,7 @@ impl Render for CastleApp {
                                     .icon(IconName::FolderOpen)
                                     .active(
                                         self.active_project_index == idx
-                                            && self.active_board_index == None,
+                                            && self.active_board_index.is_none(),
                                     )
                                     .default_open(self.active_project_index == idx)
                                     .click_to_toggle(true)
@@ -496,7 +510,9 @@ impl Render for CastleApp {
             )
             .child(
                 h_flex()
+                    .id("scrollable-container")
                     .size_full()
+                    .overflow_x_scrollbar()
                     .gap_4()
                     .p_4()
                     .items_start()
@@ -536,6 +552,9 @@ impl Render for CastleApp {
                                     .id(card.id as usize)
                                     .gap_2()
                                     .w_80()
+                                    .h_auto()
+                                    .max_h_3_4()
+                                    .overflow_y_scrollbar()
                                     .p_2()
                                     .bg(cx.theme().secondary)
                                     .text_color(cx.theme().foreground)
@@ -557,36 +576,29 @@ impl Render for CastleApp {
                                                 .boards
                                                 .iter_mut()
                                                 .find(|b| b.id == info.source_board_id)
-                                            {
-                                                if let Some(source_card) = b
+                                                && let Some(source_card) = b
                                                     .cards
                                                     .iter_mut()
                                                     .find(|c| c.id == info.source_card_id)
-                                                {
-                                                    if let Some(index) = source_card
-                                                        .entries
-                                                        .iter()
-                                                        .position(|entry| entry.id == info.entry_id)
-                                                    {
-                                                        moving_entry =
-                                                            Some(source_card.entries.remove(index));
-                                                    }
-                                                }
+                                                && let Some(index) = source_card
+                                                    .entries
+                                                    .iter()
+                                                    .position(|entry| entry.id == info.entry_id)
+                                            {
+                                                moving_entry =
+                                                    Some(source_card.entries.remove(index));
                                             }
 
-                                            if let Some(entry) = moving_entry {
-                                                if let Some(b) = project
+                                            if let Some(entry) = moving_entry
+                                                && let Some(b) = project
                                                     .boards
                                                     .iter_mut()
                                                     .find(|b| b.id == board_id)
-                                                {
-                                                    if let Some(c) =
-                                                        b.cards.iter_mut().find(|c| c.id == card_id)
-                                                    {
-                                                        c.entries.push(entry);
-                                                        c.drop_on = Some(info.clone());
-                                                    }
-                                                }
+                                                && let Some(c) =
+                                                    b.cards.iter_mut().find(|c| c.id == card_id)
+                                            {
+                                                c.entries.push(entry);
+                                                c.drop_on = Some(info.clone());
                                             }
                                         }
                                     }))
@@ -699,7 +711,8 @@ impl Render for CastleApp {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
