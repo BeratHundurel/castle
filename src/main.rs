@@ -52,8 +52,7 @@ impl CastleApp {
             InputState::new(window, cx)
                 .placeholder("Give your description")
                 .multi_line(true)
-                .rows(3)
-                .auto_grow(1, 24)
+                .auto_grow(3, 24)
                 .soft_wrap(true)
                 .searchable(true)
         });
@@ -179,7 +178,7 @@ impl DragInfo {
 
 impl Render for DragInfo {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let size = gpui::size(px(160.), px(40.));
+        let size = gpui::size(px(200.), px(40.));
 
         div()
             .pl(self.position.x - size.width.half())
@@ -551,15 +550,18 @@ impl Render for CastleApp {
 
                                 v_flex()
                                     .id(card.id as usize)
-                                    .gap_2()
-                                    .w_80()
                                     .h_auto()
                                     .max_h_3_4()
                                     .overflow_y_scrollbar()
+                                    .gap_2()
+                                    .w_80()
                                     .p_2()
                                     .bg(cx.theme().secondary)
                                     .text_color(cx.theme().foreground)
                                     .rounded(cx.theme().radius)
+                                    .drag_over::<DragInfo>(|this, _, _, cx| {
+                                        this.border_1().border_color(cx.theme().primary)
+                                    })
                                     .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
                                         if info.source_board_id == board_id
                                             && info.source_card_id == card_id
@@ -626,6 +628,8 @@ impl Render for CastleApp {
                                             .hover(|this| {
                                                 this.bg(cx.theme().primary_hover)
                                                     .cursor(CursorStyle::PointingHand)
+                                                    .border_1()
+                                                    .border_color(cx.theme().primary_foreground)
                                             })
                                             .cursor_move()
                                             .text_sm()
