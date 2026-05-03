@@ -1,9 +1,16 @@
-# Project Overview 
-This project is a note taking and canvas board app that uses GPUI and GPUI Components writen in rust. 
+# Project Overview
+
+This project is a note taking and canvas board app that uses GPUI and GPUI Components writen in rust.
 
 ## Documentation
-gpui-component folder is contains the source code of the library and can be used for reference.
+
+You can find the source code of the GPUI components library in /lib-docs
+
+### Tools
+
+Use 'cargo check' and 'cargo clippy --fix --allow-dirty' to ensure code quality
 
 ### Code Style
+
 Don't use unwrap
-Don't comment obvious logic 
+Don't comment obvious logic
