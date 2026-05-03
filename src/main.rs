@@ -413,10 +413,11 @@ impl Render for CastleApp {
 
         h_flex()
             .id("main-container")
-            .rounded(cx.theme().radius)
+            .size_full()
+            .overflow_x_scroll()
             .border_1()
             .border_color(cx.theme().border)
-            .size_full()
+            .rounded(cx.theme().radius)
             .child(
                 Sidebar::new("sidebar-story")
                     .w(px(260.))
