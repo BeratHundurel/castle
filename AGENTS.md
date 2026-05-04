@@ -4,7 +4,7 @@ This project is a note taking and canvas board app that uses GPUI and GPUI Compo
 
 ## Documentation
 
-You can find the source code of the GPUI components library in /docs
+You can find the source code of the GPUI components library in /docs. Don't edit the source code of the library
 
 ### Tools
 
