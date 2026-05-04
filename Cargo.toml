@@ -18,15 +18,15 @@ tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1.0"
 
 [profile.dev]
-split-debuginfo = "unpacked"
+lto = false
 incremental = true
-codegen-units = 16
+codegen-units = 256
+debug = "limited"
+split-debuginfo = "unpacked"
 
-[profile.dev.build-override]
-incremental = true
-codegen-units = 16
-split-debuginfo = "unpacked"
-debug = true
+[profile.dev.package]
+gpui = { opt-level = 3 }
+gpui_platform = { opt-level = 3 }
 
 [profile.release]
 opt-level = 3
@@ -35,5 +35,5 @@ lto = true
 debug = false
 incremental = false
 overflow-checks = false
-strip = "true"
+strip = true
 panic = "abort"
