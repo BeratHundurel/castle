@@ -138,7 +138,7 @@ impl CastleApp {
                 }
                 this.projects = projects;
 
-                if let Some(first_board) = this.projects.get(0).and_then(|p| p.boards.get(0)) {
+                if let Some(first_board) = this.projects.first().and_then(|p| p.boards.first()) {
                     let board_id = first_board.id;
                     Self::enrich_board_async(cx, 0, 0, board_id);
                 }
@@ -471,7 +471,7 @@ impl Render for CastleApp {
                                 if let Some(b_idx) = self.active_board_index {
                                     p.boards.get(b_idx)
                                 } else {
-                                    p.boards.get(0)
+                                    p.boards.first()
                                 }
                             });
                         let board_id_for_render = active_board.map(|b| b.id).unwrap_or(0);
