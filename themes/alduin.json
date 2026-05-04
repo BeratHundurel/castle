@@ -9,7 +9,7 @@
       "mode": "dark",
       "colors": {
         "accent.background": "#2e2b29",
-        "accent.foreground": "#ebdbb2",
+        "accent.foreground": "#c9ab6e",
         "background": "#1C1C1C",
         "border": "#3a3a3a",
         "danger.background": "#cc241d",
@@ -38,7 +38,7 @@
         "secondary.foreground": "#9E9E9E",
         "secondary.hover.background": "#36323099",
         "tab.active.background": "#1C1C1C",
-        "tab.active.foreground": "#ebdbb2",
+        "tab.active.foreground": "#c9ab6e",
         "tab.background": "#14141400",
         "tab.foreground": "#848382",
         "table.row.border": "#50494570",
