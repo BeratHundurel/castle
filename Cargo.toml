@@ -1,14 +1,19 @@
-[package]
-name = "castle"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [".","crates/app", "crates/migration", "crates/entity"]
+default-members = ["crates/app"]
+resolver = "2"
 
-[dependencies]
+[workspace.package]
+name = "castle"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
-sqlx = { version = "0.8", features = [ "runtime-tokio", "sqlite" ] }
+sea-orm = { version = "2.0.0-rc.38", features = [ "sqlx-sqlite", "runtime-tokio", "macros" ] }
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1.0"
 
@@ -22,9 +27,6 @@ incremental = true
 codegen-units = 16
 split-debuginfo = "unpacked"
 debug = true
-
-[profile.dev.package.sqlx-macros]
-opt-level = 3
 
 [profile.release]
 codegen-units = 1

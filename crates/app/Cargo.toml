@@ -1,0 +1,17 @@
+[package]
+name         = "app"
+version      = "0.1.0"
+publish      = false
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+anyhow.workspace = true
+sea-orm.workspace = true
+tokio.workspace = true
+migration = { path = "../migration" }
+entity = { path = "../entity" }
+dotenvy = "0.15"
