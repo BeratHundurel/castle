@@ -1,10 +1,10 @@
 [workspace]
-members = [".","crates/app", "crates/migration", "crates/entity"]
+members = ["crates/app", "crates/migration", "crates/entity"]
 default-members = ["crates/app"]
 resolver = "2"
 
 [workspace.package]
-name = "castle"
+version = "0.1.0"
 edition = "2024"
 publish = false
 
@@ -29,10 +29,11 @@ split-debuginfo = "unpacked"
 debug = true
 
 [profile.release]
-codegen-units = 1
-debug = false
-lto = true
-incremental = false
 opt-level = 3
+codegen-units = 1
+lto = true
+debug = false
+incremental = false
 overflow-checks = false
-strip = "debuginfo"
+strip = "true"
+panic = "abort"
