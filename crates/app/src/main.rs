@@ -1,12 +1,16 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use anyhow::Result;
 use dotenvy::dotenv;
+use entity::project;
 use entity::{
     board::Entity as Board, card, card::Entity as Card, entry::Entity as Entry,
     project::Entity as Project,
 };
 use gpui::*;
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ColumnTrait, Database, DatabaseConnection, QueryFilter};
+use sea_orm::ActiveValue::Set;
+use sea_orm::{ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, QueryFilter};
 use std::sync::Arc;
 use std::{collections::HashMap, env, fs, path::Path};
 
@@ -23,7 +27,7 @@ use gpui_component::{
         DialogTitle,
     },
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
     select::{SearchableVec, Select, SelectDelegate, SelectEvent, SelectState},
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -40,6 +44,8 @@ pub struct CastleApp {
     dialog_description_input: Entity<InputState>,
     theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
     projects: Vec<ProjectDTO>,
+    is_adding_project: bool,
+    new_project_input: Entity<InputState>,
 }
 
 impl CastleApp {
@@ -92,6 +98,9 @@ impl CastleApp {
         )
         .detach();
 
+        let new_project_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
+
         let app = Self {
             active_items: HashMap::new(),
             active_project_index: 0,
@@ -102,6 +111,8 @@ impl CastleApp {
             dialog_description_input,
             theme_select,
             projects: vec![],
+            is_adding_project: false,
+            new_project_input,
         };
 
         Self::list_projects(cx);
@@ -195,6 +206,33 @@ impl CastleApp {
                 {
                     board.cards = cards;
                 }
+                cx.notify();
+            })
+            .ok();
+
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn add_project(cx: &mut Context<Self>, project: ProjectDTO) {
+        let db = cx.global::<DB>().conn.clone();
+
+        cx.spawn(async move |this, cx| -> Result<()> {
+            let project_active_model = project::ActiveModel {
+                name: Set(project.name),
+                ..Default::default()
+            };
+
+            let project_entity = project_active_model.insert(&*db).await?;
+            let project = ProjectDTO {
+                id: project_entity.id as u32,
+                name: project_entity.name,
+                boards: vec![],
+            };
+
+            this.update(cx, |this, cx| {
+                this.projects.push(project);
                 cx.notify();
             })
             .ok();
@@ -356,12 +394,13 @@ impl Render for CastleApp {
             .child(
                 Sidebar::new("sidebar-story")
                     .w(px(260.))
+                    .collapsible(false)
                     .gap_0()
                     .header(
                         v_flex()
                             .w_full()
                             .items_center()
-                            .gap_1()
+                            .gap_2()
                             .child(
                                 SidebarHeader::new()
                                     .child(
@@ -399,7 +438,87 @@ impl Render for CastleApp {
                                 Input::new(&self.search_input)
                                     .cleanable(true)
                                     .prefix(IconName::Search),
-                            ),
+                            )
+                            .child({
+                                if self.is_adding_project {
+                                    Input::new(&self.new_project_input)
+                                        .w_full()
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .id("add-project-btn")
+                                        .flex()
+                                        .w_full()
+                                        .justify_center()
+                                        .items_center()
+                                        .h_8()
+                                        .rounded(cx.theme().radius)
+                                        .bg(cx.theme().sidebar_accent_foreground.opacity(0.15))
+                                        .hover(|this| {
+                                            this.bg(cx.theme().sidebar_accent_foreground.opacity(0.20))
+                                        })
+                                        .border_1()
+                                        .border_color(cx.theme().sidebar_accent_foreground.opacity(0.30))
+                                        .cursor(gpui::CursorStyle::PointingHand)
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .justify_center()
+                                                .items_center()
+                                                .gap_1()
+                                                .text_sm()
+                                                .text_color(cx.theme().sidebar_accent_foreground)
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .child(IconName::Plus)
+                                                .child("Add Project"),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, window, cx| {
+                                                this.is_adding_project = true;
+
+                                                let new_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
+                                                this.new_project_input = new_input.clone();
+
+                                                cx.subscribe(
+                                                    &new_input,
+                                                    |this: &mut Self, input, event: &InputEvent, cx| match event {
+                                                        InputEvent::PressEnter { .. } => {
+                                                            let text = input.read(cx).text().to_string();
+                                                            let name = text.trim();
+                                                            if !name.is_empty() {
+                                                                Self::add_project(
+                                                                    cx,
+                                                                    ProjectDTO {
+                                                                        id: 0,
+                                                                        name: name.to_string(),
+                                                                        boards: vec![],
+                                                                    },
+                                                                );
+                                                            }
+                                                            this.is_adding_project = false;
+                                                            cx.notify();
+                                                        }
+                                                        InputEvent::Blur => {
+                                                            this.is_adding_project = false;
+                                                            cx.notify();
+                                                        }
+                                                        _ => {}
+                                                    },
+                                                )
+                                                .detach();
+
+                                                cx.notify();
+
+                                                let input = this.new_project_input.clone();
+                                                input.update(cx, |input, cx| {
+                                                    input.focus(window, cx);
+                                                });
+                                            }),
+                                        )
+                                        .into_any_element()
+                                }
+                            }),
                     )
                     .child(
                         SidebarGroup::new("Projects").child(SidebarMenu::new().children(
@@ -432,7 +551,7 @@ impl Render for CastleApp {
                         )),
                     )
                     .footer(
-                        SidebarFooter::new().justify_between().child(
+                        SidebarFooter::new().child(
                             h_flex()
                                 .gap_2()
                                 .items_center()
@@ -474,6 +593,7 @@ impl Render for CastleApp {
                                     p.boards.first()
                                 }
                             });
+
                         let board_id_for_render = active_board.map(|b| b.id).unwrap_or(0);
                         let cards = active_board.map(|b| b.cards.as_slice()).unwrap_or(&[]);
 
