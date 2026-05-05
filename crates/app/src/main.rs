@@ -14,7 +14,7 @@ use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, QueryFilter};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{env, fs, path::Path};
 
 use gpui::{
     App, AppContext, ClickEvent, Context, Entity, Focusable, MouseButton, ParentElement, Render,
@@ -36,7 +36,6 @@ use gpui_component::{
 };
 
 pub struct CastleApp {
-    active_items: HashMap<u32, bool>,
     active_project_index: usize,
     active_board_index: Option<usize>,
     focus_handle: gpui::FocusHandle,
@@ -104,7 +103,6 @@ impl CastleApp {
             cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
 
         let app = Self {
-            active_items: HashMap::new(),
             active_project_index: 0,
             active_board_index: Some(0),
             focus_handle: cx.focus_handle(),
@@ -128,11 +126,12 @@ impl CastleApp {
         cx.spawn(async move |this, cx| -> Result<()> {
             let results = Project::load().with(Board).all(&*db).await?;
 
-            let projects: Vec<ProjectDTO> = results
+            let mut projects: Vec<ProjectDTO> = results
                 .into_iter()
                 .map(|p| ProjectDTO {
                     id: p.id as u32,
                     name: p.name,
+                    is_expanded: false,
                     boards: p
                         .boards
                         .into_iter()
@@ -147,8 +146,8 @@ impl CastleApp {
                 .collect();
 
             this.update(cx, |this, cx| {
-                if let Some(first) = projects.first() {
-                    this.active_items.insert(first.id, true);
+                if let Some(first) = projects.first_mut() {
+                    first.is_expanded = true;
                 }
                 this.projects = projects;
 
@@ -231,6 +230,7 @@ impl CastleApp {
             let project = ProjectDTO {
                 id: project_entity.id as u32,
                 name: project_entity.name,
+                is_expanded: true,
                 boards: vec![],
             };
 
@@ -405,6 +405,7 @@ impl Render for DragInfo {
 struct ProjectDTO {
     id: u32,
     name: String,
+    is_expanded: bool,
     boards: Vec<BoardDTO>,
 }
 
@@ -441,6 +442,9 @@ impl ProjectDTO {
         move |app, _, window, cx| {
             app.active_project_index = index;
             app.active_board_index = None;
+            if let Some(p) = app.projects.get_mut(index) {
+                p.is_expanded = !p.is_expanded;
+            }
             app.focus_handle.focus(window, cx);
             cx.notify();
         }
@@ -450,13 +454,11 @@ impl ProjectDTO {
 impl BoardDTO {
     pub fn handler(
         &self,
-        project_id: u32,
         project_index: usize,
         board_index: usize,
         board_id: u32,
     ) -> impl Fn(&mut CastleApp, &ClickEvent, &mut Window, &mut Context<CastleApp>) + 'static {
         move |app, _, window, cx| {
-            app.active_items.insert(project_id, true);
             app.active_project_index = project_index;
             app.active_board_index = Some(board_index);
             app.focus_handle.focus(window, cx);
@@ -597,11 +599,12 @@ impl Render for CastleApp {
                                                             if !name.is_empty() {
                                                                 Self::add_project(
                                                                     cx,
-                                                                    ProjectDTO {
-                                                                        id: 0,
-                                                                        name: name.to_string(),
-                                                                        boards: vec![],
-                                                                    },
+                                                                        ProjectDTO {
+                                                                            id: 0,
+                                                                            name: name.to_string(),
+                                                                            is_expanded: true,
+                                                                            boards: vec![],
+                                                                        },
                                                                 );
                                                             }
                                                             this.is_adding_project = false;
@@ -630,31 +633,30 @@ impl Render for CastleApp {
                     )
                     .child(
                         SidebarGroup::new("Projects").child(SidebarMenu::new().children(
-                            self.projects.iter().enumerate().map(|(idx, item)| {
-                                SidebarMenuItem::new(item.name.clone())
+                            self.projects.iter().enumerate().map(|(p_idx, p)| {
+                                SidebarMenuItem::new(p.name.clone())
                                     .icon(IconName::FolderOpen)
                                     .active(
-                                        self.active_project_index == idx
+                                        self.active_project_index == p_idx
                                             && self.active_board_index.is_none(),
                                     )
-                                    .default_open(self.active_project_index == idx)
+                                    .default_open(p.is_expanded)
                                     .click_to_toggle(true)
-                                    .children(item.boards.iter().enumerate().map(
-                                        |(b_idx, sub_item)| {
-                                            SidebarMenuItem::new(sub_item.title.clone())
+                                    .children(p.boards.iter().enumerate().map(
+                                        |(b_idx, b)| {
+                                            SidebarMenuItem::new(b.title.clone())
                                                 .active(
-                                                    self.active_project_index == idx
+                                                    self.active_project_index == p_idx
                                                         && self.active_board_index == Some(b_idx),
                                                 )
-                                                .on_click(cx.listener(sub_item.handler(
-                                                    item.id,
-                                                    idx,
+                                                .on_click(cx.listener(b.handler(
+                                                    p_idx,
                                                     b_idx,
-                                                    sub_item.id,
+                                                    b.id,
                                                 )))
                                         },
                                     ))
-                                    .on_click(cx.listener(item.handler(idx)))
+                                    .on_click(cx.listener(p.handler(p_idx)))
                             }),
                         )),
                     )
