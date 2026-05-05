@@ -2,15 +2,17 @@
 
 use anyhow::Result;
 use dotenvy::dotenv;
-use entity::project;
 use entity::{
     board::Entity as Board, card, card::Entity as Card, entry::Entity as Entry,
     project::Entity as Project,
 };
+use entity::{entry, project};
 use gpui::*;
+use gpui_component::WindowExt;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, QueryFilter};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::{collections::HashMap, env, fs, path::Path};
 
@@ -23,8 +25,7 @@ use gpui_component::{
     ActiveTheme, IconName, Root, Theme, ThemeRegistry,
     button::{Button, ButtonVariants},
     dialog::{
-        Dialog, DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader,
-        DialogTitle,
+        DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
     },
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -46,6 +47,7 @@ pub struct CastleApp {
     projects: Vec<ProjectDTO>,
     is_adding_project: bool,
     new_project_input: Entity<InputState>,
+    pending_card_id: Option<u32>,
 }
 
 impl CastleApp {
@@ -113,6 +115,7 @@ impl CastleApp {
             projects: vec![],
             is_adding_project: false,
             new_project_input,
+            pending_card_id: None,
         };
 
         Self::list_projects(cx);
@@ -240,6 +243,111 @@ impl CastleApp {
             Ok(())
         })
         .detach();
+    }
+
+    fn add_entry(
+        &mut self,
+        cx: &mut Context<Self>,
+        entry: EntryDTO,
+        project_index: usize,
+        board_index: usize,
+        card_id: u32,
+    ) {
+        let db = cx.global::<DB>().conn.clone();
+
+        if let Some(board) = self
+            .projects
+            .get_mut(project_index)
+            .and_then(|p| p.boards.get_mut(board_index))
+            && let Some(card) = board.cards.iter_mut().find(|c| c.id == card_id)
+        {
+            card.entries.push(entry.clone());
+        }
+        cx.notify();
+
+        cx.spawn(async move |this, cx| -> Result<()> {
+            let model = entry::ActiveModel {
+                title: Set(entry.title),
+                description: Set(entry.description),
+                card_id: Set(entry.card_id as i64),
+                ..Default::default()
+            };
+            let inserted = model.insert(&*db).await?;
+            let real_id = inserted.id as u32;
+
+            this.update(cx, |this, cx| {
+                if let Some(card) = this
+                    .projects
+                    .get_mut(project_index)
+                    .and_then(|p| p.boards.get_mut(board_index))
+                    .and_then(|b| b.cards.iter_mut().find(|c| c.id == card_id))
+                    && let Some(entry) = card.entries.last_mut()
+                {
+                    entry.id = real_id;
+                }
+                cx.notify();
+            })
+            .ok();
+
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dialog_title_input = self.dialog_title_input.clone();
+        let dialog_description_input = self.dialog_description_input.clone();
+        let active_project_index = self.active_project_index;
+        let active_board_index = self.active_board_index.unwrap_or(0);
+        let card_id = self.pending_card_id.unwrap_or(0);
+
+        let confirm_handler = Rc::new(cx.listener(move |this, _, _, cx| {
+            let title = this.dialog_title_input.read(cx).text().to_string();
+            let description = this.dialog_description_input.read(cx).text().to_string();
+            let entry = EntryDTO {
+                id: 0,
+                title,
+                description,
+                card_id,
+            };
+            this.add_entry(cx, entry, active_project_index, active_board_index, card_id);
+            this.pending_card_id = None;
+            cx.notify();
+        }));
+
+        window.open_dialog(cx, move |dialog, _, _| {
+            let confirm_handler = confirm_handler.clone();
+            dialog
+                .on_ok(move |e, window, cx| {
+                    (confirm_handler)(e, window, cx);
+                    true
+                })
+                .child(
+                    DialogHeader::new()
+                        .mb_2()
+                        .child(DialogTitle::new().child("Add a new entry"))
+                        .child(DialogDescription::new().child("Enter the information needed")),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .mb_3()
+                        .child(Input::new(&dialog_title_input))
+                        .child(Input::new(&dialog_description_input)),
+                )
+                .child(
+                    DialogFooter::new()
+                        .justify_between()
+                        .child(
+                            DialogClose::new()
+                                .child(Button::new("cancel").label("Cancel").outline()),
+                        )
+                        .child(
+                            DialogAction::new()
+                                .child(Button::new("confirm").primary().label("Confirm")),
+                        ),
+                )
+        });
     }
 }
 
@@ -582,9 +690,6 @@ impl Render for CastleApp {
                         }),
                     )
                     .children({
-                        let dialog_title_input = self.dialog_title_input.clone();
-                        let dialog_description_input = self.dialog_description_input.clone();
-
                         let active_board =
                             self.projects.get(self.active_project_index).and_then(|p| {
                                 if let Some(b_idx) = self.active_board_index {
@@ -598,8 +703,6 @@ impl Render for CastleApp {
                         let cards = active_board.map(|b| b.cards.as_slice()).unwrap_or(&[]);
 
                         cards.iter().map(move |card| {
-                            let dialog_title_input = dialog_title_input.clone();
-                            let dialog_description_input = dialog_description_input.clone();
                             let card_id = card.id;
                             let board_id = board_id_for_render;
 
@@ -692,71 +795,31 @@ impl Render for CastleApp {
                                         })
                                 }))
                                 .child(
-                                    div().w_full().child(
-                                        Dialog::new(cx)
-                                            .trigger(
-                                                h_flex()
-                                                    .id("Add Item")
-                                                    .w_full()
-                                                    .rounded(cx.theme().radius)
-                                                    .gap_2()
-                                                    .p_1()
-                                                    .text_color(cx.theme().secondary_foreground)
-                                                    .text_sm()
-                                                    .hover(|this| {
-                                                        this.bg(cx.theme().secondary_hover)
-                                                            .text_color(
-                                                                cx.theme().accent_foreground,
-                                                            )
-                                                            .cursor(CursorStyle::PointingHand)
-                                                    })
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child(IconName::Plus)
-                                                    .child("Add a card"),
-                                            )
-                                            .title("Add a new entry")
-                                            .content({
-                                                move |content, _, _| {
-                                                    content
-                                                    .child(
-                                                        DialogHeader::new()
-                                                            .child(
-                                                                DialogTitle::new()
-                                                                    .child("Add a new entry"),
-                                                            )
-                                                            .child(DialogDescription::new().child(
-                                                                "Enter the information needed",
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        v_flex()
-                                                            .gap_2()
-                                                            .child(Input::new(&dialog_title_input))
-                                                            .child(Input::new(
-                                                                &dialog_description_input,
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        DialogFooter::new()
-                                                            .justify_between()
-                                                            .child(
-                                                                DialogClose::new().child(
-                                                                    Button::new("cancel")
-                                                                        .label("Cancel")
-                                                                        .outline(),
-                                                                ),
-                                                            )
-                                                            .child(
-                                                                DialogAction::new().child(
-                                                                    Button::new("confirm")
-                                                                        .primary()
-                                                                        .label("Confirm"),
-                                                                ),
-                                                            ),
-                                                    )
-                                                }
-                                            }),
-                                    ),
+                                    h_flex()
+                                        .id(("add-item", card_id as usize))
+                                        .w_full()
+                                        .rounded(cx.theme().radius)
+                                        .gap_2()
+                                        .p_1()
+                                        .text_color(cx.theme().secondary_foreground)
+                                        .text_sm()
+                                        .hover(|this| {
+                                            this.bg(cx.theme().secondary_hover)
+                                                .text_color(
+                                                    cx.theme().accent_foreground,
+                                                )
+                                                .cursor(CursorStyle::PointingHand)
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.pending_card_id = Some(card_id);
+                                                this.show_add_entry_dialog(window, cx);
+                                            })
+                                        )
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(IconName::Plus)
+                                        .child("Add a card")
                                 )
                         })
                     }),
