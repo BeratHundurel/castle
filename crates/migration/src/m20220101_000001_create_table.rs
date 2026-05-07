@@ -14,6 +14,7 @@ impl MigrationTrait for Migration {
                     .col(
                         ColumnDef::new(Project::Id)
                             .integer()
+                            .auto_increment()
                             .not_null()
                             .primary_key(),
                     )
@@ -27,7 +28,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Board::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Board::Id).integer().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(Board::Id)
+                            .integer()
+                            .auto_increment()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Board::Title).string().not_null())
                     .col(ColumnDef::new(Board::ProjectId).integer().not_null())
                     .foreign_key(
@@ -46,7 +53,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Card::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Card::Id).integer().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(Card::Id)
+                            .integer()
+                            .auto_increment()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Card::Title).string().not_null())
                     .col(ColumnDef::new(Card::BoardId).integer().not_null())
                     .foreign_key(
@@ -65,7 +78,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Entry::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Entry::Id).integer().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(Entry::Id)
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Entry::Title).string().not_null())
                     .col(ColumnDef::new(Entry::Description).string().not_null())
                     .col(ColumnDef::new(Entry::CardId).integer().not_null())
