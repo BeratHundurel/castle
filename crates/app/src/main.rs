@@ -2,13 +2,14 @@
 
 use anyhow::Result;
 use dotenvy::dotenv;
+use entity::{board, entry, project};
 use entity::{
     board::Entity as Board, card, card::Entity as Card, entry::Entity as Entry,
     project::Entity as Project,
 };
-use entity::{entry, project};
-use gpui::*;
-use gpui_component::{TitleBar, WindowExt};
+use gpui::{ElementId, *};
+use gpui_component::sidebar::SidebarItem;
+use gpui_component::{Collapsible, TitleBar, WindowExt};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, QueryFilter};
@@ -34,7 +35,6 @@ use gpui_component::{
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     v_flex,
 };
-
 pub struct CastleApp {
     active_project_index: usize,
     active_board_index: Option<usize>,
@@ -45,8 +45,12 @@ pub struct CastleApp {
     theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
     projects: Vec<ProjectDTO>,
     is_adding_project: bool,
+    is_adding_list: bool,
     new_project_input: Entity<InputState>,
+    new_list_input: Entity<InputState>,
+    new_board_input: Entity<InputState>,
     pending_card_id: Option<u32>,
+    adding_board_to_project: Option<usize>,
 }
 
 impl CastleApp {
@@ -67,6 +71,12 @@ impl CastleApp {
                 .soft_wrap(true)
                 .searchable(true)
         });
+
+        let new_project_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
+
+        let new_list_input = cx.new(|cx| InputState::new(window, cx).placeholder("List name..."));
+        let new_board_input = cx.new(|cx| InputState::new(window, cx).placeholder("Board name..."));
 
         let registry = ThemeRegistry::global(cx);
         let themes: Vec<SharedString> = registry
@@ -99,8 +109,98 @@ impl CastleApp {
         )
         .detach();
 
-        let new_project_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
+        cx.subscribe(
+            &new_project_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let name = text.trim();
+                    if !name.is_empty() {
+                        Self::add_project(
+                            cx,
+                            ProjectDTO {
+                                id: 0,
+                                name: name.to_string(),
+                                is_expanded: true,
+                                boards: vec![],
+                            },
+                        );
+                    }
+                    this.is_adding_project = false;
+                }
+                InputEvent::Blur => {
+                    this.is_adding_project = false;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &new_list_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let name = text.trim();
+                    if !name.is_empty() {
+                        let project_index = this.active_project_index;
+                        let board_index = this.active_board_index.unwrap_or(0);
+
+                        let board_id = this
+                            .projects
+                            .get(project_index)
+                            .and_then(|p| p.boards.get(board_index))
+                            .map(|b| b.id);
+
+                        if let Some(board_id) = board_id {
+                            this.add_card(
+                                cx,
+                                CardDTO {
+                                    id: 0,
+                                    title: name.to_string(),
+                                    board_id,
+                                    drop_on: None,
+                                    entries: vec![],
+                                },
+                                project_index,
+                                board_index,
+                                board_id,
+                            );
+                        }
+                    }
+                    this.is_adding_list = false;
+                }
+                InputEvent::Blur => {
+                    this.is_adding_list = false;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &new_board_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let name = text.trim();
+                    if let Some(project_index) = this.adding_board_to_project
+                        && !name.is_empty()
+                    {
+                        this.add_board(cx, project_index, name.to_string());
+                    }
+                    this.adding_board_to_project = None;
+                }
+                InputEvent::Blur => {
+                    this.adding_board_to_project = None;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let app = Self {
             active_project_index: 0,
@@ -112,8 +212,12 @@ impl CastleApp {
             theme_select,
             projects: vec![],
             is_adding_project: false,
+            is_adding_list: false,
             new_project_input,
+            new_list_input,
+            new_board_input,
             pending_card_id: None,
+            adding_board_to_project: None,
         };
 
         Self::list_projects(cx);
@@ -154,9 +258,9 @@ impl CastleApp {
                 if let Some(first_board) = this.projects.first().and_then(|p| p.boards.first()) {
                     let board_id = first_board.id;
                     Self::enrich_board_async(cx, 0, 0, board_id);
+                } else {
+                    cx.notify();
                 }
-
-                cx.notify();
             })
             .ok();
 
@@ -207,8 +311,8 @@ impl CastleApp {
                     .and_then(|p| p.boards.get_mut(board_index))
                 {
                     board.cards = cards;
-                }
-                cx.notify();
+                    cx.notify();
+                };
             })
             .ok();
 
@@ -236,7 +340,7 @@ impl CastleApp {
 
             this.update(cx, |this, cx| {
                 this.projects.push(project);
-                cx.notify();
+                cx.notify()
             })
             .ok();
 
@@ -262,10 +366,11 @@ impl CastleApp {
             && let Some(card) = board.cards.iter_mut().find(|c| c.id == card_id)
         {
             card.entries.push(entry.clone());
-        }
-        cx.notify();
+            cx.notify();
+        };
 
         cx.spawn(async move |this, cx| -> Result<()> {
+            let entry = entry.clone();
             let model = entry::ActiveModel {
                 title: Set(entry.title),
                 description: Set(entry.description),
@@ -275,7 +380,7 @@ impl CastleApp {
             let inserted = model.insert(&*db).await?;
             let real_id = inserted.id as u32;
 
-            this.update(cx, |this, cx| {
+            this.update(cx, |this, _cx| {
                 if let Some(card) = this
                     .projects
                     .get_mut(project_index)
@@ -284,14 +389,96 @@ impl CastleApp {
                     && let Some(entry) = card.entries.last_mut()
                 {
                     entry.id = real_id;
-                }
-                cx.notify();
+                };
             })
             .ok();
 
             Ok(())
         })
         .detach();
+    }
+
+    fn add_card(
+        &mut self,
+        cx: &mut Context<Self>,
+        card: CardDTO,
+        project_index: usize,
+        board_index: usize,
+        board_id: u32,
+    ) {
+        let db = cx.global::<DB>().conn.clone();
+
+        if let Some(board) = self
+            .projects
+            .get_mut(project_index)
+            .and_then(|p| p.boards.get_mut(board_index))
+        {
+            board.cards.push(card.clone());
+            cx.notify();
+        };
+
+        cx.spawn(async move |this, cx| -> Result<()> {
+            let model = card::ActiveModel {
+                title: Set(card.title),
+                board_id: Set(board_id as i64),
+                ..Default::default()
+            };
+            let inserted = model.insert(&*db).await?;
+            let real_id = inserted.id as u32;
+
+            this.update(cx, |this, _cx| {
+                if let Some(board) = this
+                    .projects
+                    .get_mut(project_index)
+                    .and_then(|p| p.boards.get_mut(board_index))
+                    && let Some(last_card) = board.cards.last_mut()
+                {
+                    last_card.id = real_id;
+                };
+            })
+            .ok();
+
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn add_board(&mut self, cx: &mut Context<Self>, project_index: usize, title: String) {
+        let db = cx.global::<DB>().conn.clone();
+
+        if let Some(project) = self.projects.get(project_index) {
+            let project_id = project.id;
+
+            cx.spawn(async move |this, cx| -> Result<()> {
+                let board_active_model = board::ActiveModel {
+                    title: Set(title),
+                    project_id: Set(project_id as i64),
+                    ..Default::default()
+                };
+
+                let board_entity = board_active_model.insert(&*db).await?;
+                let board = BoardDTO {
+                    id: board_entity.id as u32,
+                    title: board_entity.title,
+                    project_id: board_entity.project_id as u32,
+                    cards: vec![],
+                };
+
+                this.update(cx, |this, cx| {
+                    if let Some(project) = this.projects.get_mut(project_index) {
+                        let board_index = project.boards.len();
+                        project.boards.push(board);
+                        this.active_project_index = project_index;
+                        this.active_board_index = Some(board_index);
+                        cx.notify();
+                    }
+                })
+                .ok();
+
+                Ok(())
+            })
+            .detach();
+        }
     }
 
     fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -310,9 +497,8 @@ impl CastleApp {
                 description,
                 card_id,
             };
-            this.add_entry(cx, entry, active_project_index, active_board_index, card_id);
             this.pending_card_id = None;
-            cx.notify();
+            this.add_entry(cx, entry, active_project_index, active_board_index, card_id);
         }));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
@@ -449,7 +635,6 @@ impl ProjectDTO {
                 p.is_expanded = !p.is_expanded;
             }
             app.focus_handle.focus(window, cx);
-            cx.notify();
         }
     }
 }
@@ -465,20 +650,7 @@ impl BoardDTO {
             app.active_project_index = project_index;
             app.active_board_index = Some(board_index);
             app.focus_handle.focus(window, cx);
-
-            // Only enrich if not already loaded
-            let already_loaded = app
-                .projects
-                .get(project_index)
-                .and_then(|p| p.boards.get(board_index))
-                .map(|b| !b.cards.is_empty())
-                .unwrap_or(false);
-
-            if !already_loaded {
-                CastleApp::enrich_board_async(cx, project_index, board_index, board_id);
-            }
-
-            cx.notify();
+            CastleApp::enrich_board_async(cx, project_index, board_index, board_id);
         }
     }
 }
@@ -497,365 +669,353 @@ impl Render for CastleApp {
     ) -> impl gpui::IntoElement {
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let theme = cx.theme().clone();
-
         v_flex()
             .id("app-container")
+            .track_focus(&self.focus_handle)
             .size_full()
+            .overflow_scroll()
             .child(TitleBar::new().bg(theme.sidebar))
             .child(
                 h_flex()
                     .id("main-container")
                     .size_full()
-                    .overflow_x_scroll()
+                    .overflow_scroll()
                     .rounded(theme.radius)
                     .child(
                         Sidebar::new("sidebar-story")
-                        .w(px(260.))
-                        .collapsible(false)
-                        .gap_0()
-                        .header(
-                               v_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    SidebarHeader::new()
-                                        .child(
+                            .w(px(260.))
+                            .collapsible(false)
+                            .gap_0()
+                            .header(
+                                v_flex()
+                                    .id("header")
+                                    .w_full()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        SidebarHeader::new()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded(theme.radius)
+                                                    .bg(theme.primary)
+                                                    .text_color(theme.primary_foreground)
+                                                    .size_8()
+                                                    .flex_shrink_0()
+                                                    .child(IconName::GalleryVerticalEnd),
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .id("header-title")
+                                                    .gap_0()
+                                                    .text_sm()
+                                                    .flex_1()
+                                                    .line_height(relative(1.25))
+                                                    .overflow_hidden()
+                                                    .text_ellipsis()
+                                                    .child("Castle")
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(theme.sidebar_foreground)
+                                                    .child(
+                                                        div()
+                                                            .child("Your private note taking app")
+                                                            .text_color(theme.muted_foreground)
+                                                            .text_xs(),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        Input::new(&self.search_input)
+                                            .cleanable(true)
+                                            .prefix(IconName::Search),
+                                    )
+                                    .child({
+                                        if self.is_adding_project {
+                                            Input::new(&self.new_project_input)
+                                                .w_full()
+                                                .into_any_element()
+                                        } else {
                                             div()
-                                               .flex()
-                                               .items_center()
-                                               .justify_center()
-                                               .rounded(theme.radius)
-                                               .bg(theme.primary)
-                                               .text_color(theme.primary_foreground)
-                                               .size_8()
-                                               .flex_shrink_0()
-                                               .child(IconName::GalleryVerticalEnd),
-                                       )
-                                       .child(
-                                           v_flex()
-                                               .gap_0()
-                                               .text_sm()
-                                               .flex_1()
-                                               .line_height(relative(1.25))
-                                               .overflow_hidden()
-                                               .text_ellipsis()
-                                               .child("Castle")
-                                               .font_weight(FontWeight::SEMIBOLD)
-                                               .text_color(theme.sidebar_foreground)
-                                               .child(
-                                                   div()
-                                                       .child("Your private note taking app")
-                                                       .text_color(theme.muted_foreground)
-                                                       .text_xs(),
-                                               ),
-                                       ),
-                               )
-                               .child(
-                                   Input::new(&self.search_input)
-                                       .cleanable(true)
-                                       .prefix(IconName::Search),
-                               )
-                               .child({
-                                   if self.is_adding_project {
-                                       Input::new(&self.new_project_input)
-                                           .w_full()
-                                           .into_any_element()
-                                   } else {
-                                       div()
-                                           .id("add-project-btn")
-                                           .flex()
-                                           .w_full()
-                                           .justify_center()
-                                           .items_center()
-                                           .h_8()
-                                           .rounded(theme.radius)
-                                           .bg(theme.accent_foreground.opacity(0.15))
-                                           .hover(|this| {
-                                               this.bg(theme.accent_foreground.opacity(0.20))
-                                           })
-                                           .border_1()
-                                           .border_color(theme.accent_foreground.opacity(0.30))
-                                           .cursor(gpui::CursorStyle::PointingHand)
-                                           .child(
-                                               h_flex()
-                                                   .w_full()
-                                                   .justify_center()
-                                                   .items_center()
-                                                   .gap_1()
-                                                   .text_sm()
-                                                   .text_color(theme.accent_foreground)
-                                                   .font_weight(FontWeight::MEDIUM)
-                                                   .child(IconName::Plus)
-                                                   .child("Add Project"),
-                                           )
-                                           .on_mouse_down(
-                                               MouseButton::Left,
-                                               cx.listener(|this, _, window, cx| {
-                                                   this.is_adding_project = true;
+                                                .id("add-project-btn-container")
+                                                .flex()
+                                                .w_full()
+                                                .justify_center()
+                                                .items_center()
+                                                .h_8()
+                                                .rounded(theme.radius)
+                                                .bg(theme.accent_foreground.opacity(0.15))
+                                                .hover(|this| {
+                                                    this.bg(theme.accent_foreground.opacity(0.20))
+                                                })
+                                                .border_1()
+                                                .border_color(theme.accent_foreground.opacity(0.30))
+                                                .cursor_pointer()
+                                                .child(
+                                                    h_flex()
+                                                        .id("add-project-btn")
+                                                        .w_full()
+                                                        .justify_center()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .text_sm()
+                                                        .text_color(theme.accent_foreground)
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child(IconName::Plus)
+                                                        .child("Add Project"),
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.is_adding_project = true;
+                                                    cx.notify();
+                                                }))
+                                                .into_any_element()
+                                        }
+                                    }),
+                            )
+                            .child(SidebarGroup::new("Projects").child(
+                                SidebarMenu::new().children(self.projects.iter().enumerate().map(
+                                    |(p_idx, p)| {
+                                        SidebarMenuItem::new(p.name.clone())
+                                            .icon(IconName::FolderOpen)
+                                            .active(
+                                                self.active_project_index == p_idx
+                                                    && self.active_board_index.is_none(),
+                                            )
+                                            .default_open(p.is_expanded)
+                                            .click_to_toggle(true)
+                                            .children({
+                                                p.boards
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(b_idx, b)| {
+                                                        SidebarMenuItem::new(b.title.clone())
+                                                            .active(
+                                                                self.active_project_index == p_idx
+                                                                    && self.active_board_index
+                                                                        == Some(b_idx),
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                b.handler(p_idx, b_idx, b.id),
+                                                            ))
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            })
+                                            .on_click(cx.listener(p.handler(p_idx)))
+                                    },
+                                )),
+                            ))
+                            .footer(
+                                SidebarFooter::new().child(
+                                    h_flex()
+                                        .id("theme-select-footer")
+                                        .gap_2()
+                                        .items_center()
+                                        .child(IconName::Palette)
+                                        .child(
+                                            Select::new(&self.theme_select)
+                                                .placeholder("Theme")
+                                                .w_full()
+                                                .menu_max_h(rems(14.)),
+                                        )
+                                        .w_full(),
+                                ),
+                            ),
+                    )
+                    .child({
+                        let active_board =
+                            self.projects.get(self.active_project_index).and_then(|p| {
+                                if let Some(b_idx) = self.active_board_index {
+                                    p.boards.get(b_idx)
+                                } else {
+                                    p.boards.first()
+                                }
+                            });
 
-                                                   let new_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
-                                                   this.new_project_input = new_input.clone();
+                        let board_id_for_render = active_board.map(|b| b.id).unwrap_or(0);
+                        let cards = active_board.map(|b| b.cards.as_slice()).unwrap_or(&[]);
 
-                                                   cx.subscribe(
-                                                       &new_input,
-                                                       |this: &mut Self, input, event: &InputEvent, cx| match event {
-                                                           InputEvent::PressEnter { .. } => {
-                                                               let text = input.read(cx).text().to_string();
-                                                               let name = text.trim();
-                                                               if !name.is_empty() {
-                                                                   Self::add_project(
-                                                                       cx,
-                                                                       ProjectDTO {
-                                                                           id: 0,
-                                                                           name: name.to_string(),
-                                                                           is_expanded: true,
-                                                                           boards: vec![],
-                                                                       },
-                                                                   );
-                                                               }
-                                                               this.is_adding_project = false;
-                                                               cx.notify();
-                                                           }
-                                                           InputEvent::Blur => {
-                                                               this.is_adding_project = false;
-                                                               cx.notify();
-                                                           }
-                                                           _ => {}
-                                                       },
-                                                   )
-                                                   .detach();
-
-                                                   cx.notify();
-
-                                                   let input = this.new_project_input.clone();
-                                                   input.update(cx, |input, cx| {
-                                                       input.focus(window, cx);
-                                                   });
-                                               }),
-                                           )
-                                           .into_any_element()
-                                   }
-                               }),
-                       )
-                        .child(
-                           SidebarGroup::new("Projects").child(SidebarMenu::new().children(
-                               self.projects.iter().enumerate().map(|(p_idx, p)| {
-                                   SidebarMenuItem::new(p.name.clone())
-                                       .icon(IconName::FolderOpen)
-                                       .active(
-                                           self.active_project_index == p_idx
-                                           && self.active_board_index.is_none(),
-                                       )
-                                       .default_open(p.is_expanded)
-                                       .click_to_toggle(true)
-                                       .children(p.boards.iter().enumerate().map(
-                                           |(b_idx, b)| {
-                                               SidebarMenuItem::new(b.title.clone())
-                                                   .active(
-                                                       self.active_project_index == p_idx
-                                                       && self.active_board_index == Some(b_idx),
-                                                   )
-                                                   .on_click(cx.listener(b.handler(
-                                                       p_idx,
-                                                       b_idx,
-                                                       b.id,
-                                                   )))
-                                           },
-                                       ))
-                                       .on_click(cx.listener(p.handler(p_idx)))
-                               }),
-                           )),
-                       )
-                       .footer(
-                           SidebarFooter::new().child(
-                               h_flex()
-                                   .gap_2()
-                                   .items_center()
-                                   .child(IconName::Palette)
-                                   .child(
-                                       Select::new(&self.theme_select)
-                                           .placeholder("Theme")
-                                           .w_full()
-                                           .menu_max_h(rems(14.)),
-                                   )
-                                   .w_full(),
-                           ),
-                       ),
-                )
-                .child(
-                     h_flex()
+                        h_flex()
                             .id("scrollable-container")
                             .size_full()
-                            .min_w_0()
                             .overflow_x_scrollbar()
                             .gap_4()
                             .p_4()
                             .items_start()
-                            .on_mouse_down(
-                               MouseButton::Left,
-                               cx.listener(|this, _, window, cx| {
-                                   this.focus_handle.focus(window, cx);
-                                   cx.notify();
-                               }),
-                            )
-                           .children({
-                               let active_board =
-                                   self.projects.get(self.active_project_index).and_then(|p| {
-                                       if let Some(b_idx) = self.active_board_index {
-                                           p.boards.get(b_idx)
-                                       } else {
-                                           p.boards.first()
-                                       }
-                                   });
+                            .children({
+                                cards
+                                    .iter()
+                                    .map(|card| {
+                                        let card_id = card.id;
+                                        let board_id = board_id_for_render;
 
-                               let board_id_for_render = active_board.map(|b| b.id).unwrap_or(0);
-                               let cards = active_board.map(|b| b.cards.as_slice()).unwrap_or(&[]);
+                                        v_flex()
+                                            .id(card.id as usize)
+                                            .w_80()
+                                            .min_w_auto()
+                                            .max_h_3_4()
+                                            .h_auto()
+                                            .gap_2()
+                                            .p_2()
+                                            .bg(cx.theme().secondary)
+                                            .text_color(cx.theme().secondary_foreground)
+                                            .rounded(cx.theme().radius)
+                                            .drag_over::<DragInfo>(|this, _, _, cx| {
+                                                this.border_1().border_color(cx.theme().primary)
+                                            })
+                                            .on_drop(cx.listener(
+                                                move |this, info: &DragInfo, _, _| {
+                                                    if info.source_board_id == board_id
+                                                        && info.source_card_id == card_id
+                                                    {
+                                                        return;
+                                                    }
 
-                               cards.iter().map(move |card| {
-                                   let card_id = card.id;
-                                   let board_id = board_id_for_render;
+                                                    let active_project = this
+                                                        .projects
+                                                        .get_mut(this.active_project_index);
 
-                                   v_flex()
-                                       .id(card.id as usize)
-                                       .h_auto()
-                                       .max_h_3_4()
-                                       .overflow_y_scrollbar()
-                                       .gap_2()
-                                       .w_80()
-                                       .p_2()
-                                       .bg(cx.theme().secondary)
-                                       .text_color(cx.theme().secondary_foreground)
-                                       .rounded(cx.theme().radius)
-                                       .drag_over::<DragInfo>(|this, _, _, cx| {
-                                           this.border_1().border_color(cx.theme().primary)
-                                       })
-                                       .on_drop(cx.listener(move |this, info: &DragInfo, _, _| {
-                                           if info.source_board_id == board_id
-                                           && info.source_card_id == card_id
-                                           {
-                                               return;
-                                           }
+                                                    if let Some(project) = active_project {
+                                                        let mut moving_entry: Option<EntryDTO> =
+                                                            None;
 
-                                           let active_project =
-                                               this.projects.get_mut(this.active_project_index);
+                                                        if let Some(b) = project
+                                                            .boards
+                                                            .iter_mut()
+                                                            .find(|b| b.id == info.source_board_id)
+                                                            && let Some(source_card) =
+                                                                b.cards.iter_mut().find(|c| {
+                                                                    c.id == info.source_card_id
+                                                                })
+                                                            && let Some(index) = source_card
+                                                                .entries
+                                                                .iter()
+                                                                .position(|entry| {
+                                                                    entry.id == info.entry_id
+                                                                })
+                                                        {
+                                                            moving_entry = Some(
+                                                                source_card.entries.remove(index),
+                                                            );
+                                                        }
 
-                                           if let Some(project) = active_project {
-                                               let mut moving_entry: Option<EntryDTO> = None;
+                                                        if let Some(entry) = moving_entry
+                                                            && let Some(b) = project
+                                                                .boards
+                                                                .iter_mut()
+                                                                .find(|b| b.id == board_id)
+                                                            && let Some(c) = b
+                                                                .cards
+                                                                .iter_mut()
+                                                                .find(|c| c.id == card_id)
+                                                        {
+                                                            c.entries.push(entry);
+                                                            c.drop_on = Some(info.clone());
+                                                        }
+                                                    }
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .p_1()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(card.title.clone()),
+                                            )
+                                            .children(card.entries.iter().map(|entry| {
+                                                let drag_info = DragInfo::new(
+                                                    entry.id,
+                                                    board_id,
+                                                    card_id,
+                                                    entry.title.clone().into(),
+                                                );
 
-                                               if let Some(b) = project
-                                                   .boards
-                                                   .iter_mut()
-                                                   .find(|b| b.id == info.source_board_id)
-                                               && let Some(source_card) = b
-                                                   .cards
-                                                   .iter_mut()
-                                                   .find(|c| c.id == info.source_card_id)
-                                               && let Some(index) = source_card
-                                                   .entries
-                                                   .iter()
-                                                   .position(|entry| entry.id == info.entry_id)
-                                               {
-                                                   moving_entry = Some(source_card.entries.remove(index));
-                                               }
-
-                                               if let Some(entry) = moving_entry
-                                                   && let Some(b) =
-                                                   project.boards.iter_mut().find(|b| b.id == board_id)
-                                                   && let Some(c) =
-                                                   b.cards.iter_mut().find(|c| c.id == card_id)
-                                               {
-                                                   c.entries.push(entry);
-                                                   c.drop_on = Some(info.clone());
-                                               }
-                                           }
-                                       }))
-                                       .child(
-                                           div()
-                                               .p_1()
-                                               .font_weight(FontWeight::MEDIUM)
-                                               .child(card.title.clone()),
-                                       )
-                                       .children(card.entries.iter().map(|entry| {
-                                           let drag_info = DragInfo::new(
-                                               entry.id,
-                                               board_id,
-                                               card_id,
-                                               entry.title.clone().into(),
-                                           );
-
-                                           div()
-                                               .id(entry.id as usize)
-                                               .p_2()
-                                               .bg(cx.theme().primary)
-                                               .text_color(cx.theme().primary_foreground)
-                                               .rounded(cx.theme().radius)
-                                               .hover(|this| {
-                                                   this.bg(cx.theme().primary_hover)
-                                                       .cursor(CursorStyle::PointingHand)
-                                                       .border_1()
-                                                       .border_color(cx.theme().primary_foreground)
-                                               })
-                                               .cursor_move()
-                                               .text_sm()
-                                               .w_full()
-                                               .child(entry.title.clone())
-                                               .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
-                                                   cx.new(|_| info.clone().position(position))
-                                               })
-                                       }))
-                                       .child(
-                                           h_flex()
-                                               .id(("add-item", card_id as usize))
-                                               .w_full()
-                                               .rounded(cx.theme().radius)
-                                               .gap_2()
-                                               .p_1()
-                                               .text_color(cx.theme().secondary_foreground)
-                                               .text_sm()
-                                               .hover(|this| {
-                                                   this.bg(cx.theme().secondary_hover)
-                                                       .text_color(
-                                                           cx.theme().accent_foreground,
-                                                       )
-                                                       .cursor(CursorStyle::PointingHand)
-                                               })
-                                               .on_mouse_down(
-                                                   MouseButton::Left,
-                                                   cx.listener(move |this, _, window, cx| {
-                                                       this.pending_card_id = Some(card_id);
-                                                       this.show_add_entry_dialog(window, cx);
-                                                   })
-                                               )
-                                               .font_weight(FontWeight::MEDIUM)
-                                               .child(IconName::Plus)
-                                               .child("Add a card")
-                                       )
-                               })
-                           }).child({
-                               h_flex()
-                                   .id("add-list-button")
-                                   .gap_2()
-                                   .w_80()
-                                   .p_2()
-                                   .bg(theme.info.opacity(0.12))
-                                   .text_color(theme.info)
-                                   .text_sm()
-                                   .font_weight(FontWeight::MEDIUM)
-                                   .border_1()
-                                   .border_color(theme.info.opacity(0.24))
-                                   .rounded(theme.radius)
-                                   .cursor_pointer()
-                                   .hover(|this| {
-                                       this.bg(theme.info.opacity(0.18))
-                                   })
-                                   .child(IconName::Plus)
-                                   .child("Add another list")
-                           })
-
+                                                div()
+                                                    .id(entry.id as usize)
+                                                    .p_2()
+                                                    .bg(cx.theme().primary)
+                                                    .text_color(cx.theme().primary_foreground)
+                                                    .rounded(cx.theme().radius)
+                                                    .hover(|this| {
+                                                        this.bg(cx.theme().primary_hover)
+                                                            .cursor(CursorStyle::PointingHand)
+                                                            .border_1()
+                                                            .border_color(
+                                                                cx.theme().primary_foreground,
+                                                            )
+                                                    })
+                                                    .cursor_move()
+                                                    .text_sm()
+                                                    .w_full()
+                                                    .child(entry.title.clone())
+                                                    .on_drag(
+                                                        drag_info,
+                                                        |info: &DragInfo, position, _, cx| {
+                                                            cx.new(|_| {
+                                                                info.clone().position(position)
+                                                            })
+                                                        },
+                                                    )
+                                            }))
+                                            .child(
+                                                h_flex()
+                                                    .id(("add-item", card_id as usize))
+                                                    .w_full()
+                                                    .rounded(cx.theme().radius)
+                                                    .gap_2()
+                                                    .p_1()
+                                                    .text_color(cx.theme().secondary_foreground)
+                                                    .text_sm()
+                                                    .hover(|this| {
+                                                        this.bg(cx.theme().secondary_hover)
+                                                            .text_color(
+                                                                cx.theme().accent_foreground,
+                                                            )
+                                                            .cursor(CursorStyle::PointingHand)
+                                                    })
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(move |this, _, window, cx| {
+                                                            this.pending_card_id = Some(card_id);
+                                                            this.show_add_entry_dialog(window, cx);
+                                                        }),
+                                                    )
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(IconName::Plus)
+                                                    .child("Add a card"),
+                                            )
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .child({
+                                if self.is_adding_list {
+                                    Input::new(&self.new_list_input).w_80().into_any_element()
+                                } else {
+                                    h_flex()
+                                        .id("add-list-button")
+                                        .gap_2()
+                                        .w_80()
+                                        .p_2()
+                                        .bg(theme.info.opacity(0.12))
+                                        .text_color(theme.info)
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .border_1()
+                                        .border_color(theme.info.opacity(0.24))
+                                        .rounded(theme.radius)
+                                        .cursor_pointer()
+                                        .hover(|this| this.bg(theme.info.opacity(0.18)))
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.is_adding_list = true;
+                                            cx.notify();
+                                        }))
+                                        .child(IconName::Plus)
+                                        .child("Add another list")
+                                        .into_any_element()
+                                }
+                            })
+                    })
+                    .children(dialog_layer),
             )
-            .children(dialog_layer)
-        )
     }
 }
 
