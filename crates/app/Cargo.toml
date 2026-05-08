@@ -12,6 +12,7 @@ gpui-component-assets.workspace = true
 anyhow.workspace = true
 sea-orm.workspace = true
 tokio.workspace = true
+serde.workspace = true
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 dotenvy = "0.15"

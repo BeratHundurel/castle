@@ -9,7 +9,6 @@ name = "migration"
 path = "src/lib.rs"
 
 [dependencies]
-sea-orm.workspace = true
 tokio.workspace = true
 
 [dependencies.sea-orm-migration]
