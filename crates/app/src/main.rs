@@ -8,8 +8,8 @@ use board_view::BoardView;
 use dotenvy::dotenv;
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    WindowBounds, WindowOptions, px, size,
+    IntoElement, ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
+    div, px, size,
 };
 use gpui_component::{ActiveTheme, Root, Theme, ThemeRegistry, TitleBar, h_flex, v_flex};
 use migration::{Migrator, MigratorTrait};
@@ -72,16 +72,24 @@ impl Render for CastleApp {
             .id("app-container")
             .track_focus(&self.focus_handle)
             .size_full()
-            .overflow_scroll()
+            .overflow_hidden()
             .child(TitleBar::new().bg(theme.sidebar))
             .child(
                 h_flex()
                     .id("main-container")
                     .size_full()
-                    .overflow_scroll()
+                    .overflow_hidden()
                     .rounded(theme.radius)
                     .child(self.sidebar.clone())
-                    .child(self.board.clone())
+                    .child(
+                        div()
+                            .id("board-container")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.board.clone()),
+                    )
                     .children(dialog_layer),
             )
     }

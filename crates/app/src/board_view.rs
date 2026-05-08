@@ -15,7 +15,6 @@ use gpui_component::{
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::DB;
 
@@ -37,11 +36,11 @@ struct DragInfo {
     source_board_id: u32,
     source_card_id: u32,
     position: Point<Pixels>,
-    title: Arc<str>,
+    title: SharedString,
 }
 
 impl DragInfo {
-    fn new(entry_id: u32, source_board_id: u32, source_card_id: u32, title: Arc<str>) -> Self {
+    fn new(entry_id: u32, source_board_id: u32, source_card_id: u32, title: SharedString) -> Self {
         Self {
             entry_id,
             source_board_id,
@@ -77,7 +76,7 @@ impl Render for DragInfo {
                     .rounded(cx.theme().radius)
                     .text_sm()
                     .shadow_md()
-                    .child(self.title.clone().to_string()),
+                    .child(self.title.clone()),
             )
     }
 }
@@ -175,7 +174,6 @@ impl BoardView {
         self.cards.clear();
         self.is_adding_list = false;
         Self::enrich_board_async(cx, board_id);
-        cx.notify();
     }
 
     fn enrich_board_async(cx: &mut Context<Self>, board_id: u32) {
@@ -411,90 +409,87 @@ impl Render for BoardView {
             .p_4()
             .items_start()
             .children({
-                self.cards
-                    .iter()
-                    .map(|card| {
-                        let card_id = card.id;
-                        let board_id = board_id_for_render;
+                self.cards.iter().map(|card| {
+                    let card_id = card.id;
+                    let board_id = board_id_for_render;
 
-                        v_flex()
-                            .id(card.id as usize)
-                            .w_80()
-                            .min_w_auto()
-                            .max_h_3_4()
-                            .h_auto()
-                            .gap_2()
-                            .p_2()
-                            .bg(cx.theme().secondary)
-                            .text_color(cx.theme().secondary_foreground)
-                            .rounded(cx.theme().radius)
-                            .drag_over::<DragInfo>(|this, _, _, cx| {
-                                this.border_1().border_color(cx.theme().primary)
-                            })
-                            .on_drop(cx.listener(move |this, info: &DragInfo, _, cx| {
-                                this.move_entry(info, card_id, cx);
-                            }))
-                            .child(
-                                div()
-                                    .p_1()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(card.title.clone()),
-                            )
-                            .children(card.entries.iter().map(|entry| {
-                                let drag_info = DragInfo::new(
-                                    entry.id,
-                                    board_id,
-                                    card_id,
-                                    entry.title.clone().into(),
-                                );
+                    v_flex()
+                        .id(card.id as usize)
+                        .w_80()
+                        .min_w_auto()
+                        .max_h_3_4()
+                        .h_auto()
+                        .gap_2()
+                        .p_2()
+                        .bg(cx.theme().secondary)
+                        .text_color(cx.theme().secondary_foreground)
+                        .rounded(cx.theme().radius)
+                        .drag_over::<DragInfo>(|this, _, _, cx| {
+                            this.border_1().border_color(cx.theme().primary)
+                        })
+                        .on_drop(cx.listener(move |this, info: &DragInfo, _, cx| {
+                            this.move_entry(info, card_id, cx);
+                        }))
+                        .child(
+                            div()
+                                .p_1()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(card.title.clone()),
+                        )
+                        .children(card.entries.iter().map(|entry| {
+                            let drag_info = DragInfo::new(
+                                entry.id,
+                                board_id,
+                                card_id,
+                                entry.title.clone().into(),
+                            );
 
-                                div()
-                                    .id(entry.id as usize)
-                                    .p_2()
-                                    .bg(cx.theme().primary)
-                                    .text_color(cx.theme().primary_foreground)
-                                    .rounded(cx.theme().radius)
-                                    .hover(|this| {
-                                        this.bg(cx.theme().primary_hover)
-                                            .cursor(CursorStyle::PointingHand)
-                                            .border_1()
-                                            .border_color(cx.theme().primary_foreground)
-                                    })
-                                    .cursor_move()
-                                    .text_sm()
-                                    .w_full()
-                                    .child(entry.title.clone())
-                                    .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
-                                        cx.new(|_| info.clone().position(position))
-                                    })
-                            }))
-                            .child(
-                                h_flex()
-                                    .id(("add-item", card_id as usize))
-                                    .w_full()
-                                    .rounded(cx.theme().radius)
-                                    .gap_2()
-                                    .p_1()
-                                    .text_color(cx.theme().secondary_foreground)
-                                    .text_sm()
-                                    .hover(|this| {
-                                        this.bg(cx.theme().secondary_hover)
-                                            .text_color(cx.theme().accent_foreground)
-                                            .cursor(CursorStyle::PointingHand)
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.pending_card_id = Some(card_id);
-                                            this.show_add_entry_dialog(window, cx);
-                                        }),
-                                    )
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(IconName::Plus)
-                                    .child("Add a card"),
-                            )
-                    })
-                    .collect::<Vec<_>>()
+                            div()
+                                .id(entry.id as usize)
+                                .p_2()
+                                .bg(cx.theme().primary)
+                                .text_color(cx.theme().primary_foreground)
+                                .rounded(cx.theme().radius)
+                                .hover(|this| {
+                                    this.bg(cx.theme().primary_hover)
+                                        .cursor(CursorStyle::PointingHand)
+                                        .border_1()
+                                        .border_color(cx.theme().primary_foreground)
+                                })
+                                .cursor_move()
+                                .text_sm()
+                                .w_full()
+                                .child(entry.title.clone())
+                                .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
+                                    cx.new(|_| info.clone().position(position))
+                                })
+                        }))
+                        .child(
+                            h_flex()
+                                .id(("add-item", card_id as usize))
+                                .w_full()
+                                .rounded(cx.theme().radius)
+                                .gap_2()
+                                .p_1()
+                                .text_color(cx.theme().secondary_foreground)
+                                .text_sm()
+                                .hover(|this| {
+                                    this.bg(cx.theme().secondary_hover)
+                                        .text_color(cx.theme().accent_foreground)
+                                        .cursor(CursorStyle::PointingHand)
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.pending_card_id = Some(card_id);
+                                        this.show_add_entry_dialog(window, cx);
+                                    }),
+                                )
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(IconName::Plus)
+                                .child("Add a card"),
+                        )
+                })
             })
             .child({
                 if self.is_adding_list {
