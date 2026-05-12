@@ -2,7 +2,7 @@ use anyhow::Result;
 use entity::{board, board::Entity as Board, project, project::Entity as Project};
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, IconName, Sizable, Theme, ThemeRegistry, h_flex,
+    ActiveTheme, IconName, Side, Sizable, Theme, ThemeRegistry, h_flex,
     input::{Input, InputEvent, InputState},
     select::{SearchableVec, Select, SelectDelegate, SelectEvent, SelectState},
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -31,10 +31,10 @@ struct ProjectDTO {
     id: u32,
     name: SharedString,
     is_expanded: bool,
-    boards: Vec<BoardNavDTO>,
+    boards: Vec<BoardDTO>,
 }
 
-struct BoardNavDTO {
+struct BoardDTO {
     id: u32,
     title: SharedString,
 }
@@ -197,7 +197,7 @@ impl SidebarView {
                     boards: p
                         .boards
                         .into_iter()
-                        .map(|b| BoardNavDTO {
+                        .map(|b| BoardDTO {
                             id: b.id as u32,
                             title: SharedString::from(b.title),
                         })
@@ -272,7 +272,7 @@ impl SidebarView {
             };
 
             let board_entity = board_active_model.insert(&*db).await?;
-            let board = BoardNavDTO {
+            let board = BoardDTO {
                 id: board_entity.id as u32,
                 title: SharedString::from(board_entity.title),
             };
@@ -458,8 +458,6 @@ impl Render for SidebarView {
         let active_board_index = self.active_board_index;
         let adding_board_to_project = self.adding_board_to_project;
         let renaming_board = self.renaming_board;
-        let new_board_input = self.new_board_input.clone();
-        let rename_board_input = self.rename_board_input.clone();
 
         let project_menu_items: Vec<SidebarMenuItem> = self
             .projects
@@ -480,7 +478,7 @@ impl Render for SidebarView {
                             let board_id = b.id;
                             SidebarMenuItem::new(b.title.clone())
                                 .when(renaming_board == Some((p_idx, b_idx)), |this| {
-                                    let input = rename_board_input.clone();
+                                    let input = self.rename_board_input.clone();
                                     this.suffix(move |_window, cx| {
                                         Input::new(&input)
                                             .small()
@@ -498,14 +496,15 @@ impl Render for SidebarView {
                                 .context_menu({
                                     move |menu, _, _| {
                                         menu.menu_with_icon(
-                                            "Delete",
-                                            IconName::Delete,
-                                            Box::new(DeleteBoardAction(board_id)),
-                                        )
-                                        .menu_with_icon(
                                             "Edit",
                                             IconName::Replace,
                                             Box::new(EditBoardAction(board_id)),
+                                        )
+                                        .check_side(Side::Right)
+                                        .menu_with_icon(
+                                            "Delete",
+                                            IconName::Delete,
+                                            Box::new(DeleteBoardAction(board_id)),
                                         )
                                     }
                                 })
@@ -520,7 +519,7 @@ impl Render for SidebarView {
 
                         if adding_board_to_project == Some(p_idx) {
                             boards.push(SidebarMenuItem::new("").disable(true).suffix({
-                                let input = new_board_input.clone();
+                                let input = self.new_board_input.clone();
                                 move |_window, cx| {
                                     Input::new(&input)
                                         .small()

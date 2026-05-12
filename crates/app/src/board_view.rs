@@ -1,22 +1,32 @@
 use anyhow::Result;
 use entity::{card, card::Entity as Card, entry, entry::Entity as Entry};
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, IconName, WindowExt,
+    ActiveTheme, IconName, Side, WindowExt,
     button::{Button, ButtonVariants},
     dialog::{
         DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
     },
     h_flex,
     input::{Input, InputEvent, InputState},
+    menu::DropdownMenu as _,
     scroll::ScrollableElement,
     v_flex,
 };
-use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ActiveValue::Set, EntityTrait};
+use serde::Deserialize;
 use std::rc::Rc;
 
 use crate::DB;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = sidebar, no_json)]
+struct DeleteCardAction(u32);
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = sidebar, no_json)]
+struct EditCardAction(u32);
 
 pub(crate) struct BoardView {
     board_id: Option<u32>,
@@ -25,6 +35,8 @@ pub(crate) struct BoardView {
     new_list_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
     dialog_description_input: Entity<InputState>,
+    rename_card_input: Entity<InputState>,
+    renaming_card_id: Option<u32>,
     pending_card_id: Option<u32>,
     next_temporary_card_id: u32,
     next_temporary_entry_id: u32,
@@ -104,6 +116,7 @@ impl BoardView {
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let new_list_input = cx.new(|cx| InputState::new(window, cx).placeholder("List name..."));
+
         let dialog_title_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Give your title"));
 
@@ -115,6 +128,8 @@ impl BoardView {
                 .soft_wrap(true)
                 .searchable(true)
         });
+
+        let card_edit_input = cx.new(|cx| InputState::new(window, cx).placeholder("Edit title..."));
 
         cx.subscribe(
             &new_list_input,
@@ -152,6 +167,28 @@ impl BoardView {
         )
         .detach();
 
+        cx.subscribe(
+            &card_edit_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let name = text.trim();
+                    if !name.is_empty() {
+                        this.rename_card(cx, name);
+                    } else {
+                        this.renaming_card_id = None;
+                        cx.notify();
+                    }
+                }
+                InputEvent::Blur => {
+                    this.renaming_card_id = None;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         Self {
             board_id: None,
             cards: vec![],
@@ -159,6 +196,8 @@ impl BoardView {
             new_list_input,
             dialog_title_input,
             dialog_description_input,
+            rename_card_input: card_edit_input,
+            renaming_card_id: None,
             pending_card_id: None,
             next_temporary_card_id: 0,
             next_temporary_entry_id: 0,
@@ -292,6 +331,33 @@ impl BoardView {
         .detach();
     }
 
+    fn rename_card(&mut self, cx: &mut Context<Self>, new_title: &str) {
+        let Some(card_id) = self.renaming_card_id else {
+            return;
+        };
+
+        let title = new_title.to_string();
+        let db = cx.global::<DB>().conn.clone();
+
+        let Some(card) = self.cards.iter_mut().find(|card| card.id == card_id) else {
+            return;
+        };
+        card.title = title.clone();
+        self.renaming_card_id = None;
+        cx.notify();
+
+        cx.spawn(async move |_, _| -> Result<()> {
+            let model = card::ActiveModel {
+                id: Set(card_id as i64),
+                title: Set(title),
+                ..Default::default()
+            };
+            model.update(&*db).await?;
+            Ok(())
+        })
+        .detach();
+    }
+
     fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialog_title_input = self.dialog_title_input.clone();
         let dialog_description_input = self.dialog_description_input.clone();
@@ -386,6 +452,55 @@ impl BoardView {
             cx.notify();
         }
     }
+
+    fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
+        self.cards.retain(|card| card.id != card_id);
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+
+        cx.spawn(async move |_, _| -> Result<()> {
+            Card::delete_by_id(card_id as i64).exec(&*db).await?;
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn on_delete_card_action(
+        &mut self,
+        action: &DeleteCardAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_card(cx, action.0)
+    }
+
+    fn start_renaming_card(
+        &mut self,
+        action: &EditCardAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.cards.iter().find(|card| card.id == action.0) else {
+            return;
+        };
+
+        self.renaming_card_id = Some(card.id);
+        self.rename_card_input.update(cx, |input, cx| {
+            input.set_value(card.title.clone(), window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn on_edit_card_action(
+        &mut self,
+        action: &EditCardAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_renaming_card(action, window, cx)
+    }
 }
 
 impl Render for BoardView {
@@ -403,6 +518,8 @@ impl Render for BoardView {
 
         h_flex()
             .id("scrollable-container")
+            .on_action(cx.listener(Self::on_delete_card_action))
+            .on_action(cx.listener(Self::on_edit_card_action))
             .size_full()
             .overflow_x_scrollbar()
             .gap_4()
@@ -431,10 +548,38 @@ impl Render for BoardView {
                             this.move_entry(info, card_id, cx);
                         }))
                         .child(
-                            div()
+                            h_flex()
+                                .id("card-list-title")
                                 .p_1()
+                                .justify_between()
                                 .font_weight(FontWeight::MEDIUM)
-                                .child(card.title.clone()),
+                                .when_else(
+                                    self.renaming_card_id == Some(card_id),
+                                    |this| this.child(Input::new(&self.rename_card_input)),
+                                    |this| this.child(card.title.clone()),
+                                )
+                                .child(
+                                    Button::new(("card-menu", card_id as usize))
+                                        .icon(IconName::Ellipsis)
+                                        .ghost()
+                                        .compact()
+                                        .tooltip("Card actions")
+                                        .dropdown_menu_with_anchor(Anchor::LeftCenter, {
+                                            move |menu, _, _| {
+                                                menu.menu_with_icon(
+                                                    "Edit",
+                                                    IconName::Replace,
+                                                    Box::new(EditCardAction(card_id)),
+                                                )
+                                                .check_side(Side::Right)
+                                                .menu_with_icon(
+                                                    "Delete",
+                                                    IconName::Delete,
+                                                    Box::new(DeleteCardAction(card_id)),
+                                                )
+                                            }
+                                        }),
+                                ),
                         )
                         .children(card.entries.iter().map(|entry| {
                             let drag_info = DragInfo::new(
