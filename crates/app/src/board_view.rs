@@ -2,7 +2,7 @@ use anyhow::Result;
 use entity::{card, card::Entity as Card, entry, entry::Entity as Entry};
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, IconName, Side, WindowExt,
+    ActiveTheme, Icon, IconName, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     dialog::{
         DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -565,17 +565,39 @@ impl Render for BoardView {
                                         .compact()
                                         .tooltip("Card actions")
                                         .dropdown_menu_with_anchor(Anchor::LeftCenter, {
-                                            move |menu, _, _| {
-                                                menu.menu_with_icon(
-                                                    "Edit",
-                                                    IconName::Replace,
+                                            move |menu, _, cx| {
+                                                let muted = cx.theme().muted_foreground;
+                                                menu.menu_element(
                                                     Box::new(EditCardAction(card_id)),
+                                                    move |_window, _cx| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .gap_2()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .child("Edit")
+                                                            .child(
+                                                                Icon::new(IconName::Replace)
+                                                                    .xsmall()
+                                                                    .text_color(muted),
+                                                            )
+                                                    },
                                                 )
-                                                .check_side(Side::Right)
-                                                .menu_with_icon(
-                                                    "Delete",
-                                                    IconName::Delete,
+                                                .menu_element(
                                                     Box::new(DeleteCardAction(card_id)),
+                                                    move |_window, _cx| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .gap_2()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .child("Delete")
+                                                            .child(
+                                                                Icon::new(IconName::Delete)
+                                                                    .xsmall()
+                                                                    .text_color(muted),
+                                                            )
+                                                    },
                                                 )
                                             }
                                         }),

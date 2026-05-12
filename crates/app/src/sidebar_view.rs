@@ -2,7 +2,7 @@ use anyhow::Result;
 use entity::{board, board::Entity as Board, project, project::Entity as Project};
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, IconName, Side, Sizable, Theme, ThemeRegistry, h_flex,
+    ActiveTheme, Icon, IconName, Sizable, Theme, ThemeRegistry, h_flex,
     input::{Input, InputEvent, InputState},
     select::{SearchableVec, Select, SelectDelegate, SelectEvent, SelectState},
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -494,17 +494,39 @@ impl Render for SidebarView {
                                         && active_board_index == Some(b_idx),
                                 )
                                 .context_menu({
-                                    move |menu, _, _| {
-                                        menu.menu_with_icon(
-                                            "Edit",
-                                            IconName::Replace,
+                                    move |menu, _, cx| {
+                                        let muted = cx.theme().muted_foreground;
+                                        menu.menu_element(
                                             Box::new(EditBoardAction(board_id)),
+                                            move |_window, _cx| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child("Edit")
+                                                    .child(
+                                                        Icon::new(IconName::Replace)
+                                                            .xsmall()
+                                                            .text_color(muted),
+                                                    )
+                                            },
                                         )
-                                        .check_side(Side::Right)
-                                        .menu_with_icon(
-                                            "Delete",
-                                            IconName::Delete,
+                                        .menu_element(
                                             Box::new(DeleteBoardAction(board_id)),
+                                            move |_window, _cx| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child("Delete")
+                                                    .child(
+                                                        Icon::new(IconName::Delete)
+                                                            .xsmall()
+                                                            .text_color(muted),
+                                                    )
+                                            },
                                         )
                                     }
                                 })
