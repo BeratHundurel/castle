@@ -444,12 +444,27 @@ impl BoardView {
             moving_entry = Some(source_card.entries.remove(index));
         }
 
-        if let Some(mut entry) = moving_entry
+        if let Some(mut dto) = moving_entry
             && let Some(target_card) = self.cards.iter_mut().find(|card| card.id == target_card_id)
         {
-            entry.card_id = target_card_id;
-            target_card.entries.push(entry);
+            dto.card_id = target_card_id;
+            target_card.entries.push(dto);
             cx.notify();
+
+            let db = cx.global::<DB>().conn.clone();
+            let entry_id = info.entry_id;
+            cx.spawn(async move |_, _| -> Result<()> {
+                let model = entry::ActiveModel {
+                    id: Set(entry_id as i64),
+                    card_id: Set(target_card_id as i64),
+                    ..Default::default()
+                };
+
+                model.update(&*db).await?;
+
+                Ok(())
+            })
+            .detach();
         }
     }
 
@@ -555,7 +570,17 @@ impl Render for BoardView {
                                 .font_weight(FontWeight::MEDIUM)
                                 .when_else(
                                     self.renaming_card_id == Some(card_id),
-                                    |this| this.child(Input::new(&self.rename_card_input)),
+                                    |this| {
+                                        this.child(
+                                            Input::new(&self.rename_card_input)
+                                                .bg(theme.secondary)
+                                                .focus_bordered(false)
+                                                .rounded_none()
+                                                .border_0()
+                                                .border_b_1()
+                                                .border_color(theme.foreground),
+                                        )
+                                    },
                                     |this| this.child(card.title.clone()),
                                 )
                                 .child(
@@ -660,7 +685,15 @@ impl Render for BoardView {
             })
             .child({
                 if self.is_adding_list {
-                    Input::new(&self.new_list_input).w_80().into_any_element()
+                    Input::new(&self.new_list_input)
+                        .w_80()
+                        .h_10()
+                        .rounded_none()
+                        .focus_bordered(false)
+                        .border_0()
+                        .border_b_1()
+                        .border_color(theme.foreground)
+                        .into_any_element()
                 } else {
                     h_flex()
                         .id("add-list-button")
