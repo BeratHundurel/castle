@@ -166,6 +166,13 @@ impl SidebarView {
         )
         .detach();
 
+        cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                cx.notify();
+            }
+        })
+        .detach();
+
         Self {
             active_project_index: 0,
             active_board_index: Some(0),
@@ -459,22 +466,55 @@ impl Render for SidebarView {
         let adding_board_to_project = self.adding_board_to_project;
         let renaming_board = self.renaming_board;
 
+        let search_query = self.search_input.read(cx).text().to_string();
+        let search_lower = search_query.to_lowercase();
+
         let project_menu_items: Vec<SidebarMenuItem> = self
             .projects
             .iter()
             .enumerate()
-            .map(|(p_idx, p)| {
+            .filter_map(|(p_idx, p)| {
+                if search_lower.is_empty() {
+                    return Some((p_idx, p, true));
+                }
+
+                let project_name_matches = p.name.to_lowercase().contains(&search_lower);
+                let has_matching_board = p
+                    .boards
+                    .iter()
+                    .any(|b| b.title.to_lowercase().contains(&search_lower));
+
+                if project_name_matches || has_matching_board {
+                    Some((p_idx, p, project_name_matches))
+                } else {
+                    None
+                }
+            })
+            .map(|(p_idx, p, project_name_matches)| {
                 let first_board_id = p.boards.first().map(|board| board.id);
+
+                let filtered_boards: Vec<(usize, &BoardDTO)> =
+                    if search_lower.is_empty() || project_name_matches {
+                        p.boards.iter().enumerate().collect()
+                    } else {
+                        p.boards
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, b)| b.title.to_lowercase().contains(&search_lower))
+                            .collect()
+                    };
+
+                let is_expanded = p.is_expanded || !search_lower.is_empty();
                 SidebarMenuItem::new(p.name.clone())
                     .icon(IconName::FolderOpen)
                     .active(active_project_index == p_idx && active_board_index.is_none())
-                    .default_open(p.is_expanded)
+                    .default_open(is_expanded)
                     .click_to_toggle(true)
                     .children({
                         let mut boards: Vec<SidebarMenuItem> =
-                            Vec::with_capacity(p.boards.len() + 1);
+                            Vec::with_capacity(filtered_boards.len() + 1);
 
-                        boards.extend(p.boards.iter().enumerate().map(|(b_idx, b)| {
+                        boards.extend(filtered_boards.into_iter().map(|(b_idx, b)| {
                             let board_id = b.id;
                             SidebarMenuItem::new(b.title.clone())
                                 .when(renaming_board == Some((p_idx, b_idx)), |this| {
