@@ -10,6 +10,7 @@ pub struct Model {
     pub id: i64,
     pub title: String,
     pub board_id: i64,
+    pub position: i32,
     #[sea_orm(
         belongs_to,
         from = "board_id",

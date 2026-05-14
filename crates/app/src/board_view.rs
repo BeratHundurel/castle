@@ -13,7 +13,7 @@ use gpui_component::{
     scroll::ScrollableElement,
     v_flex,
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, QueryFilter, QueryOrder};
 use sea_orm::{ActiveValue::Set, EntityTrait};
 use serde::Deserialize;
 use std::rc::Rc;
@@ -47,6 +47,14 @@ struct DragInfo {
     entry_id: u32,
     source_board_id: u32,
     source_card_id: u32,
+    position: Point<Pixels>,
+    title: SharedString,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct CardDragInfo {
+    card_id: u32,
+    source_board_id: u32,
     position: Point<Pixels>,
     title: SharedString,
 }
@@ -93,19 +101,62 @@ impl Render for DragInfo {
     }
 }
 
+impl CardDragInfo {
+    fn new(card_id: u32, source_board_id: u32, title: SharedString) -> Self {
+        Self {
+            card_id,
+            source_board_id,
+            position: Point::default(),
+            title,
+        }
+    }
+
+    fn position(mut self, pos: Point<Pixels>) -> Self {
+        self.position = pos;
+        self
+    }
+}
+
+impl Render for CardDragInfo {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let size = gpui::size(px(320.), px(56.));
+
+        div()
+            .pl(self.position.x - size.width.half())
+            .pt(self.position.y - size.height.half())
+            .child(
+                h_flex()
+                    .w(size.width)
+                    .h(size.height)
+                    .gap_2()
+                    .items_center()
+                    .p_3()
+                    .bg(cx.theme().secondary.opacity(0.92))
+                    .text_color(cx.theme().secondary_foreground)
+                    .border_1()
+                    .border_color(cx.theme().primary)
+                    .rounded(cx.theme().radius)
+                    .shadow_lg()
+                    .child("⋮⋮")
+                    .child(self.title.clone()),
+            )
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct CardDTO {
     id: u32,
-    title: String,
+    title: SharedString,
     board_id: u32,
+    position: i32,
     entries: Vec<EntryDTO>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EntryDTO {
     id: u32,
-    title: String,
-    description: String,
+    title: SharedString,
+    description: SharedString,
     card_id: u32,
 }
 
@@ -146,8 +197,9 @@ impl BoardView {
                             cx,
                             CardDTO {
                                 id: card_id,
-                                title: name.to_string(),
+                                title: SharedString::from(name),
                                 board_id,
+                                position: this.cards.len() as i32,
                                 entries: vec![],
                             },
                             board_id,
@@ -221,6 +273,8 @@ impl BoardView {
         cx.spawn(async move |this, cx| -> Result<()> {
             let result = Card::load()
                 .filter(card::Column::BoardId.eq(board_id as i32))
+                .order_by_asc(card::Column::Position)
+                .order_by_asc(card::Column::Id)
                 .with(Entry)
                 .all(&*db)
                 .await?;
@@ -230,14 +284,15 @@ impl BoardView {
                 .map(|c| CardDTO {
                     id: c.id as u32,
                     board_id: c.board_id as u32,
-                    title: c.title,
+                    title: SharedString::from(c.title),
+                    position: c.position,
                     entries: c
                         .entries
                         .into_iter()
                         .map(|e| EntryDTO {
                             id: e.id as u32,
-                            title: e.title,
-                            description: e.description,
+                            title: SharedString::from(e.title),
+                            description: SharedString::from(e.description),
                             card_id: e.card_id as u32,
                         })
                         .collect(),
@@ -277,8 +332,8 @@ impl BoardView {
 
         cx.spawn(async move |this, cx| -> Result<()> {
             let model = entry::ActiveModel {
-                title: Set(entry.title),
-                description: Set(entry.description),
+                title: Set(entry.title.to_string()),
+                description: Set(entry.description.to_string()),
                 card_id: Set(entry.card_id as i64),
                 ..Default::default()
             };
@@ -310,8 +365,9 @@ impl BoardView {
 
         cx.spawn(async move |this, cx| -> Result<()> {
             let model = card::ActiveModel {
-                title: Set(card.title),
+                title: Set(card.title.to_string()),
                 board_id: Set(board_id as i64),
+                position: Set(card.position),
                 ..Default::default()
             };
             let inserted = model.insert(&*db).await?;
@@ -342,7 +398,8 @@ impl BoardView {
         let Some(card) = self.cards.iter_mut().find(|card| card.id == card_id) else {
             return;
         };
-        card.title = title.clone();
+
+        card.title = SharedString::from(title.clone());
         self.renaming_card_id = None;
         cx.notify();
 
@@ -372,8 +429,8 @@ impl BoardView {
             let entry_id = this.next_entry_id();
             let entry = EntryDTO {
                 id: entry_id,
-                title,
-                description,
+                title: SharedString::from(title),
+                description: SharedString::from(description),
                 card_id,
             };
             this.pending_card_id = None;
@@ -468,6 +525,78 @@ impl BoardView {
         }
     }
 
+    fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
+        let positions: Vec<(u32, i32)> = self
+            .cards
+            .iter_mut()
+            .enumerate()
+            .map(|(index, card)| {
+                card.position = index as i32;
+                (card.id, card.position)
+            })
+            .collect();
+
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |_, _| -> Result<()> {
+            for (card_id, position) in positions {
+                let model = card::ActiveModel {
+                    id: Set(card_id as i64),
+                    position: Set(position),
+                    ..Default::default()
+                };
+                model.update(&*db).await?;
+            }
+
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn move_card(&mut self, info: &CardDragInfo, target_card_id: u32, cx: &mut Context<Self>) {
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+
+        if info.source_board_id != board_id || info.card_id == target_card_id {
+            return;
+        }
+
+        let Some(from_index) = self.cards.iter().position(|card| card.id == info.card_id) else {
+            return;
+        };
+        let Some(to_index) = self.cards.iter().position(|card| card.id == target_card_id) else {
+            return;
+        };
+
+        let moved_card = self.cards.remove(from_index);
+        self.cards.insert(to_index, moved_card);
+        self.persist_card_positions(cx);
+    }
+
+    fn move_card_to_end(&mut self, info: &CardDragInfo, cx: &mut Context<Self>) {
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+
+        if info.source_board_id != board_id {
+            return;
+        }
+
+        let Some(from_index) = self.cards.iter().position(|card| card.id == info.card_id) else {
+            return;
+        };
+
+        if from_index + 1 == self.cards.len() {
+            return;
+        }
+
+        let moved_card = self.cards.remove(from_index);
+        self.cards.push(moved_card);
+        self.persist_card_positions(cx);
+    }
+
     fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
         self.cards.retain(|card| card.id != card_id);
         cx.notify();
@@ -544,6 +673,8 @@ impl Render for BoardView {
                 self.cards.iter().map(|card| {
                     let card_id = card.id;
                     let board_id = board_id_for_render;
+                    let card_drag_info =
+                        CardDragInfo::new(card_id, board_id, card.title.clone().into());
 
                     v_flex()
                         .id(card.id as usize)
@@ -562,12 +693,26 @@ impl Render for BoardView {
                         .on_drop(cx.listener(move |this, info: &DragInfo, _, cx| {
                             this.move_entry(info, card_id, cx);
                         }))
+                        .drag_over::<CardDragInfo>(|this, _, _, cx| {
+                            this.border_1()
+                                .border_color(cx.theme().primary)
+                                .bg(cx.theme().secondary_hover)
+                                .shadow_lg()
+                        })
+                        .on_drop(cx.listener(move |this, info: &CardDragInfo, _, cx| {
+                            this.move_card(info, card_id, cx);
+                        }))
                         .child(
                             h_flex()
                                 .id("card-list-title")
                                 .p_1()
                                 .justify_between()
                                 .font_weight(FontWeight::MEDIUM)
+                                .cursor_move()
+                                .hover(|this| this.text_color(theme.foreground))
+                                .on_drag(card_drag_info, |info: &CardDragInfo, position, _, cx| {
+                                    cx.new(|_| info.clone().position(position))
+                                })
                                 .when_else(
                                     self.renaming_card_id == Some(card_id),
                                     |this| {
@@ -709,6 +854,14 @@ impl Render for BoardView {
                         .rounded(theme.radius)
                         .cursor_pointer()
                         .hover(|this| this.bg(theme.info.opacity(0.18)))
+                        .drag_over::<CardDragInfo>(|this, _, _, cx| {
+                            this.bg(cx.theme().secondary_hover)
+                                .border_color(cx.theme().primary)
+                                .text_color(cx.theme().primary)
+                        })
+                        .on_drop(cx.listener(|this, info: &CardDragInfo, _, cx| {
+                            this.move_card_to_end(info, cx);
+                        }))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.is_adding_list = true;
                             this.new_list_input.update(cx, |input, cx| {
