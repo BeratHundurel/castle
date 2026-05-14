@@ -673,8 +673,7 @@ impl Render for BoardView {
                 self.cards.iter().map(|card| {
                     let card_id = card.id;
                     let board_id = board_id_for_render;
-                    let card_drag_info =
-                        CardDragInfo::new(card_id, board_id, card.title.clone().into());
+                    let card_drag_info = CardDragInfo::new(card_id, board_id, card.title.clone());
 
                     v_flex()
                         .id(card.id as usize)
@@ -774,12 +773,8 @@ impl Render for BoardView {
                                 ),
                         )
                         .children(card.entries.iter().map(|entry| {
-                            let drag_info = DragInfo::new(
-                                entry.id,
-                                board_id,
-                                card_id,
-                                entry.title.clone().into(),
-                            );
+                            let drag_info =
+                                DragInfo::new(entry.id, board_id, card_id, entry.title.clone());
 
                             div()
                                 .id(entry.id as usize)
