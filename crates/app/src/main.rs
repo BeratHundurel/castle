@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod board_view;
+mod markdown_editor_view;
 mod sidebar_view;
 
 use anyhow::Result;
@@ -11,7 +12,12 @@ use gpui::{
     IntoElement, ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
     div, px, size,
 };
-use gpui_component::{ActiveTheme, Root, Theme, ThemeRegistry, TitleBar, h_flex, v_flex};
+use gpui_component::{
+    ActiveTheme, IconName, Root, Sizable as _, Theme, ThemeRegistry, TitleBar,
+    button::{Button, ButtonVariants as _},
+    h_flex, v_flex,
+};
+use markdown_editor_view::MarkdownEditorView;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
 use sidebar_view::{SidebarEvent, SidebarView};
@@ -27,6 +33,28 @@ pub struct CastleApp {
 impl CastleApp {
     pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, cx))
+    }
+
+    fn open_markdown_editor(_: &gpui::ClickEvent, _: &mut Window, cx: &mut App) {
+        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
+
+        cx.spawn(async move |cx| {
+            if let Err(err) = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitleBar::title_bar_options()),
+                    window_min_size: Some(size(px(720.), px(480.))),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    let view = MarkdownEditorView::view(window, cx);
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
+            ) {
+                eprintln!("Failed to open markdown editor: {err}");
+            }
+        })
+        .detach();
     }
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -73,7 +101,26 @@ impl Render for CastleApp {
             .track_focus(&self.focus_handle)
             .size_full()
             .overflow_hidden()
-            .child(TitleBar::new().bg(theme.sidebar))
+            .child(
+                TitleBar::new().bg(theme.sidebar).child(
+                    h_flex()
+                        .id("title-bar-actions")
+                        .h_full()
+                        .items_center()
+                        .justify_end()
+                        .w_full()
+                        .pr_2()
+                        .child(
+                            Button::new("open-markdown-editor")
+                                .icon(IconName::BookOpen)
+                                .label("Markdown")
+                                .ghost()
+                                .small()
+                                .tooltip("Open Markdown editor")
+                                .on_click(Self::open_markdown_editor),
+                        ),
+                ),
+            )
             .child(
                 h_flex()
                     .id("main-container")
@@ -122,6 +169,7 @@ async fn main() -> Result<()> {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+        markdown_editor_view::init(cx);
 
         init_themes(cx);
 
