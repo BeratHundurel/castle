@@ -4,12 +4,12 @@ use gpui::{
     Subscription, Task, Window, actions, div, px,
 };
 use gpui_component::{
-    ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar,
+    ActiveTheme as _, IconName, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
     highlighter::Language,
-    input::{Input, InputEvent, InputState, TabSize},
+    input::{Input, InputEvent, InputState, RopeExt, TabSize},
     resizable::{h_resizable, resizable_panel},
     text::{TextView, TextViewState},
     v_flex,
@@ -35,6 +35,18 @@ actions!(
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = markdown_editor, no_json)]
 struct ApplyMarkdownFormat(MarkdownFormat);
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = markdown_editor, no_json)]
+struct ExpandEmmet;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = markdown_editor, no_json)]
+struct EmmetSubmitWrap;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = markdown_editor, no_json)]
+struct EmmetCancelWrap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
 enum MarkdownFormat {
@@ -86,6 +98,9 @@ pub(crate) struct MarkdownEditorView {
     auto_save_epoch: u64,
     _auto_save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    emmet_input: Entity<InputState>,
+    show_emmet_input: bool,
+    emmet_replacement_range: Option<std::ops::Range<usize>>,
 }
 
 const DEFAULT_NOTE: &str = r#"# Untitled note
@@ -114,6 +129,10 @@ pub(crate) fn init(cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-o", OpenMarkdownFile, Some("MarkdownEditor")),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-p", ExpandEmmet, Some("MarkdownEditor")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-p", ExpandEmmet, Some("MarkdownEditor")),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", SaveMarkdownFile, Some("MarkdownEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-s", SaveMarkdownFile, Some("MarkdownEditor")),
@@ -125,6 +144,8 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-e", ToggleEditorMode, Some("MarkdownEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-e", ToggleEditorMode, Some("MarkdownEditor")),
+        KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
+        KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
     ]);
 }
 
@@ -158,6 +179,11 @@ impl MarkdownEditorView {
             TextViewState::markdown(DEFAULT_NOTE, cx)
                 .scrollable(true)
                 .selectable(true)
+        });
+
+        let emmet_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Enter Emmet abbreviation (e.g. details>summary)")
         });
 
         let focus_handle = cx.focus_handle();
@@ -198,6 +224,9 @@ impl MarkdownEditorView {
             auto_save_epoch: 0,
             _auto_save_task: None,
             _subscriptions,
+            emmet_input,
+            show_emmet_input: false,
+            emmet_replacement_range: None,
         }
     }
 
@@ -571,6 +600,138 @@ impl MarkdownEditorView {
         self.toggle_mode(cx);
     }
 
+    fn on_action_expand_emmet(
+        &mut self,
+        _: &ExpandEmmet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected = self.editor.read(cx).selected_value().to_string();
+        let editor_has_selection = !selected.is_empty();
+
+        if editor_has_selection {
+            self.show_emmet_input = true;
+            let range = self.editor.read(cx).selected_range();
+            self.emmet_replacement_range = Some(range);
+
+            self.emmet_input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                input.focus(window, cx);
+            });
+            cx.notify();
+            return;
+        }
+
+        // If nothing is selected, try to extract the word before the cursor.
+        let mut replacement_start_offset = None;
+        let mut word = String::new();
+        let editor = self.editor.read(cx);
+        let offset = editor.cursor();
+        let text = editor.text().to_string();
+
+        // Go backwards to find the start of the word
+        let mut start = offset;
+        let bytes = text.as_bytes();
+        while start > 0 {
+            let c = bytes[start - 1];
+            if c.is_ascii_alphanumeric() || c == b'.' || c == b'#' || c == b'>' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        if start < offset {
+            word = text[start..offset].to_string();
+            replacement_start_offset = Some(start);
+        }
+
+        if !word.is_empty() {
+            let replacement = parse_emmet_abbreviation(&word, "");
+            self.editor.update(cx, |editor, cx| {
+                if let Some(start) = replacement_start_offset {
+                    let end = editor.cursor();
+                    let rope = editor.text();
+                    let start_utf16 = rope.offset_to_offset_utf16(start);
+                    let end_utf16 = rope.offset_to_offset_utf16(end);
+                    let range_utf16 = start_utf16..end_utf16;
+
+                    gpui::EntityInputHandler::replace_text_in_range(
+                        editor,
+                        Some(range_utf16),
+                        &replacement,
+                        window,
+                        cx,
+                    );
+                }
+                editor.focus(window, cx);
+            });
+        } else {
+            // No selection, no word before cursor: show input to insert new
+            self.show_emmet_input = true;
+            let range = editor.selected_range();
+            self.emmet_replacement_range = Some(range);
+            self.emmet_input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                input.focus(window, cx);
+            });
+            cx.notify();
+        }
+    }
+
+    fn on_action_emmet_submit_wrap(
+        &mut self,
+        _: &EmmetSubmitWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.show_emmet_input {
+            return;
+        }
+
+        let abbreviation = self.emmet_input.read(cx).value();
+
+        if let Some(range) = self.emmet_replacement_range.clone() {
+            self.editor.update(cx, |editor, cx| {
+                let rope = editor.text();
+                // get the content to wrap
+                let content = rope.slice(range.clone()).to_string();
+                let replacement = parse_emmet_abbreviation(&abbreviation, &content);
+
+                let start_utf16 = rope.offset_to_offset_utf16(range.start);
+                let end_utf16 = rope.offset_to_offset_utf16(range.end);
+                let range_utf16 = start_utf16..end_utf16;
+
+                gpui::EntityInputHandler::replace_text_in_range(
+                    editor,
+                    Some(range_utf16),
+                    &replacement,
+                    window,
+                    cx,
+                );
+                editor.focus(window, cx);
+            });
+        }
+
+        self.show_emmet_input = false;
+        self.emmet_replacement_range = None;
+        cx.notify();
+    }
+
+    fn on_action_emmet_cancel_wrap(
+        &mut self,
+        _: &EmmetCancelWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_emmet_input {
+            self.show_emmet_input = false;
+            self.emmet_replacement_range = None;
+            self.editor
+                .update(cx, |editor, cx| editor.focus(window, cx));
+            cx.notify();
+        }
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mode = self.mode;
         let save_state = self.save_state.clone();
@@ -779,6 +940,10 @@ impl Focusable for MarkdownEditorView {
 
 impl Render for MarkdownEditorView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme_background = cx.theme().background;
+        let theme_border = cx.theme().border;
+        let theme_input = cx.theme().input;
+
         v_flex()
             .id("markdown-editor-window")
             .key_context("MarkdownEditor")
@@ -790,28 +955,62 @@ impl Render for MarkdownEditorView {
             .on_action(cx.listener(Self::on_action_save))
             .on_action(cx.listener(Self::on_action_save_as))
             .on_action(cx.listener(Self::on_action_toggle_mode))
+            .on_action(cx.listener(Self::on_action_expand_emmet))
+            .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
+            .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
             .on_action(cx.listener(Self::apply_format))
             .child(
-                TitleBar::new().bg(cx.theme().title_bar).child(
-                    h_flex()
-                        .id("markdown-title")
-                        .items_center()
-                        .gap_2()
-                        .h_full()
-                        .w_full()
-                        .child(IconName::BookOpen)
-                        .child(
-                            Input::new(&self.title_input)
-                                .border_0()
-                                .focus_bordered(false)
-                                .bg(cx.theme().title_bar)
-                                .w(px(280.)),
-                        ),
-                ),
+                h_flex()
+                    .id("markdown-header")
+                    .items_center()
+                    .h(px(40.))
+                    .px_4()
+                    .bg(theme_background)
+                    .border_b_1()
+                    .border_color(theme_border)
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(IconName::BookOpen)
+                            .child(
+                                Input::new(&self.title_input)
+                                    .border_0()
+                                    .focus_bordered(false)
+                                    .bg(gpui::transparent_black())
+                                    .w(px(280.)),
+                            ),
+                    ),
             )
             .child(self.render_toolbar(cx))
             .child(div().flex_1().min_h_0().child(self.render_editor_body(cx)))
             .child(self.render_status_bar(cx))
+            .children(if self.show_emmet_input {
+                Some(
+                    div()
+                        .key_context("EmmetInput")
+                        .absolute()
+                        .top(px(60.))
+                        .left(px(20.))
+                        .w(px(300.))
+                        .p_2()
+                        .bg(theme_background)
+                        .border_1()
+                        .border_color(theme_border)
+                        .rounded_md()
+                        .shadow_sm()
+                        .child(
+                            Input::new(&self.emmet_input)
+                                .w_full()
+                                .bg(theme_input)
+                                .px_2()
+                                .py_1()
+                                .rounded_sm(),
+                        ),
+                )
+            } else {
+                None
+            })
     }
 }
 
@@ -823,6 +1022,63 @@ impl DocumentStats {
             characters: text.chars().count(),
         }
     }
+}
+
+fn parse_emmet_abbreviation(abbreviation: &str, content: &str) -> String {
+    let parts = abbreviation.split('>');
+    let mut prefix = String::new();
+    let mut suffix = String::new();
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        let mut tag = "div";
+        let mut id = "";
+        let mut classes = Vec::new();
+
+        let mut current = part;
+        if let Some(pos) = current.find(|c| c == '.' || c == '#') {
+            if pos > 0 {
+                tag = &current[..pos];
+            }
+            current = &current[pos..];
+        } else {
+            tag = current;
+            current = "";
+        }
+
+        while !current.is_empty() {
+            let is_class = current.starts_with('.');
+            let is_id = current.starts_with('#');
+            current = &current[1..];
+            let next_pos = current
+                .find(|c| c == '.' || c == '#')
+                .unwrap_or(current.len());
+            let name = &current[..next_pos];
+
+            if is_class && !name.is_empty() {
+                classes.push(name);
+            } else if is_id && !name.is_empty() {
+                id = name;
+            }
+            current = &current[next_pos..];
+        }
+
+        let mut attrs = String::new();
+        if !id.is_empty() {
+            attrs.push_str(&format!(" id=\"{id}\""));
+        }
+        if !classes.is_empty() {
+            attrs.push_str(&format!(" class=\"{}\"", classes.join(" ")));
+        }
+
+        prefix.push_str(&format!("<{tag}{attrs}>"));
+        suffix = format!("</{tag}>") + &suffix;
+    }
+
+    format!("{prefix}{content}{suffix}")
 }
 
 fn format_button(id: &'static str, label: &'static str, format: MarkdownFormat) -> Button {

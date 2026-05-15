@@ -25,6 +25,7 @@ struct EditBoardAction(u32);
 #[derive(Clone)]
 pub(crate) enum SidebarEvent {
     BoardSelected { board_id: u32 },
+    MarkdownSelected,
 }
 
 struct ProjectDTO {
@@ -732,6 +733,17 @@ impl Render for SidebarView {
                                         .into_any_element()
                                 }
                             }),
+                    )
+                    .child(
+                        SidebarGroup::new("Shortcuts").child(
+                            SidebarMenu::new().child(
+                                SidebarMenuItem::new("Markdown Editor")
+                                    .icon(IconName::BookOpen)
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(SidebarEvent::MarkdownSelected);
+                                    })),
+                            ),
+                        ),
                     )
                     .child(
                         SidebarGroup::new("Projects")

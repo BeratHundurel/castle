@@ -12,11 +12,7 @@ use gpui::{
     IntoElement, ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
     div, px, size,
 };
-use gpui_component::{
-    ActiveTheme, IconName, Root, Sizable as _, Theme, ThemeRegistry, TitleBar,
-    button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
-};
+use gpui_component::{ActiveTheme, Root, Theme, ThemeRegistry, TitleBar, h_flex, v_flex};
 use markdown_editor_view::MarkdownEditorView;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
@@ -24,10 +20,17 @@ use sidebar_view::{SidebarEvent, SidebarView};
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
+enum ActiveView {
+    Board,
+    Markdown,
+}
+
 pub struct CastleApp {
     focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
     board: Entity<BoardView>,
+    markdown_editor: Entity<MarkdownEditorView>,
+    active_view: ActiveView,
 }
 
 impl CastleApp {
@@ -35,41 +38,26 @@ impl CastleApp {
         cx.new(|cx| Self::new(window, cx))
     }
 
-    fn open_markdown_editor(_: &gpui::ClickEvent, _: &mut Window, cx: &mut App) {
-        let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-
-        cx.spawn(async move |cx| {
-            if let Err(err) = cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitleBar::title_bar_options()),
-                    window_min_size: Some(size(px(720.), px(480.))),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let view = MarkdownEditorView::view(window, cx);
-                    cx.new(|cx| Root::new(view, window, cx))
-                },
-            ) {
-                eprintln!("Failed to open markdown editor: {err}");
-            }
-        })
-        .detach();
-    }
-
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = SidebarView::view(window, cx);
         let board = BoardView::view(window, cx);
+        let markdown_editor = MarkdownEditorView::view(window, cx);
 
         cx.subscribe_in(
             &sidebar,
             window,
             |this, _, event: &SidebarEvent, window, cx| match event {
                 SidebarEvent::BoardSelected { board_id } => {
+                    this.active_view = ActiveView::Board;
                     this.board
                         .update(cx, |board, cx| board.load_board(*board_id, cx));
-
                     this.focus_handle.focus(window, cx);
+                    cx.notify();
+                }
+                SidebarEvent::MarkdownSelected => {
+                    this.active_view = ActiveView::Markdown;
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
                 }
             },
         )
@@ -81,6 +69,8 @@ impl CastleApp {
             focus_handle: cx.focus_handle(),
             sidebar,
             board,
+            markdown_editor,
+            active_view: ActiveView::Board,
         }
     }
 }
@@ -101,26 +91,7 @@ impl Render for CastleApp {
             .track_focus(&self.focus_handle)
             .size_full()
             .overflow_hidden()
-            .child(
-                TitleBar::new().bg(theme.sidebar).child(
-                    h_flex()
-                        .id("title-bar-actions")
-                        .h_full()
-                        .items_center()
-                        .justify_end()
-                        .w_full()
-                        .pr_2()
-                        .child(
-                            Button::new("open-markdown-editor")
-                                .icon(IconName::BookOpen)
-                                .label("Markdown")
-                                .ghost()
-                                .small()
-                                .tooltip("Open Markdown editor")
-                                .on_click(Self::open_markdown_editor),
-                        ),
-                ),
-            )
+            .child(TitleBar::new().bg(theme.sidebar))
             .child(
                 h_flex()
                     .id("main-container")
@@ -130,12 +101,17 @@ impl Render for CastleApp {
                     .child(self.sidebar.clone())
                     .child(
                         div()
-                            .id("board-container")
+                            .id("content-container")
                             .flex_1()
                             .min_w_0()
                             .h_full()
                             .overflow_hidden()
-                            .child(self.board.clone()),
+                            .child(match self.active_view {
+                                ActiveView::Board => self.board.clone().into_any_element(),
+                                ActiveView::Markdown => {
+                                    self.markdown_editor.clone().into_any_element()
+                                }
+                            }),
                     )
                     .children(dialog_layer),
             )
