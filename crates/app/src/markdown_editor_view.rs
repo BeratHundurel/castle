@@ -8,6 +8,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
+    highlighter::Language,
     input::{Input, InputEvent, InputState, TabSize},
     resizable::{h_resizable, resizable_panel},
     text::{TextView, TextViewState},
@@ -15,6 +16,7 @@ use gpui_component::{
 };
 use serde::Deserialize;
 use std::{
+    fs::{read_to_string, write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -134,10 +136,10 @@ impl MarkdownEditorView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
-                .code_editor("markdown")
+                .code_editor(Language::Markdown)
                 .line_number(true)
                 .tab_size(TabSize {
-                    tab_size: 2,
+                    tab_size: 4,
                     ..Default::default()
                 })
                 .soft_wrap(true)
@@ -243,7 +245,7 @@ impl MarkdownEditorView {
             };
 
             let write_content = content.to_string();
-            let result = std::fs::write(&path, write_content).map_err(|err| err.to_string());
+            let result = write(&path, write_content).map_err(|err| err.to_string());
 
             this.update(cx, |this, cx| {
                 if this.auto_save_epoch == epoch {
@@ -323,7 +325,7 @@ impl MarkdownEditorView {
         cx.spawn_in(window, async move |_, window| {
             let paths = paths.await.ok()?.ok()??;
             let path = paths.first()?.clone();
-            let result = std::fs::read_to_string(&path).map_err(|err| err.to_string());
+            let result = read_to_string(&path).map_err(|err| err.to_string());
 
             window
                 .update(|window, cx| {
@@ -357,7 +359,7 @@ impl MarkdownEditorView {
         self.set_title_from_path(&path, window, cx);
 
         self.editor.update(cx, |editor, cx| {
-            editor.set_highlighter("markdown", cx);
+            editor.set_highlighter(Language::Markdown, cx);
             editor.set_value(content.clone(), window, cx);
             editor.focus(window, cx);
         });
@@ -411,7 +413,7 @@ impl MarkdownEditorView {
 
         cx.spawn(async move |this, cx| {
             let write_content = content.to_string();
-            let result = std::fs::write(&path, write_content).map_err(|err| err.to_string());
+            let result = write(&path, write_content).map_err(|err| err.to_string());
 
             this.update(cx, |this, cx| {
                 this.finish_save(path, content, result, cx);

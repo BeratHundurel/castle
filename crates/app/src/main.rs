@@ -170,6 +170,7 @@ async fn main() -> Result<()> {
     app.run(move |cx| {
         gpui_component::init(cx);
         markdown_editor_view::init(cx);
+        init_http_client(cx);
 
         init_themes(cx);
 
@@ -194,6 +195,13 @@ async fn main() -> Result<()> {
     });
 
     Ok(())
+}
+
+fn init_http_client(cx: &mut App) {
+    match reqwest_client::ReqwestClient::user_agent("castle") {
+        Ok(client) => cx.set_http_client(Arc::new(client)),
+        Err(err) => eprintln!("Failed to initialize HTTP client: {err}"),
+    }
 }
 
 fn init_themes(cx: &mut App) {

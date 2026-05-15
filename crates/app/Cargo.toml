@@ -7,7 +7,8 @@ edition.workspace = true
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
-gpui-component.workspace = true
+reqwest_client.workspace = true
+gpui-component = { workspace = true, features = ["tree-sitter-languages"] }
 gpui-component-assets.workspace = true
 anyhow.workspace = true
 sea-orm.workspace = true
