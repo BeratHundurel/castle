@@ -1,90 +1,32 @@
+mod action;
+mod emmet;
+mod render;
+mod types;
+mod util;
+
 use anyhow::Result;
 use entity::{note, note::Entity as Note};
 use gpui::{
-    Action, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    Window, actions, div, px,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
+    Subscription, Task, Window,
 };
 use gpui_component::{
-    ActiveTheme as _, IconName, Selectable as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
-    clipboard::Clipboard,
-    h_flex,
+    input::{InputEvent, InputState, RopeExt, TabSize},
     highlighter::Language,
-    input::{Input, InputEvent, InputState, RopeExt, TabSize},
-    resizable::{h_resizable, resizable_panel},
-    text::{TextView, TextViewState},
-    v_flex,
+    text::TextViewState,
 };
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, EntityTrait};
-use serde::Deserialize;
-use std::{
-    fs::{create_dir_all, read_to_string, write},
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
+use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::DB;
+use action::*;
+use emmet::parse_emmet_abbreviation;
+use types::*;
+use util::{suggested_file_name, unique_note_path};
 
-actions!(
-    markdown_editor,
-    [SaveMarkdownFile, SaveMarkdownFileAs, ToggleEditorMode,]
-);
-
-#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
-struct ApplyMarkdownFormat(MarkdownFormat);
-
-#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
-struct ExpandEmmet;
-
-#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
-struct EmmetSubmitWrap;
-
-#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
-struct EmmetCancelWrap;
-
-#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
-enum MarkdownFormat {
-    HeadingOne,
-    HeadingTwo,
-    HeadingThree,
-    Bold,
-    Italic,
-    InlineCode,
-    Link,
-    BulletList,
-    OrderedList,
-    Quote,
-    CodeBlock,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EditorMode {
-    Split,
-    Source,
-    Preview,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) enum SaveState {
-    Saved,
-    Dirty,
-    Saving,
-    Missing,
-    Error(SharedString),
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct DocumentStats {
-    lines: usize,
-    words: usize,
-    characters: usize,
-}
+pub(crate) use types::{DEFAULT_NOTE, SaveState};
+pub(crate) use util::now_ts;
 
 pub(crate) struct MarkdownEditorView {
     note_id: u32,
@@ -104,11 +46,6 @@ pub(crate) struct MarkdownEditorView {
     show_emmet_input: bool,
     emmet_replacement_range: Option<std::ops::Range<usize>>,
 }
-
-pub(crate) const DEFAULT_NOTE: &str = r#"# Untitled note
-
-Start writing Markdown here.
-"#;
 
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
@@ -241,7 +178,7 @@ impl MarkdownEditorView {
             let model = Note::find_by_id(note_id as i64).one(&*db).await.ok()??;
             let path = model.file_path.as_ref().map(PathBuf::from);
             let (content, missing) = match path.as_ref() {
-                Some(path) => match read_to_string(path) {
+                Some(path) => match std::fs::read_to_string(path) {
                     Ok(content) => (content, false),
                     Err(_) => (model.cached_content.clone(), true),
                 },
@@ -361,10 +298,10 @@ impl MarkdownEditorView {
                 && !is_missing
             {
                 if let Some(parent) = path.parent() {
-                    write_result = create_dir_all(parent).map_err(|err| err.to_string());
+                    write_result = std::fs::create_dir_all(parent).map_err(|err| err.to_string());
                 }
                 if write_result.is_ok() {
-                    write_result = write(path, content.to_string()).map_err(|err| err.to_string());
+                    write_result = std::fs::write(path, content.to_string()).map_err(|err| err.to_string());
                 }
             }
 
@@ -464,9 +401,9 @@ impl MarkdownEditorView {
         cx.spawn(async move |this, cx| {
             let result = (|| {
                 if let Some(parent) = path.parent() {
-                    create_dir_all(parent).map_err(|err| err.to_string())?;
+                    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
-                write(&path, content.to_string()).map_err(|err| err.to_string())?;
+                std::fs::write(&path, content.to_string()).map_err(|err| err.to_string())?;
                 Ok(())
             })();
 
@@ -749,433 +686,4 @@ impl MarkdownEditorView {
             cx.notify();
         }
     }
-
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mode = self.mode;
-        let save_state = self.save_state.clone();
-
-        h_flex()
-            .id("markdown-toolbar")
-            .w_full()
-            .gap_2()
-            .items_center()
-            .justify_between()
-            .py_2()
-            .px_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("save-note")
-                            .icon(IconName::Check)
-                            .ghost()
-                            .small()
-                            .tooltip("Save (Ctrl+S)")
-                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-                    )
-                    .child(
-                        Button::new("save-note-as")
-                            .label("Save as")
-                            .ghost()
-                            .small()
-                            .tooltip("Save as (Ctrl+Shift+S)")
-                            .on_click(cx.listener(|this, _, window, cx| this.save_as(window, cx))),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(format_button("h1", "H1", MarkdownFormat::HeadingOne))
-                    .child(format_button("h2", "H2", MarkdownFormat::HeadingTwo))
-                    .child(format_button("h3", "H3", MarkdownFormat::HeadingThree))
-                    .child(format_button("bold", "B", MarkdownFormat::Bold))
-                    .child(format_button("italic", "I", MarkdownFormat::Italic))
-                    .child(format_button("code", "Code", MarkdownFormat::InlineCode))
-                    .child(format_button("link", "Link", MarkdownFormat::Link))
-                    .child(format_button(
-                        "bullet",
-                        "- List",
-                        MarkdownFormat::BulletList,
-                    ))
-                    .child(format_button(
-                        "ordered",
-                        "1. List",
-                        MarkdownFormat::OrderedList,
-                    ))
-                    .child(format_button("quote", "Quote", MarkdownFormat::Quote))
-                    .child(format_button(
-                        "code-block",
-                        "Block",
-                        MarkdownFormat::CodeBlock,
-                    )),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("mode-split")
-                            .label("Split")
-                            .ghost()
-                            .small()
-                            .selected(mode == EditorMode::Split)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Split;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("mode-source")
-                            .label("Source")
-                            .ghost()
-                            .small()
-                            .selected(mode == EditorMode::Source)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Source;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("mode-preview")
-                            .label("Preview")
-                            .ghost()
-                            .small()
-                            .selected(mode == EditorMode::Preview)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Preview;
-                                cx.notify();
-                            })),
-                    )
-                    .child(status_badge(save_state, cx)),
-            )
-    }
-
-    fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("markdown-source")
-            .size_full()
-            .font_family(cx.theme().mono_font_family.clone())
-            .text_size(cx.theme().mono_font_size)
-            .bg(cx.theme().background)
-            .child(
-                Input::new(&self.editor)
-                    .h_full()
-                    .p_0()
-                    .border_0()
-                    .focus_bordered(false),
-            )
-    }
-
-    fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("markdown-preview")
-            .size_full()
-            .bg(cx.theme().background)
-            .child(
-                TextView::new(&self.preview)
-                    .code_block_actions(|code_block, _window, _cx| {
-                        Clipboard::new("copy-code").value(code_block.code().clone())
-                    })
-                    .p_5()
-                    .scrollable(true)
-                    .selectable(true),
-            )
-    }
-
-    fn render_editor_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        match self.mode {
-            EditorMode::Split => div()
-                .size_full()
-                .child(
-                    h_resizable("markdown-editor-split")
-                        .child(resizable_panel().child(self.render_source(cx)))
-                        .child(resizable_panel().child(self.render_preview(cx))),
-                )
-                .into_any_element(),
-            EditorMode::Source => self.render_source(cx).into_any_element(),
-            EditorMode::Preview => self.render_preview(cx).into_any_element(),
-        }
-    }
-
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let path = self
-            .current_path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "Not saved to a file yet".to_string());
-
-        h_flex()
-            .id("markdown-status-bar")
-            .w_full()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_3()
-            .py_1p5()
-            .border_t_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary)
-            .text_color(cx.theme().muted_foreground)
-            .text_xs()
-            .child(
-                div()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(SharedString::from(path)),
-            )
-            .child(
-                h_flex()
-                    .gap_3()
-                    .child(format!("{} lines", self.stats.lines))
-                    .child(format!("{} words", self.stats.words))
-                    .child(format!("{} chars", self.stats.characters))
-                    .child("Ctrl+E toggles mode"),
-            )
-    }
-}
-
-impl Focusable for MarkdownEditorView {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Render for MarkdownEditorView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_background = cx.theme().background;
-        let theme_border = cx.theme().border;
-        let theme_input = cx.theme().input;
-
-        v_flex()
-            .id("markdown-editor-window")
-            .key_context("MarkdownEditor")
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .on_action(cx.listener(Self::on_action_save))
-            .on_action(cx.listener(Self::on_action_save_as))
-            .on_action(cx.listener(Self::on_action_toggle_mode))
-            .on_action(cx.listener(Self::on_action_expand_emmet))
-            .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
-            .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
-            .on_action(cx.listener(Self::apply_format))
-            .child(self.render_toolbar(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .w_full()
-                    .child(self.render_editor_body(cx)),
-            )
-            .child(self.render_status_bar(cx))
-            .children(if self.show_emmet_input {
-                Some(
-                    div()
-                        .key_context("EmmetInput")
-                        .absolute()
-                        .top(px(60.))
-                        .left(px(20.))
-                        .w(px(300.))
-                        .p_2()
-                        .bg(theme_background)
-                        .border_1()
-                        .border_color(theme_border)
-                        .rounded_md()
-                        .shadow_sm()
-                        .child(
-                            Input::new(&self.emmet_input)
-                                .w_full()
-                                .bg(theme_input)
-                                .px_2()
-                                .py_1()
-                                .rounded_sm(),
-                        ),
-                )
-            } else {
-                None
-            })
-    }
-}
-
-impl DocumentStats {
-    fn from_text(text: &str) -> Self {
-        Self {
-            lines: text.lines().count().max(1),
-            words: text.split_whitespace().count(),
-            characters: text.chars().count(),
-        }
-    }
-}
-
-fn parse_emmet_abbreviation(abbreviation: &str, content: &str) -> String {
-    let parts = abbreviation.split('>');
-    let mut prefix = String::new();
-    let mut suffix = String::new();
-    for part in parts {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-
-        let mut tag = "div";
-        let mut id = "";
-        let mut classes = Vec::new();
-
-        let mut current = part;
-        if let Some(pos) = current.find(['.', '#']) {
-            if pos > 0 {
-                tag = &current[..pos];
-            }
-            current = &current[pos..];
-        } else {
-            tag = current;
-            current = "";
-        }
-
-        while !current.is_empty() {
-            let is_class = current.starts_with('.');
-            let is_id = current.starts_with('#');
-            current = &current[1..];
-            let next_pos = current.find(['.', '#']).unwrap_or(current.len());
-            let name = &current[..next_pos];
-
-            if is_class && !name.is_empty() {
-                classes.push(name);
-            } else if is_id && !name.is_empty() {
-                id = name;
-            }
-            current = &current[next_pos..];
-        }
-
-        let mut attrs = String::new();
-        if !id.is_empty() {
-            attrs.push_str(&format!(" id=\"{id}\""));
-        }
-        if !classes.is_empty() {
-            attrs.push_str(&format!(" class=\"{}\"", classes.join(" ")));
-        }
-
-        prefix.push_str(&format!("<{tag}{attrs}>"));
-        suffix = format!("</{tag}>") + &suffix;
-    }
-
-    format!("{prefix}{content}{suffix}")
-}
-
-fn format_button(id: &'static str, label: &'static str, format: MarkdownFormat) -> Button {
-    Button::new(format!("format-{id}"))
-        .label(label)
-        .ghost()
-        .small()
-        .on_click(move |_, window, cx| {
-            window.dispatch_action(Box::new(ApplyMarkdownFormat(format)), cx);
-        })
-}
-
-fn status_badge(save_state: SaveState, cx: &mut Context<MarkdownEditorView>) -> impl IntoElement {
-    match save_state {
-        SaveState::Saved => h_flex()
-            .id("save-status")
-            .gap_1()
-            .items_center()
-            .text_color(cx.theme().success)
-            .child(IconName::CircleCheck)
-            .child("Saved")
-            .into_any_element(),
-        SaveState::Dirty => h_flex()
-            .id("save-status")
-            .gap_1()
-            .items_center()
-            .text_color(cx.theme().warning)
-            .child(IconName::Asterisk)
-            .child("Unsaved")
-            .into_any_element(),
-        SaveState::Saving => h_flex()
-            .id("save-status")
-            .gap_1()
-            .items_center()
-            .text_color(cx.theme().info)
-            .child(IconName::Loader)
-            .child("Saving")
-            .into_any_element(),
-        SaveState::Missing => h_flex()
-            .id("save-status")
-            .gap_1()
-            .items_center()
-            .text_color(cx.theme().warning)
-            .child(IconName::TriangleAlert)
-            .child("File missing")
-            .into_any_element(),
-        SaveState::Error(err) => h_flex()
-            .id("save-status")
-            .gap_1()
-            .items_center()
-            .text_color(cx.theme().danger)
-            .child(IconName::TriangleAlert)
-            .child(err)
-            .into_any_element(),
-    }
-}
-
-fn suggested_file_name(title: &str) -> String {
-    let stem = if title.trim().is_empty() {
-        "untitled"
-    } else {
-        title.trim()
-    };
-    let mut file_name = String::with_capacity(stem.len() + 3);
-
-    for ch in stem.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            file_name.push(ch.to_ascii_lowercase());
-        } else if ch.is_whitespace() {
-            file_name.push('-');
-        }
-    }
-
-    if file_name.is_empty() {
-        file_name.push_str("untitled");
-    }
-    if !file_name.ends_with(".md") {
-        file_name.push_str(".md");
-    }
-    file_name
-}
-
-fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
-    let file_name = suggested_file_name(title);
-    let candidate = dir.join(&file_name);
-    if !candidate.exists() {
-        return candidate;
-    }
-
-    let stem = Path::new(&file_name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("untitled");
-    let extension = Path::new(&file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("md");
-
-    for index in 2.. {
-        let candidate = dir.join(format!("{stem}-{index}.{extension}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-
-    dir.join(file_name)
-}
-
-pub(crate) fn now_ts() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or_default()
 }
