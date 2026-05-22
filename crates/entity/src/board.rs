@@ -9,7 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
     pub title: String,
-    pub project_id: i64,
+    pub project_id: Option<i64>,
     #[sea_orm(has_many)]
     pub cards: HasMany<super::card::Entity>,
     #[sea_orm(
@@ -17,7 +17,7 @@ pub struct Model {
         from = "project_id",
         to = "id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
     pub project: HasOne<super::project::Entity>,
 }

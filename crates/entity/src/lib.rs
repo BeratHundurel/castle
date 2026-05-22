@@ -5,4 +5,5 @@ pub mod prelude;
 pub mod board;
 pub mod card;
 pub mod entry;
+pub mod note;
 pub mod project;

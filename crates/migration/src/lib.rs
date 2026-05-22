@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_create_table;
 mod m20260101_000002_add_card_position;
+mod m20260522_000003_notes_and_optional_board_projects;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20220101_000001_create_table::Migration),
             Box::new(m20260101_000002_add_card_position::Migration),
+            Box::new(m20260522_000003_notes_and_optional_board_projects::Migration),
         ]
     }
 }

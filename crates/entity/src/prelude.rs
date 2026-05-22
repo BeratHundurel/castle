@@ -3,4 +3,5 @@
 pub use super::board::Entity as Board;
 pub use super::card::Entity as Card;
 pub use super::entry::Entity as Entry;
+pub use super::note::Entity as Note;
 pub use super::project::Entity as Project;

@@ -11,6 +11,8 @@ pub struct Model {
     pub name: String,
     #[sea_orm(has_many)]
     pub boards: HasMany<super::board::Entity>,
+    #[sea_orm(has_many)]
+    pub notes: HasMany<super::note::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
