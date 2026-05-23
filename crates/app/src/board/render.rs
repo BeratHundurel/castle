@@ -9,9 +9,9 @@ use gpui_component::{
     v_flex,
 };
 
+use super::BoardView;
 use super::action::*;
 use super::drag::*;
-use super::BoardView;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -1,6 +1,6 @@
 mod action;
-mod dto;
 mod drag;
+mod dto;
 mod render;
 
 use anyhow::Result;
@@ -9,16 +9,21 @@ use gpui::*;
 use gpui_component::{
     WindowExt,
     button::{Button, ButtonVariants},
+    dialog::{
+        DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+    },
     input::{Input, InputEvent, InputState},
     v_flex,
 };
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+};
 use std::rc::Rc;
 
 use crate::DB;
 use action::*;
-use dto::*;
 use drag::*;
+use dto::*;
 
 pub(crate) struct BoardView {
     board_id: Option<u32>,
@@ -319,10 +324,10 @@ impl BoardView {
                     true
                 })
                 .child(
-                    gpui_component::dialog::DialogHeader::new()
+                    DialogHeader::new()
                         .mb_2()
-                        .child(gpui_component::dialog::DialogTitle::new().child("Add a new entry"))
-                        .child(gpui_component::dialog::DialogDescription::new().child("Enter the information needed")),
+                        .child(DialogTitle::new().child("Add a new entry"))
+                        .child(DialogDescription::new().child("Enter the information needed")),
                 )
                 .child(
                     v_flex()
@@ -332,9 +337,9 @@ impl BoardView {
                         .child(Input::new(&dialog_description_input)),
                 )
                 .child(
-                    gpui_component::dialog::DialogFooter::new()
+                    DialogFooter::new()
                         .justify_between()
-                        .child(gpui_component::dialog::DialogClose::new().child(
+                        .child(DialogClose::new().child(
                             Button::new("cancel").label("Cancel").outline().on_click({
                                 move |_, window, cx| {
                                     window.close_dialog(cx);
@@ -342,7 +347,7 @@ impl BoardView {
                             }),
                         ))
                         .child(
-                            gpui_component::dialog::DialogAction::new()
+                            DialogAction::new()
                                 .child(Button::new("confirm").primary().label("Confirm")),
                         ),
                 )

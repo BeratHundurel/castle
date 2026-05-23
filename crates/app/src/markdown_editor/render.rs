@@ -10,9 +10,9 @@ use gpui_component::{
     v_flex,
 };
 
+use super::MarkdownEditorView;
 use super::action::*;
 use super::types::*;
-use super::MarkdownEditorView;
 
 impl Focusable for MarkdownEditorView {
     fn focus_handle(&self, _: &App) -> FocusHandle {

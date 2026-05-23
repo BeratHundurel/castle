@@ -7,12 +7,12 @@ mod util;
 use anyhow::Result;
 use entity::{note, note::Entity as Note};
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Task, Window,
+    App, AppContext, Context, Entity, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
+    SharedString, Subscription, Task, Window,
 };
 use gpui_component::{
-    input::{InputEvent, InputState, RopeExt, TabSize},
     highlighter::Language,
+    input::{InputEvent, InputState, RopeExt, TabSize},
     text::TextViewState,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
@@ -289,6 +289,7 @@ impl MarkdownEditorView {
             let db = this
                 .read_with(cx, |_, cx| cx.global::<DB>().conn.clone())
                 .ok();
+
             let Some(db) = db else {
                 return;
             };
@@ -301,7 +302,8 @@ impl MarkdownEditorView {
                     write_result = std::fs::create_dir_all(parent).map_err(|err| err.to_string());
                 }
                 if write_result.is_ok() {
-                    write_result = std::fs::write(path, content.to_string()).map_err(|err| err.to_string());
+                    write_result =
+                        std::fs::write(path, content.to_string()).map_err(|err| err.to_string());
                 }
             }
 
@@ -614,7 +616,7 @@ impl MarkdownEditorView {
                     let start_utf16 = rope.offset_to_offset_utf16(start);
                     let end_utf16 = rope.offset_to_offset_utf16(end);
 
-                    gpui::EntityInputHandler::replace_text_in_range(
+                    EntityInputHandler::replace_text_in_range(
                         editor,
                         Some(start_utf16..end_utf16),
                         &replacement,
@@ -656,7 +658,7 @@ impl MarkdownEditorView {
                 let start_utf16 = rope.offset_to_offset_utf16(range.start);
                 let end_utf16 = rope.offset_to_offset_utf16(range.end);
 
-                gpui::EntityInputHandler::replace_text_in_range(
+                EntityInputHandler::replace_text_in_range(
                     editor,
                     Some(start_utf16..end_utf16),
                     &replacement,
