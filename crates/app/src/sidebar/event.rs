@@ -15,4 +15,18 @@ pub(crate) enum SidebarEvent {
     ActivateProject {
         project_id: u32,
     },
+    BoardRenamed {
+        board_id: u32,
+        title: SharedString,
+    },
+    NoteRenamed {
+        note_id: u32,
+        title: SharedString,
+    },
+    BoardDeleted {
+        board_id: u32,
+    },
+    NoteDeleted {
+        note_id: u32,
+    },
 }

@@ -1,26 +1,51 @@
+use crate::markdown_editor::{DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts};
 use anyhow::Result;
-use entity::{board, board::Entity as Board, note, note::Entity as Note, project::Entity as Project};
+use entity::{
+    board, board::Entity as Board, note, note::Entity as Note, project::Entity as Project,
+};
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PathPromptOptions, Render, SharedString, Styled, Window, div, px,
+    Action, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyBinding, ParentElement, PathPromptOptions, Render, SharedString, Styled,
+    Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
+    menu::ContextMenuExt as _,
     scroll::ScrollableElement as _,
     tab::{Tab, TabBar},
     v_flex,
 };
-use crate::markdown_editor::{DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts};
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
-use std::fs;
+use serde::Deserialize;
+use std::fs::read_to_string;
 
+use crate::DB;
 use crate::board::BoardView;
 use crate::sidebar::{SidebarEvent, SidebarView};
-use crate::DB;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+struct CloseTabAction(u64);
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+struct CloseOtherTabsAction(u64);
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+struct CloseAllTabsAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+struct CycleNextTab;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+struct CyclePrevTab;
 
 struct OpenTab {
     id: u64,
@@ -32,10 +57,12 @@ enum OpenTabKind {
     Chooser,
     Board {
         board_id: u32,
+        project_id: Option<u32>,
         view: Entity<BoardView>,
     },
     Note {
         note_id: u32,
+        project_id: Option<u32>,
         view: Entity<MarkdownEditorView>,
     },
 }
@@ -90,6 +117,11 @@ impl CastleApp {
                 this.rename_active_tab(title, cx);
             });
 
+        cx.bind_keys([
+            KeyBinding::new("ctrl-tab", CycleNextTab, Some("CastleApp")),
+            KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("CastleApp")),
+        ]);
+
         cx.subscribe_in(
             &sidebar,
             window,
@@ -100,7 +132,7 @@ impl CastleApp {
                     title,
                 } => {
                     this.active_project_id = *project_id;
-                    this.open_board_tab(*board_id, title.clone(), window, cx);
+                    this.open_board_tab(*board_id, *project_id, title.clone(), window, cx);
                 }
                 SidebarEvent::OpenNote {
                     note_id,
@@ -108,11 +140,59 @@ impl CastleApp {
                     title,
                 } => {
                     this.active_project_id = *project_id;
-                    this.open_note_tab(*note_id, title.clone(), window, cx);
+                    this.open_note_tab(*note_id, *project_id, title.clone(), window, cx);
                 }
                 SidebarEvent::ActivateProject { project_id } => {
                     this.active_project_id = Some(*project_id);
                     cx.notify();
+                }
+                SidebarEvent::BoardRenamed { board_id, title } => {
+                    let mut renamed_active = false;
+                    for (i, tab) in this.open_tabs.iter_mut().enumerate() {
+                        if let OpenTabKind::Board { board_id: id, .. } = &tab.kind
+                            && *id == *board_id {
+                                tab.title = title.clone();
+                                renamed_active = i == this.active_tab_index;
+                                break;
+                            }
+                    }
+                    if renamed_active {
+                        this.sync_title_input(window, cx);
+                    }
+                    cx.notify();
+                }
+                SidebarEvent::NoteRenamed { note_id, title } => {
+                    let mut renamed_active = false;
+                    for (i, tab) in this.open_tabs.iter_mut().enumerate() {
+                        if let OpenTabKind::Note { note_id: id, view, .. } = &tab.kind
+                            && *id == *note_id {
+                                tab.title = title.clone();
+                                renamed_active = i == this.active_tab_index;
+                                let view = view.clone();
+                                view.update(cx, |note, cx| {
+                                    note.set_title(title.to_string(), cx);
+                                });
+                                break;
+                            }
+                    }
+                    if renamed_active {
+                        this.sync_title_input(window, cx);
+                    }
+                    cx.notify();
+                }
+                SidebarEvent::BoardDeleted { board_id } => {
+                    if let Some(index) = this.open_tabs.iter().position(|tab| {
+                        matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id)
+                    }) {
+                        this.close_tab(index, window, cx);
+                    }
+                }
+                SidebarEvent::NoteDeleted { note_id } => {
+                    if let Some(index) = this.open_tabs.iter().position(|tab| {
+                        matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == *note_id)
+                    }) {
+                        this.close_tab(index, window, cx);
+                    }
                 }
             },
         )
@@ -199,12 +279,68 @@ impl CastleApp {
         self.activate_tab(index, window, cx);
     }
 
+    fn sync_sidebar_active(&self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.open_tabs.get(self.active_tab_index) {
+            match &tab.kind {
+                OpenTabKind::Board {
+                    board_id,
+                    project_id,
+                    ..
+                } => {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.active_project_id = *project_id;
+                        sidebar.active_item = Some(crate::sidebar::ActiveItem::Board(*board_id));
+                        cx.notify();
+                    });
+                }
+                OpenTabKind::Note {
+                    note_id,
+                    project_id,
+                    ..
+                } => {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.active_project_id = *project_id;
+                        sidebar.active_item = Some(crate::sidebar::ActiveItem::Note(*note_id));
+                        cx.notify();
+                    });
+                }
+                OpenTabKind::Chooser => {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.active_item = None;
+                        cx.notify();
+                    });
+                }
+            }
+        }
+    }
+
     fn activate_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.open_tabs.len() {
             return;
         }
 
         self.active_tab_index = index;
+        let tab = &self.open_tabs[index];
+
+        match &tab.kind {
+            OpenTabKind::Board {
+                board_id: _,
+                project_id,
+                ..
+            } => {
+                self.active_project_id = *project_id;
+            }
+            OpenTabKind::Note {
+                note_id: _,
+                project_id,
+                ..
+            } => {
+                self.active_project_id = *project_id;
+            }
+            OpenTabKind::Chooser => {}
+        }
+
+        self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
         cx.notify();
@@ -215,6 +351,7 @@ impl CastleApp {
             return;
         }
 
+        let was_active = self.active_tab_index == index;
         self.open_tabs.remove(index);
         if self.open_tabs.is_empty() {
             self.open_tabs.push(OpenTab {
@@ -230,8 +367,67 @@ impl CastleApp {
             self.active_tab_index -= 1;
         }
 
+        if was_active || self.active_tab_index >= self.open_tabs.len() {
+            self.sync_sidebar_active(cx);
+        }
         self.sync_title_input(window, cx);
         cx.notify();
+    }
+
+    fn close_tab_by_id(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.open_tabs.iter().position(|tab| tab.id == id) {
+            self.close_tab(index, window, cx);
+        }
+    }
+
+    fn close_other_tabs(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tabs.retain(|tab| tab.id == id);
+        if self.open_tabs.is_empty() {
+            self.open_tabs.push(OpenTab {
+                id: self.next_tab_id,
+                title: "New tab".into(),
+                kind: OpenTabKind::Chooser,
+            });
+            self.next_tab_id = self.next_tab_id.saturating_add(1);
+        }
+        self.active_tab_index = 0;
+        self.sync_sidebar_active(cx);
+        self.sync_title_input(window, cx);
+        cx.notify();
+    }
+
+    fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tabs.clear();
+        self.open_tabs.push(OpenTab {
+            id: self.next_tab_id,
+            title: "New tab".into(),
+            kind: OpenTabKind::Chooser,
+        });
+        self.next_tab_id = self.next_tab_id.saturating_add(1);
+        self.active_tab_index = 0;
+        self.sync_sidebar_active(cx);
+        self.sync_title_input(window, cx);
+        cx.notify();
+    }
+
+    fn cycle_next_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_tabs.len() <= 1 {
+            return;
+        }
+        let next = (self.active_tab_index + 1) % self.open_tabs.len();
+        self.activate_tab(next, window, cx);
+    }
+
+    fn cycle_prev_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_tabs.len() <= 1 {
+            return;
+        }
+        let prev = if self.active_tab_index == 0 {
+            self.open_tabs.len() - 1
+        } else {
+            self.active_tab_index - 1
+        };
+        self.activate_tab(prev, window, cx);
     }
 
     fn sync_title_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -293,6 +489,7 @@ impl CastleApp {
     fn open_board_tab(
         &mut self,
         board_id: u32,
+        project_id: Option<u32>,
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -306,12 +503,22 @@ impl CastleApp {
 
         let view = BoardView::view(window, cx);
         view.update(cx, |board, cx| board.load_board(board_id, cx));
-        self.replace_or_push_active(OpenTabKind::Board { board_id, view }, title, window, cx);
+        self.replace_or_push_active(
+            OpenTabKind::Board {
+                board_id,
+                project_id,
+                view,
+            },
+            title,
+            window,
+            cx,
+        );
     }
 
     fn open_note_tab(
         &mut self,
         note_id: u32,
+        project_id: Option<u32>,
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -324,7 +531,16 @@ impl CastleApp {
         }
 
         let view = MarkdownEditorView::view(note_id, window, cx);
-        self.replace_or_push_active(OpenTabKind::Note { note_id, view }, title, window, cx);
+        self.replace_or_push_active(
+            OpenTabKind::Note {
+                note_id,
+                project_id,
+                view,
+            },
+            title,
+            window,
+            cx,
+        );
     }
 
     fn replace_or_push_active(
@@ -339,6 +555,7 @@ impl CastleApp {
         {
             tab.kind = kind;
             tab.title = title;
+            self.sync_sidebar_active(cx);
             self.sync_title_input(window, cx);
             cx.notify();
             return;
@@ -382,6 +599,7 @@ impl CastleApp {
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
                             inserted.id as u32,
+                            project_id,
                             SharedString::from(inserted.title),
                             window,
                             cx,
@@ -410,7 +628,7 @@ impl CastleApp {
         cx.spawn_in(window, async move |_, window| {
             let paths = paths.await.ok()?.ok()??;
             let path = paths.first()?.clone();
-            let content = fs::read_to_string(&path).ok()?;
+            let content = read_to_string(&path).ok()?;
             let path_string = path.display().to_string();
             let title = path
                 .file_name()
@@ -460,6 +678,7 @@ impl CastleApp {
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
                             note.id as u32,
+                            None,
                             SharedString::from(note.title),
                             window,
                             cx,
@@ -499,6 +718,7 @@ impl CastleApp {
                     view.update(cx, |this, cx| {
                         this.open_board_tab(
                             inserted.id as u32,
+                            project_id,
                             SharedString::from(inserted.title),
                             window,
                             cx,
@@ -547,7 +767,9 @@ impl CastleApp {
             .active_tab_index
             .min(self.open_tabs.len().saturating_sub(1));
 
-        TabBar::new("open-tabs")
+        let active_tab_id = self.open_tabs.get(active_index).map(|t| t.id);
+
+        let tab_bar = TabBar::new("open-tabs")
             .mx_5()
             .segmented()
             .menu(true)
@@ -579,7 +801,20 @@ impl CastleApp {
                     .xsmall()
                     .tooltip("New tab")
                     .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
-            )
+            );
+
+        if let Some(tab_id) = active_tab_id {
+            div()
+                .child(tab_bar)
+                .context_menu(move |menu, _, _cx| {
+                    menu.menu("Close", Box::new(CloseTabAction(tab_id)))
+                        .menu("Close Others", Box::new(CloseOtherTabsAction(tab_id)))
+                        .menu("Close All", Box::new(CloseAllTabsAction))
+                })
+                .into_any_element()
+        } else {
+            tab_bar.into_any_element()
+        }
     }
 
     fn render_active_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -696,7 +931,7 @@ impl CastleApp {
                             .label(format!("{} - {}", title, subtitle))
                             .ghost()
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_board_tab(board_id, title.clone(), window, cx);
+                                this.open_board_tab(board_id, None, title.clone(), window, cx);
                             }))
                     })),
             )
@@ -717,8 +952,26 @@ impl Render for CastleApp {
         v_flex()
             .id("app-container")
             .track_focus(&self.focus_handle)
+            .key_context("CastleApp")
             .size_full()
             .overflow_hidden()
+            .on_action(cx.listener(|this, _: &CycleNextTab, window, cx| {
+                this.cycle_next_tab(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CyclePrevTab, window, cx| {
+                this.cycle_prev_tab(window, cx);
+            }))
+            .on_action(cx.listener(|this, action: &CloseTabAction, window, cx| {
+                this.close_tab_by_id(action.0, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &CloseOtherTabsAction, window, cx| {
+                    this.close_other_tabs(action.0, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &CloseAllTabsAction, window, cx| {
+                this.close_all_tabs(window, cx);
+            }))
             .child(self.render_title_bar(cx))
             .child(
                 h_flex()

@@ -1,17 +1,16 @@
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable,
-    h_flex,
+    ActiveTheme, Icon, IconName, Sizable, h_flex,
     input::Input,
     select::Select,
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     v_flex,
 };
 
+use super::SidebarView;
 use super::action::*;
 use super::dto::*;
 use super::event::SidebarEvent;
-use super::SidebarView;
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
 
@@ -146,6 +145,8 @@ impl Render for SidebarView {
             .on_action(cx.listener(Self::on_edit_board_action))
             .on_action(cx.listener(Self::on_move_board_action))
             .on_action(cx.listener(Self::on_move_note_action))
+            .on_action(cx.listener(Self::on_delete_note_action))
+            .on_action(cx.listener(Self::on_edit_note_action))
             .child(
                 Sidebar::new("sidebar")
                     .w(px(260.))
@@ -391,6 +392,7 @@ impl SidebarView {
         let project_id = note.project_id;
         let title = note.title.clone();
         let is_active = self.active_item == Some(ActiveItem::Note(note_id));
+        let is_renaming = self.renaming_note == Some(note_id);
         let projects = self
             .projects
             .iter()
@@ -400,24 +402,47 @@ impl SidebarView {
         SidebarMenuItem::new(title.clone())
             .icon(IconName::BookOpen)
             .when(!search_matches, |this| this.disable(true))
+            .when(is_renaming, |this| {
+                let input = self.rename_note_input.clone();
+                this.suffix(move |_window, cx| {
+                    Input::new(&input)
+                        .small()
+                        .bg(cx.theme().sidebar.opacity(0.))
+                        .rounded_none()
+                        .focus_bordered(false)
+                        .border_0()
+                        .text_xs()
+                        .w_full()
+                })
+            })
             .active(is_active)
             .context_menu(move |mut menu, _, cx| {
                 let muted = cx.theme().muted_foreground;
-                menu = menu.menu_element(
-                    Box::new(MoveNoteAction {
-                        note_id,
-                        project_id: None,
-                    }),
-                    move |_window, _cx| {
+                menu = menu
+                    .menu_element(Box::new(EditNoteAction(note_id)), move |_window, _cx| {
                         h_flex()
                             .w_full()
                             .gap_2()
                             .items_center()
                             .justify_between()
-                            .child("Move to Standalone")
-                            .child(Icon::new(IconName::Folder).xsmall().text_color(muted))
-                    },
-                );
+                            .child("Edit")
+                            .child(Icon::new(IconName::Replace).xsmall().text_color(muted))
+                    })
+                    .menu_element(
+                        Box::new(MoveNoteAction {
+                            note_id,
+                            project_id: None,
+                        }),
+                        move |_window, _cx| {
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .items_center()
+                                .justify_between()
+                                .child("Move to Standalone")
+                                .child(Icon::new(IconName::Folder).xsmall().text_color(muted))
+                        },
+                    );
 
                 for (target_project_id, name) in projects.clone() {
                     if Some(target_project_id) == project_id {
@@ -440,7 +465,15 @@ impl SidebarView {
                     );
                 }
 
-                menu
+                menu.menu_element(Box::new(DeleteNoteAction(note_id)), move |_window, _cx| {
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .items_center()
+                        .justify_between()
+                        .child("Delete")
+                        .child(Icon::new(IconName::Delete).xsmall().text_color(muted))
+                })
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_note(note_id, project_id, title.clone(), cx);

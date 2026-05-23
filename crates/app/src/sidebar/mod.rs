@@ -11,8 +11,8 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Theme, ThemeRegistry,
     input::{InputEvent, InputState},
-    select::{SearchableVec, SelectEvent, SelectState},
     searchable_list::SearchableListDelegate,
+    select::{SearchableVec, SelectEvent, SelectState},
 };
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
@@ -21,11 +21,12 @@ use crate::DB;
 use action::*;
 use dto::*;
 
+pub(crate) use dto::ActiveItem;
 pub(crate) use event::SidebarEvent;
 
 pub(crate) struct SidebarView {
-    active_project_id: Option<u32>,
-    active_item: Option<ActiveItem>,
+    pub(crate) active_project_id: Option<u32>,
+    pub(crate) active_item: Option<ActiveItem>,
     focus_handle: FocusHandle,
     search_input: Entity<InputState>,
     theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
@@ -36,8 +37,10 @@ pub(crate) struct SidebarView {
     new_project_input: Entity<InputState>,
     new_board_input: Entity<InputState>,
     rename_board_input: Entity<InputState>,
+    rename_note_input: Entity<InputState>,
     adding_board_to_project: Option<Option<u32>>,
     renaming_board: Option<u32>,
+    renaming_note: Option<u32>,
 }
 
 impl SidebarView {
@@ -47,11 +50,17 @@ impl SidebarView {
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search..."));
+
         let new_project_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
+
         let new_board_input = cx.new(|cx| InputState::new(window, cx).placeholder("Board name..."));
+
         let rename_board_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Board name..."));
+
+        let rename_note_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Note name..."));
 
         let registry = ThemeRegistry::global(cx);
         let themes: Vec<SharedString> = registry
@@ -151,6 +160,29 @@ impl SidebarView {
         )
         .detach();
 
+        cx.subscribe(
+            &rename_note_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let title = text.trim();
+                    if let Some(note_id) = this.renaming_note
+                        && !title.is_empty()
+                    {
+                        this.rename_note(cx, note_id, title.to_string());
+                    }
+                    this.renaming_note = None;
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    this.renaming_note = None;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
             if let InputEvent::Change = event {
                 cx.notify();
@@ -171,8 +203,10 @@ impl SidebarView {
             new_project_input,
             new_board_input,
             rename_board_input,
+            rename_note_input,
             adding_board_to_project: None,
             renaming_board: None,
+            renaming_note: None,
         }
     }
 
@@ -356,6 +390,7 @@ impl SidebarView {
         self.renaming_board = None;
         self.adding_board_to_project = None;
         cx.notify();
+        cx.emit(SidebarEvent::BoardDeleted { board_id });
 
         let db = cx.global::<DB>().conn.clone();
         cx.spawn(async move |_, _| -> Result<()> {
@@ -379,11 +414,63 @@ impl SidebarView {
         }
 
         cx.notify();
+        cx.emit(SidebarEvent::BoardRenamed {
+            board_id,
+            title: SharedString::from(title.clone()),
+        });
 
         let db = cx.global::<DB>().conn.clone();
         cx.spawn(async move |_, _| -> Result<()> {
             board::ActiveModel {
                 id: Set(board_id as i64),
+                title: Set(title),
+                ..Default::default()
+            }
+            .update(&*db)
+            .await?;
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn delete_note(&mut self, cx: &mut Context<Self>, note_id: u32) {
+        self.standalone_notes.retain(|note| note.id != note_id);
+        for project in &mut self.projects {
+            project.notes.retain(|note| note.id != note_id);
+        }
+        self.renaming_note = None;
+        cx.notify();
+        cx.emit(SidebarEvent::NoteDeleted { note_id });
+
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |_, _| -> Result<()> {
+            Note::delete_by_id(note_id as i64).exec(&*db).await?;
+            Ok(())
+        })
+        .detach();
+    }
+
+    fn rename_note(&mut self, cx: &mut Context<Self>, note_id: u32, title: String) {
+        let shared_title = SharedString::from(title.clone());
+
+        self.projects
+            .iter_mut()
+            .flat_map(|project| project.notes.iter_mut())
+            .chain(self.standalone_notes.iter_mut())
+            .find(|note| note.id == note_id)
+            .map(|note| note.title = shared_title.clone());
+
+        cx.notify();
+
+        cx.emit(SidebarEvent::NoteRenamed {
+            note_id,
+            title: shared_title,
+        });
+
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |_, _| -> Result<()> {
+            note::ActiveModel {
+                id: Set(note_id as i64),
                 title: Set(title),
                 ..Default::default()
             }
@@ -409,6 +496,24 @@ impl SidebarView {
 
         self.renaming_board = Some(action.0);
         self.rename_board_input.update(cx, |input, cx| {
+            input.set_value(title, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn start_renaming_note(
+        &mut self,
+        action: &EditNoteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(title) = self.find_note(action.0).map(|note| note.title.to_string()) else {
+            return;
+        };
+
+        self.renaming_note = Some(action.0);
+        self.rename_note_input.update(cx, |input, cx| {
             input.set_value(title, window, cx);
             input.focus(window, cx);
         });
@@ -483,6 +588,32 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) {
         self.move_note(cx, action.note_id, action.project_id);
+    }
+
+    fn on_delete_note_action(
+        &mut self,
+        action: &DeleteNoteAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_note(cx, action.0);
+    }
+
+    fn on_edit_note_action(
+        &mut self,
+        action: &EditNoteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_renaming_note(action, window, cx);
+    }
+
+    fn find_note(&self, note_id: u32) -> Option<&NoteDTO> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.notes.iter())
+            .chain(self.standalone_notes.iter())
+            .find(|note| note.id == note_id)
     }
 
     fn find_board(&self, board_id: u32) -> Option<&BoardDTO> {
