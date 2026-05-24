@@ -1,13 +1,13 @@
 use gpui::SharedString;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditorMode {
     Split,
     Source,
     Preview,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SaveState {
     Saved,
     Dirty,
@@ -16,7 +16,7 @@ pub(crate) enum SaveState {
     Error(SharedString),
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct DocumentStats {
     pub(crate) lines: usize,
     pub(crate) words: usize,

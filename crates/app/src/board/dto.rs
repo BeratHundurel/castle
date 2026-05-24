@@ -1,6 +1,6 @@
 use gpui::SharedString;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CardDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,

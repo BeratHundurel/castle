@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{size, *};
 use gpui_component::{ActiveTheme, h_flex};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -42,7 +42,7 @@ impl DragInfo {
 
 impl Render for DragInfo {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let size = gpui::size(px(200.), px(40.));
+        let size = size(px(200.), px(40.));
 
         div()
             .pl(self.position.x - size.width.half())
@@ -83,7 +83,7 @@ impl CardDragInfo {
 
 impl Render for CardDragInfo {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let size = gpui::size(px(320.), px(56.));
+        let size = size(px(320.), px(56.));
 
         div()
             .pl(self.position.x - size.width.half())

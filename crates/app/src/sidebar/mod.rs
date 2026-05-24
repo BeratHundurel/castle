@@ -408,7 +408,7 @@ impl SidebarView {
             .chain(self.standalone_boards.iter_mut())
         {
             if board.id == board_id {
-                board.title = SharedString::from(title.clone());
+                board.title = SharedString::from(title.as_str());
                 break;
             }
         }
@@ -416,7 +416,7 @@ impl SidebarView {
         cx.notify();
         cx.emit(SidebarEvent::BoardRenamed {
             board_id,
-            title: SharedString::from(title.clone()),
+            title: SharedString::from(title.as_str()),
         });
 
         let db = cx.global::<DB>().conn.clone();
@@ -451,15 +451,17 @@ impl SidebarView {
     }
 
     fn rename_note(&mut self, cx: &mut Context<Self>, note_id: u32, title: String) {
-        let shared_title = SharedString::from(title.clone());
+        let shared_title = SharedString::from(title.as_str());
 
-        self.projects
+        if let Some(note) = self
+            .projects
             .iter_mut()
             .flat_map(|project| project.notes.iter_mut())
             .chain(self.standalone_notes.iter_mut())
             .find(|note| note.id == note_id)
-            .map(|note| note.title = shared_title.clone());
-
+        {
+            note.title = shared_title.clone();
+        }
         cx.notify();
 
         cx.emit(SidebarEvent::NoteRenamed {

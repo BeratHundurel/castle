@@ -278,7 +278,7 @@ impl BoardView {
             return;
         };
 
-        card.title = SharedString::from(title.clone());
+        card.title = SharedString::from(new_title);
         self.renaming_card_id = None;
         cx.notify();
 
@@ -303,13 +303,11 @@ impl BoardView {
                 return;
             };
 
-            let title = this.dialog_title_input.read(cx).text().to_string();
-            let description = this.dialog_description_input.read(cx).text().to_string();
             let entry_id = this.next_entry_id();
             let entry = EntryDTO {
                 id: entry_id,
-                title: SharedString::from(title),
-                description: SharedString::from(description),
+                title: this.dialog_title_input.read(cx).value(),
+                description: this.dialog_description_input.read(cx).value(),
                 card_id,
             };
             this.pending_card_id = None;
@@ -367,18 +365,18 @@ impl BoardView {
             return;
         }
 
-        let mut moving_entry = None;
-        if let Some(source_card) = self
+        let moving_entry = self
             .cards
             .iter_mut()
             .find(|card| card.id == info.source_card_id)
-            && let Some(index) = source_card
-                .entries
-                .iter()
-                .position(|entry| entry.id == info.entry_id)
-        {
-            moving_entry = Some(source_card.entries.remove(index));
-        }
+            .and_then(|card| {
+                let index = card
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id == info.entry_id)?;
+
+                Some(card.entries.remove(index))
+            });
 
         if let Some(mut dto) = moving_entry
             && let Some(target_card) = self.cards.iter_mut().find(|card| card.id == target_card_id)

@@ -16,8 +16,11 @@ use gpui_component::{
     text::TextViewState,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use std::path::PathBuf;
 use std::time::Duration;
+use std::{
+    fs::{create_dir_all, write},
+    path::PathBuf,
+};
 
 use crate::DB;
 use action::*;
@@ -299,11 +302,10 @@ impl MarkdownEditorView {
                 && !is_missing
             {
                 if let Some(parent) = path.parent() {
-                    write_result = std::fs::create_dir_all(parent).map_err(|err| err.to_string());
+                    write_result = create_dir_all(parent).map_err(|err| err.to_string());
                 }
                 if write_result.is_ok() {
-                    write_result =
-                        std::fs::write(path, content.to_string()).map_err(|err| err.to_string());
+                    write_result = write(path, content.to_string()).map_err(|err| err.to_string());
                 }
             }
 
@@ -320,40 +322,21 @@ impl MarkdownEditorView {
 
             let result = write_result.and(cache_result);
 
-            this.update(cx, |this, cx| {
-                if this.auto_save_epoch == epoch {
-                    this.finish_auto_save(content, result, cx);
+            match result {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.save_state = this.resolve_save_state(&content, cx);
+                    })
+                    .ok();
                 }
-            })
-            .ok();
+                Err(err) => {
+                    this.update(cx, |this, _cx| {
+                        this.save_state = SaveState::Error(err.into());
+                    })
+                    .ok();
+                }
+            }
         }));
-    }
-
-    fn finish_auto_save(
-        &mut self,
-        content: SharedString,
-        result: Result<(), String>,
-        cx: &mut Context<Self>,
-    ) {
-        match result {
-            Ok(())
-                if self.current_path.is_some()
-                    && !matches!(self.save_state, SaveState::Missing) =>
-            {
-                self.last_file_saved = content.clone();
-                let current_content = self.editor.read(cx).value();
-                self.save_state = if current_content == content {
-                    SaveState::Saved
-                } else {
-                    SaveState::Dirty
-                };
-            }
-            Ok(()) => {}
-            Err(err) => {
-                self.save_state = SaveState::Error(err.into());
-            }
-        }
-        cx.notify();
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
@@ -394,18 +377,20 @@ impl MarkdownEditorView {
 
     fn save_to_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
+        self.save_state = SaveState::Saving;
+
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
         let db = cx.global::<DB>().conn.clone();
-        self.save_state = SaveState::Saving;
+
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let result = (|| {
                 if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+                    create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
-                std::fs::write(&path, content.to_string()).map_err(|err| err.to_string())?;
+                write(&path, content.to_string()).map_err(|err| err.to_string())?;
                 Ok(())
             })();
 
@@ -422,40 +407,44 @@ impl MarkdownEditorView {
                 .await
                 .map(|_| ())
                 .map_err(|err| err.to_string()),
+
                 Err(err) => Err(err),
             };
 
+            match result {
+                Ok(_) => {
+                    this.update(cx, |this, cx| {
+                        this.save_state = this.resolve_save_state(&content, cx);
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    this.update(cx, |this, _cx| {
+                        this.save_state = SaveState::Error(err.into());
+                    })
+                    .ok();
+                }
+            }
+
             this.update(cx, |this, cx| {
-                this.finish_save(path, content, result, cx);
+                this.save_state = this.resolve_save_state(&content, cx);
             })
             .ok();
         })
         .detach();
     }
 
-    fn finish_save(
-        &mut self,
-        path: PathBuf,
-        content: SharedString,
-        result: Result<(), String>,
+    fn resolve_save_state(
+        &self,
+        saved_content: &SharedString,
         cx: &mut Context<Self>,
-    ) {
-        match result {
-            Ok(()) => {
-                self.current_path = Some(path);
-                self.last_file_saved = content.clone();
-                let current_content = self.editor.read(cx).value();
-                self.save_state = if current_content == content {
-                    SaveState::Saved
-                } else {
-                    SaveState::Dirty
-                };
-            }
-            Err(err) => {
-                self.save_state = SaveState::Error(err.into());
-            }
+    ) -> SaveState {
+        let current = self.editor.read(cx).value();
+        if current == *saved_content {
+            SaveState::Saved
+        } else {
+            SaveState::Dirty
         }
-        cx.notify();
     }
 
     fn toggle_mode(&mut self, cx: &mut Context<Self>) {

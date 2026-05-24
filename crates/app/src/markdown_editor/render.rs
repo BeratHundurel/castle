@@ -51,32 +51,28 @@ impl Render for MarkdownEditorView {
                     .child(self.render_editor_body(cx)),
             )
             .child(self.render_status_bar(cx))
-            .children(if self.show_emmet_input {
-                Some(
-                    div()
-                        .key_context("EmmetInput")
-                        .absolute()
-                        .top(px(60.))
-                        .left(px(20.))
-                        .w(px(300.))
-                        .p_2()
-                        .bg(theme_background)
-                        .border_1()
-                        .border_color(theme_border)
-                        .rounded_md()
-                        .shadow_sm()
-                        .child(
-                            Input::new(&self.emmet_input)
-                                .w_full()
-                                .bg(theme_input)
-                                .px_2()
-                                .py_1()
-                                .rounded_sm(),
-                        ),
-                )
-            } else {
-                None
-            })
+            .children(self.show_emmet_input.then(|| {
+                div()
+                    .key_context("EmmetInput")
+                    .absolute()
+                    .top(px(60.))
+                    .left(px(20.))
+                    .w(px(300.))
+                    .p_2()
+                    .bg(theme_background)
+                    .border_1()
+                    .border_color(theme_border)
+                    .rounded_md()
+                    .shadow_sm()
+                    .child(
+                        Input::new(&self.emmet_input)
+                            .w_full()
+                            .bg(theme_input)
+                            .px_2()
+                            .py_1()
+                            .rounded_sm(),
+                    )
+            }))
     }
 }
 
