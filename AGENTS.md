@@ -4,11 +4,16 @@ This project is a note taking and canvas board app that uses GPUI and GPUI Compo
 
 ## Documentation
 
-You can find the source code of the GPUI components library in /docs. Don't edit the source code of the library
+You can find the source code of the GPUI components library in /docs.
+Don't make edits it's for reference only.
 
 ### Tools
 
 Use 'cargo check' and 'cargo clippy --fix --allow-dirty' to ensure code quality
+
+### Skills
+
+You can find the skills for the gpui in .agents\skills
 
 ### Code Style
 
