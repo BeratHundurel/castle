@@ -81,7 +81,6 @@ impl BoardView {
                                 position: this.cards.len() as i32,
                                 entries: vec![],
                             },
-                            board_id,
                             card_id,
                         );
                     } else {
@@ -158,25 +157,7 @@ impl BoardView {
                 .all(&*db)
                 .await?;
 
-            let cards: Vec<CardDTO> = result
-                .into_iter()
-                .map(|c| CardDTO {
-                    id: c.id as u32,
-                    board_id: c.board_id as u32,
-                    title: SharedString::from(c.title),
-                    position: c.position,
-                    entries: c
-                        .entries
-                        .into_iter()
-                        .map(|e| EntryDTO {
-                            id: e.id as u32,
-                            title: SharedString::from(e.title),
-                            description: SharedString::from(e.description),
-                            card_id: e.card_id as u32,
-                        })
-                        .collect(),
-                })
-                .collect();
+            let cards: Vec<CardDTO> = result.into_iter().map(CardDTO::from).collect();
 
             this.update(cx, |this, cx| {
                 if this.board_id == Some(board_id) {
@@ -201,10 +182,10 @@ impl BoardView {
         u32::MAX.saturating_sub(self.next_temporary_entry_id)
     }
 
-    fn add_entry(&mut self, cx: &mut Context<Self>, entry: EntryDTO, card_id: u32, temp_id: u32) {
+    fn add_entry(&mut self, cx: &mut Context<Self>, entry: EntryDTO, temp_id: u32) {
         let db = cx.global::<DB>().conn.clone();
 
-        if let Some(card) = self.cards.iter_mut().find(|card| card.id == card_id) {
+        if let Some(card) = self.cards.iter_mut().find(|card| card.id == entry.card_id) {
             card.entries.push(entry.clone());
             cx.notify();
         }
@@ -223,7 +204,7 @@ impl BoardView {
                 if let Some(entry) = this
                     .cards
                     .iter_mut()
-                    .find(|card| card.id == card_id)
+                    .find(|card| card.id == entry.card_id)
                     .and_then(|card| card.entries.iter_mut().find(|entry| entry.id == temp_id))
                 {
                     entry.id = real_id;
@@ -236,7 +217,7 @@ impl BoardView {
         .detach();
     }
 
-    fn add_card(&mut self, cx: &mut Context<Self>, card: CardDTO, board_id: u32, temp_id: u32) {
+    fn add_card(&mut self, cx: &mut Context<Self>, card: CardDTO, temp_id: u32) {
         let db = cx.global::<DB>().conn.clone();
 
         self.cards.push(card.clone());
@@ -245,7 +226,7 @@ impl BoardView {
         cx.spawn(async move |this, cx| -> Result<()> {
             let model = card::ActiveModel {
                 title: Set(card.title.to_string()),
-                board_id: Set(board_id as i64),
+                board_id: Set(card.board_id as i64),
                 position: Set(card.position),
                 ..Default::default()
             };
@@ -253,7 +234,7 @@ impl BoardView {
             let real_id = inserted.id as u32;
 
             this.update(cx, |this, _cx| {
-                if this.board_id == Some(board_id)
+                if this.board_id == Some(card.board_id)
                     && let Some(card) = this.cards.iter_mut().find(|card| card.id == temp_id)
                 {
                     card.id = real_id;
@@ -311,7 +292,7 @@ impl BoardView {
                 card_id,
             };
             this.pending_card_id = None;
-            this.add_entry(cx, entry, card_id, entry_id);
+            this.add_entry(cx, entry, entry_id);
         }));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {

@@ -225,50 +225,13 @@ impl SidebarView {
                 .all(&*db)
                 .await?;
 
-            let mut projects: Vec<ProjectDTO> = results
-                .into_iter()
-                .map(|project| ProjectDTO {
-                    id: project.id as u32,
-                    name: SharedString::from(project.name),
-                    is_expanded: false,
-                    boards: project
-                        .boards
-                        .into_iter()
-                        .map(|board| BoardDTO {
-                            id: board.id as u32,
-                            title: SharedString::from(board.title),
-                            project_id: board.project_id.map(|id| id as u32),
-                        })
-                        .collect(),
-                    notes: project
-                        .notes
-                        .into_iter()
-                        .map(|note| NoteDTO {
-                            id: note.id as u32,
-                            title: SharedString::from(note.title),
-                            project_id: note.project_id.map(|id| id as u32),
-                        })
-                        .collect(),
-                })
-                .collect();
+            let mut projects: Vec<ProjectDTO> = results.into_iter().map(ProjectDTO::from).collect();
 
-            let standalone_boards = standalone_boards
-                .into_iter()
-                .map(|board| BoardDTO {
-                    id: board.id as u32,
-                    title: SharedString::from(board.title),
-                    project_id: None,
-                })
-                .collect();
+            let standalone_boards: Vec<BoardDTO> =
+                standalone_boards.into_iter().map(BoardDTO::from).collect();
 
-            let standalone_notes = standalone_notes
-                .into_iter()
-                .map(|note| NoteDTO {
-                    id: note.id as u32,
-                    title: SharedString::from(note.title),
-                    project_id: None,
-                })
-                .collect();
+            let standalone_notes: Vec<NoteDTO> =
+                standalone_notes.into_iter().map(NoteDTO::from).collect();
 
             this.update(cx, |this, cx| {
                 if let Some(first) = projects.first_mut() {

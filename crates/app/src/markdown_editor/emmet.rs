@@ -1,7 +1,8 @@
 pub(crate) fn parse_emmet_abbreviation(abbreviation: &str, content: &str) -> String {
     let parts = abbreviation.split('>');
+    let mut tags = Vec::new();
     let mut prefix = String::new();
-    let mut suffix = String::new();
+
     for part in parts {
         let part = part.trim();
         if part.is_empty() {
@@ -38,17 +39,37 @@ pub(crate) fn parse_emmet_abbreviation(abbreviation: &str, content: &str) -> Str
             current = &current[next_pos..];
         }
 
-        let mut attrs = String::new();
+        prefix.push('<');
+        prefix.push_str(tag);
+
         if !id.is_empty() {
-            attrs.push_str(&format!(" id=\"{id}\""));
-        }
-        if !classes.is_empty() {
-            attrs.push_str(&format!(" class=\"{}\"", classes.join(" ")));
+            prefix.push_str(" id=\"");
+            prefix.push_str(id);
+            prefix.push('"');
         }
 
-        prefix.push_str(&format!("<{tag}{attrs}>"));
-        suffix = format!("</{tag}>") + &suffix;
+        if !classes.is_empty() {
+            prefix.push_str(" class=\"");
+            for (i, class) in classes.iter().enumerate() {
+                if i > 0 {
+                    prefix.push(' ');
+                }
+                prefix.push_str(class);
+            }
+            prefix.push('"');
+        }
+
+        prefix.push('>');
+        tags.push(tag);
     }
 
-    format!("{prefix}{content}{suffix}")
+    let mut result = prefix;
+    result.push_str(content);
+    for tag in tags.iter().rev() {
+        result.push_str("</");
+        result.push_str(tag);
+        result.push('>');
+    }
+
+    result
 }

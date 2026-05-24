@@ -576,25 +576,25 @@ impl MarkdownEditorView {
             return;
         }
 
-        let mut replacement_start_offset = None;
-        let mut word = String::new();
         let editor = self.editor.read(cx);
         let offset = editor.cursor();
         let text = editor.text().to_string();
+
+        let prefix = &text[..offset];
         let mut start = offset;
-        let bytes = text.as_bytes();
-        while start > 0 {
-            let c = bytes[start - 1];
-            if c.is_ascii_alphanumeric() || c == b'.' || c == b'#' || c == b'>' {
-                start -= 1;
+        for (idx, ch) in prefix.char_indices().rev() {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '#' || ch == '>' {
+                start = idx;
             } else {
                 break;
             }
         }
-        if start < offset {
-            word = text[start..offset].to_string();
-            replacement_start_offset = Some(start);
-        }
+
+        let (word, replacement_start_offset) = if start < offset {
+            (text[start..offset].to_string(), Some(start))
+        } else {
+            (String::new(), None)
+        };
 
         if !word.is_empty() {
             let replacement = parse_emmet_abbreviation(&word, "");
