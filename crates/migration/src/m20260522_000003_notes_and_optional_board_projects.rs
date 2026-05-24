@@ -61,6 +61,8 @@ impl MigrationTrait for Migration {
             .await?;
 
         db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
+        db.execute_unprepared("PRAGMA legacy_alter_table = ON").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS board_old").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_board_project_id")
             .await?;
         db.execute_unprepared("ALTER TABLE board RENAME TO board_old")
@@ -86,6 +88,7 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP TABLE board_old").await?;
         db.execute_unprepared("CREATE INDEX idx_board_project_id ON board (project_id)")
             .await?;
+        db.execute_unprepared("PRAGMA legacy_alter_table = OFF").await?;
         db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
 
         Ok(())
@@ -95,6 +98,8 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
 
         db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
+        db.execute_unprepared("PRAGMA legacy_alter_table = ON").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS board_old").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_board_project_id")
             .await?;
         db.execute_unprepared("ALTER TABLE board RENAME TO board_old")
@@ -123,6 +128,7 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP TABLE board_old").await?;
         db.execute_unprepared("CREATE INDEX idx_board_project_id ON board (project_id)")
             .await?;
+        db.execute_unprepared("PRAGMA legacy_alter_table = OFF").await?;
         db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
 
         manager

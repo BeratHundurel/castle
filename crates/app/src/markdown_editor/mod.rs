@@ -16,7 +16,7 @@ use gpui_component::{
     text::TextViewState,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use std::time::Duration;
+use std::{fs::read_to_string, time::Duration};
 use std::{
     fs::{create_dir_all, write},
     path::PathBuf,
@@ -181,7 +181,7 @@ impl MarkdownEditorView {
             let model = Note::find_by_id(note_id as i64).one(&*db).await.ok()??;
             let path = model.file_path.as_ref().map(PathBuf::from);
             let (content, missing) = match path.as_ref() {
-                Some(path) => match std::fs::read_to_string(path) {
+                Some(path) => match read_to_string(path) {
                     Ok(content) => (content, false),
                     Err(_) => (model.cached_content.clone(), true),
                 },

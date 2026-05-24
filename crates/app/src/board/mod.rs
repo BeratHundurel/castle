@@ -230,6 +230,7 @@ impl BoardView {
                 position: Set(card.position),
                 ..Default::default()
             };
+
             let inserted = model.insert(&*db).await?;
             let real_id = inserted.id as u32;
 

@@ -61,12 +61,6 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(Card::Title).string().not_null())
-                    .col(
-                        ColumnDef::new(Card::Position)
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
                     .col(ColumnDef::new(Card::BoardId).integer().not_null())
                     .foreign_key(
                         ForeignKey::create()
@@ -179,7 +173,6 @@ enum Card {
     Table,
     Id,
     Title,
-    Position,
     BoardId,
 }
 
