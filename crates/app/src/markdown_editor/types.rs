@@ -17,14 +17,14 @@ pub(crate) enum SaveState {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct DocumentStats {
-    pub(crate) lines: usize,
-    pub(crate) words: usize,
-    pub(crate) characters: usize,
+pub struct DocumentStats {
+    pub lines: usize,
+    pub words: usize,
+    pub characters: usize,
 }
 
 impl DocumentStats {
-    pub(crate) fn from_text(text: &str) -> Self {
+    pub fn from_text(text: &str) -> Self {
         Self {
             lines: text.lines().count().max(1),
             words: text.split_whitespace().count(),

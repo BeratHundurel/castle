@@ -1,14 +1,14 @@
 mod action;
 mod emmet;
 mod render;
-mod types;
+pub mod types;
 mod util;
 
 use anyhow::Result;
 use entity::{note, note::Entity as Note};
 use gpui::{
     App, AppContext, Context, Entity, EntityInputHandler, FocusHandle, Focusable, KeyBinding,
-    SharedString, Subscription, Task, Window,
+    SharedString, Task, Window,
 };
 use gpui_component::{
     highlighter::Language,
@@ -16,7 +16,7 @@ use gpui_component::{
     text::TextViewState,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use std::{fs::read_to_string, time::Duration};
+use std::{fs::read_to_string, ops::Range, time::Duration};
 use std::{
     fs::{create_dir_all, write},
     path::PathBuf,
@@ -28,8 +28,11 @@ use emmet::parse_emmet_abbreviation;
 use types::*;
 use util::{suggested_file_name, unique_note_path};
 
+pub use types::DocumentStats;
 pub(crate) use types::{DEFAULT_NOTE, SaveState};
 pub(crate) use util::now_ts;
+
+const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 
 pub(crate) struct MarkdownEditorView {
     note_id: u32,
@@ -39,18 +42,16 @@ pub(crate) struct MarkdownEditorView {
     preview: Entity<TextViewState>,
     mode: EditorMode,
     current_path: Option<PathBuf>,
-    last_file_saved: SharedString,
     save_state: SaveState,
     stats: DocumentStats,
     auto_save_epoch: u64,
     _auto_save_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
     emmet_input: Entity<InputState>,
     show_emmet_input: bool,
-    emmet_replacement_range: Option<std::ops::Range<usize>>,
+    emmet_replacement_range: Option<Range<usize>>,
 }
 
-pub(crate) fn init(cx: &mut App) {
+pub fn init(cx: &mut App) {
     cx.bind_keys([
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-p", ExpandEmmet, Some("MarkdownEditor")),
@@ -110,14 +111,12 @@ impl MarkdownEditorView {
             editor_focus.focus(window, cx);
         });
 
-        let _subscriptions = vec![
-            cx.subscribe(&editor, |this, input, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let value = input.read(cx).value();
-                    this.update_from_editor(value, cx);
-                }
-            }),
-        ];
+        cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.update_from_editor(cx);
+            }
+        })
+        .detach();
 
         Self::load_note_async(note_id, window, cx);
 
@@ -129,12 +128,10 @@ impl MarkdownEditorView {
             preview,
             mode: EditorMode::Split,
             current_path: None,
-            last_file_saved: DEFAULT_NOTE.into(),
             save_state: SaveState::Saved,
             stats: DocumentStats::from_text(DEFAULT_NOTE),
             auto_save_epoch: 0,
             _auto_save_task: None,
-            _subscriptions,
             emmet_input,
             show_emmet_input: false,
             emmet_replacement_range: None,
@@ -152,10 +149,12 @@ impl MarkdownEditorView {
         }
 
         self.title = SharedString::from(title);
-        let db = cx.global::<DB>().conn.clone();
-        let note_id = self.note_id;
-        let title = title.to_string();
+        cx.notify();
+
         let now = now_ts();
+        let note_id = self.note_id;
+        let db = cx.global::<DB>().conn.clone();
+        let title = title.to_string();
 
         cx.spawn(async move |_, _| -> Result<()> {
             note::ActiveModel {
@@ -169,8 +168,6 @@ impl MarkdownEditorView {
             Ok(())
         })
         .detach();
-
-        cx.notify();
     }
 
     fn load_note_async(note_id: u32, window: &mut Window, cx: &mut Context<Self>) {
@@ -219,40 +216,50 @@ impl MarkdownEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.title = model.title.into();
         self.current_path = model.file_path.map(PathBuf::from);
-        self.last_file_saved = content.clone().into();
+        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
+
         self.save_state = if missing {
             SaveState::Missing
         } else {
             SaveState::Saved
         };
+
         self.stats = DocumentStats::from_text(&content);
 
         self.editor.update(cx, |editor, cx| {
             editor.set_highlighter(Language::Markdown, cx);
-            editor.set_value(content.clone(), window, cx);
+            editor.set_value(content.as_str(), window, cx);
             editor.focus(window, cx);
         });
+
         self.preview.update(cx, |preview, cx| {
-            preview.set_text(&content, cx);
+            preview.set_text(content.as_ref(), cx);
         });
+
         cx.notify();
     }
 
-    fn update_from_editor(&mut self, value: SharedString, cx: &mut Context<Self>) {
+    fn update_from_editor(&mut self, cx: &mut Context<Self>) {
+        let value = self.editor.read(cx).value();
+
         self.preview.update(cx, |preview, cx| {
             preview.set_text(value.as_ref(), cx);
         });
+
         self.stats = DocumentStats::from_text(value.as_ref());
-        self.save_state = match self.save_state {
-            SaveState::Missing => SaveState::Missing,
-            _ if self.current_path.is_some() && value == self.last_file_saved => SaveState::Saved,
-            _ => SaveState::Dirty,
-        };
+
+        let old_save_state = self.save_state.clone();
+        if !matches!(self.save_state, SaveState::Missing) {
+            self.save_state = SaveState::Dirty;
+        }
+
+        if self.save_state != old_save_state {
+            cx.notify();
+        }
+
         self.schedule_auto_save(cx);
-        cx.notify();
     }
 
     fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
@@ -260,9 +267,7 @@ impl MarkdownEditorView {
         let epoch = self.auto_save_epoch;
 
         self._auto_save_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(900))
-                .await;
+            cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
 
             let save_request = this
                 .update(cx, |this, cx| {
@@ -445,6 +450,11 @@ impl MarkdownEditorView {
         } else {
             SaveState::Dirty
         }
+    }
+
+    fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+        self.mode = mode;
+        cx.notify();
     }
 
     fn toggle_mode(&mut self, cx: &mut Context<Self>) {

@@ -1,13 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod board;
-mod castle_app;
-mod markdown_editor;
-mod sidebar;
-
 use anyhow::Result;
 use dotenvy::dotenv;
-use gpui::{App, AppContext, Bounds, Global, SharedString, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
@@ -15,15 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
-use castle_app::CastleApp;
-
-#[derive(Clone)]
-pub(crate) struct DB {
-    conn: Arc<sea_orm::DatabaseConnection>,
-    data_dir: PathBuf,
-}
-
-impl Global for DB {}
+use app::{DB, castle_app::CastleApp, markdown_editor};
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 pub(crate) fn suggested_file_name(title: &str) -> String {
     let stem = if title.trim().is_empty() {
@@ -36,6 +39,7 @@ pub(crate) fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("untitled");
+
     let extension = Path::new(&file_name)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -52,7 +56,7 @@ pub(crate) fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
 }
 
 pub(crate) fn now_ts() -> i64 {
-    std::time::SystemTime::now()
+    SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()

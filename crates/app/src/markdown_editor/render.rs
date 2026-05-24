@@ -149,8 +149,7 @@ impl MarkdownEditorView {
                             .small()
                             .selected(mode == EditorMode::Split)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Split;
-                                cx.notify();
+                                this.set_mode(EditorMode::Split, cx);
                             })),
                     )
                     .child(
@@ -160,8 +159,7 @@ impl MarkdownEditorView {
                             .small()
                             .selected(mode == EditorMode::Source)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Source;
-                                cx.notify();
+                                this.set_mode(EditorMode::Source, cx);
                             })),
                     )
                     .child(
@@ -171,8 +169,7 @@ impl MarkdownEditorView {
                             .small()
                             .selected(mode == EditorMode::Preview)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.mode = EditorMode::Preview;
-                                cx.notify();
+                                this.set_mode(EditorMode::Preview, cx);
                             })),
                     )
                     .child(status_badge(save_state, cx)),
