@@ -3,7 +3,10 @@ use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable, h_flex,
     input::Input,
     select::Select,
-    sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    sidebar::{
+        Sidebar, SidebarCollapsible, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
+        SidebarMenuItem,
+    },
     v_flex,
 };
 
@@ -150,7 +153,8 @@ impl Render for SidebarView {
             .child(
                 Sidebar::new("sidebar")
                     .w(px(260.))
-                    .collapsible(false)
+                    .collapsible(SidebarCollapsible::Offcanvas)
+                    .collapsed(self.collapsed)
                     .border_0()
                     .gap_0()
                     .header(

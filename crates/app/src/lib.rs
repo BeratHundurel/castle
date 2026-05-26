@@ -1,5 +1,5 @@
+pub mod app_shell;
 pub mod board;
-pub mod castle_app;
 pub mod markdown_editor;
 pub mod sidebar;
 

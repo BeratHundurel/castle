@@ -28,6 +28,7 @@ pub(crate) struct SidebarView {
     standalone_boards: Vec<BoardDTO>,
     standalone_notes: Vec<NoteDTO>,
     is_adding_project: bool,
+    collapsed: bool,
     new_project_input: Entity<InputState>,
     new_board_input: Entity<InputState>,
     rename_board_input: Entity<InputState>,
@@ -194,6 +195,7 @@ impl SidebarView {
             standalone_boards: vec![],
             standalone_notes: vec![],
             is_adding_project: false,
+            collapsed: false,
             new_project_input,
             new_board_input,
             rename_board_input,
@@ -218,5 +220,14 @@ impl SidebarView {
             .flat_map(|project| project.boards.iter())
             .chain(self.standalone_boards.iter())
             .find(|board| board.id == board_id)
+    }
+
+    pub(crate) fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    pub(crate) fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.collapsed = !self.collapsed;
+        cx.notify();
     }
 }

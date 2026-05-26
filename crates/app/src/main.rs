@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
-use app::{DB, castle_app::CastleApp, markdown_editor};
+use app::{DB, app_shell::AppShell, markdown_editor};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = CastleApp::view(window, cx);
+                    let view = AppShell::view(window, cx);
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )
