@@ -20,62 +20,6 @@ impl Focusable for MarkdownEditorView {
     }
 }
 
-impl Render for MarkdownEditorView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_background = cx.theme().background;
-        let theme_border = cx.theme().border;
-        let theme_input = cx.theme().input;
-
-        v_flex()
-            .id("markdown-editor-window")
-            .key_context("MarkdownEditor")
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .on_action(cx.listener(Self::on_action_save))
-            .on_action(cx.listener(Self::on_action_save_as))
-            .on_action(cx.listener(Self::on_action_toggle_mode))
-            .on_action(cx.listener(Self::on_action_expand_emmet))
-            .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
-            .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
-            .on_action(cx.listener(Self::apply_format))
-            .child(self.render_toolbar(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .w_full()
-                    .child(self.render_editor_body(cx)),
-            )
-            .child(self.render_status_bar(cx))
-            .children(self.show_emmet_input.then(|| {
-                div()
-                    .key_context("EmmetInput")
-                    .absolute()
-                    .top(px(60.))
-                    .left(px(20.))
-                    .w(px(300.))
-                    .p_2()
-                    .bg(theme_background)
-                    .border_1()
-                    .border_color(theme_border)
-                    .rounded_md()
-                    .shadow_sm()
-                    .child(
-                        Input::new(&self.emmet_input)
-                            .w_full()
-                            .bg(theme_input)
-                            .px_2()
-                            .py_1()
-                            .rounded_sm(),
-                    )
-            }))
-    }
-}
-
 impl MarkdownEditorView {
     pub(crate) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mode = self.mode;
@@ -267,6 +211,62 @@ impl MarkdownEditorView {
                     .child(format!("{} chars", self.stats.characters))
                     .child("Ctrl+E toggles mode"),
             )
+    }
+}
+
+impl Render for MarkdownEditorView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme_background = cx.theme().background;
+        let theme_border = cx.theme().border;
+        let theme_input = cx.theme().input;
+
+        v_flex()
+            .id("markdown-editor-window")
+            .key_context("MarkdownEditor")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .on_action(cx.listener(Self::on_action_save))
+            .on_action(cx.listener(Self::on_action_save_as))
+            .on_action(cx.listener(Self::on_action_toggle_mode))
+            .on_action(cx.listener(Self::on_action_expand_emmet))
+            .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
+            .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
+            .on_action(cx.listener(Self::apply_format))
+            .child(self.render_toolbar(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .w_full()
+                    .child(self.render_editor_body(cx)),
+            )
+            .child(self.render_status_bar(cx))
+            .children(self.show_emmet_input.then(|| {
+                div()
+                    .key_context("EmmetInput")
+                    .absolute()
+                    .top(px(60.))
+                    .left(px(20.))
+                    .w(px(300.))
+                    .p_2()
+                    .bg(theme_background)
+                    .border_1()
+                    .border_color(theme_border)
+                    .rounded_md()
+                    .shadow_sm()
+                    .child(
+                        Input::new(&self.emmet_input)
+                            .w_full()
+                            .bg(theme_input)
+                            .px_2()
+                            .py_1()
+                            .rounded_sm(),
+                    )
+            }))
     }
 }
 

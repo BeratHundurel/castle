@@ -1,7 +1,10 @@
+use std::rc::Rc;
+
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable, h_flex,
     input::Input,
+    menu::PopupMenu,
     select::Select,
     sidebar::{
         Sidebar, SidebarCollapsible, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
@@ -11,8 +14,7 @@ use gpui_component::{
 };
 
 use super::SidebarView;
-use super::action::*;
-use super::dto::*;
+use super::content_item::SidebarContentItem;
 use super::event::SidebarEvent;
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
@@ -23,12 +25,113 @@ impl Focusable for SidebarView {
     }
 }
 
+impl SidebarView {
+    fn render_content_item(
+        &self,
+        item: SidebarContentItem,
+        cx: &mut Context<Self>,
+        search_matches: bool,
+        projects: Rc<Vec<(u32, SharedString)>>,
+    ) -> SidebarMenuItem {
+        let title = item.title();
+        let is_active = self.active_item == Some(item.active_item());
+        let is_renaming = item.is_renaming(self);
+        let context_item = item.clone();
+        let click_item = item.clone();
+
+        SidebarMenuItem::new(title.clone())
+            .icon(item.icon())
+            .when(!search_matches, |this| this.disable(true))
+            .when(is_renaming, |this| {
+                let input = item.rename_input(self);
+                this.suffix(move |_window, cx| {
+                    Input::new(&input)
+                        .small()
+                        .bg(cx.theme().sidebar.opacity(0.))
+                        .rounded_none()
+                        .focus_bordered(false)
+                        .border_0()
+                        .text_xs()
+                        .w_full()
+                })
+            })
+            .active(is_active)
+            .context_menu(move |menu, _, cx| {
+                Self::render_item_context_menu(menu, context_item.clone(), projects.clone(), cx)
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                click_item.select(this, cx);
+                this.focus_handle.focus(window, cx);
+                cx.notify();
+            }))
+    }
+
+    fn render_item_context_menu(
+        mut menu: PopupMenu,
+        item: SidebarContentItem,
+        projects: Rc<Vec<(u32, SharedString)>>,
+        cx: &mut App,
+    ) -> PopupMenu {
+        let muted = cx.theme().muted_foreground;
+        menu = menu
+            .menu_element(item.edit_action(), move |_window, _cx| {
+                Self::render_context_menu_row("Edit", IconName::Replace, muted)
+            })
+            .menu_element(item.move_action(None), move |_window, _cx| {
+                Self::render_context_menu_row("Move to Standalone", IconName::Folder, muted)
+            });
+
+        for (target_project_id, name) in projects.iter() {
+            if Some(*target_project_id) == item.project_id() {
+                continue;
+            }
+
+            let target_project_id = *target_project_id;
+            let name = name.clone();
+            menu = menu.menu_element(
+                item.move_action(Some(target_project_id)),
+                move |_window, _cx| {
+                    Self::render_context_menu_row(
+                        format!("Move to {}", name),
+                        IconName::FolderOpen,
+                        muted,
+                    )
+                },
+            );
+        }
+
+        menu.menu_element(item.delete_action(), move |_window, _cx| {
+            Self::render_context_menu_row("Delete", IconName::Delete, muted)
+        })
+    }
+
+    fn render_context_menu_row(
+        label: impl Into<SharedString>,
+        icon: IconName,
+        color: Hsla,
+    ) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .gap_2()
+            .items_center()
+            .justify_between()
+            .child(label.into())
+            .child(Icon::new(icon).xsmall().text_color(color))
+    }
+}
+
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let adding_board_to_project = self.adding_board_to_project;
         let search_query = self.search_input.read(cx).text().to_string();
         let search_lower = search_query.to_lowercase();
+        let move_project_targets: Rc<Vec<(u32, SharedString)>> = Rc::new(
+            self.projects
+                .iter()
+                .map(|project| (project.id, project.name.clone()))
+                .collect(),
+        );
 
         let project_menu_items: Vec<SidebarMenuItem> = self
             .projects
@@ -57,16 +160,14 @@ impl Render for SidebarView {
 
                 let project_id = project.id;
                 let mut children: Vec<SidebarMenuItem> = Vec::new();
-                children.extend(
-                    filtered_notes
-                        .into_iter()
-                        .map(|note| self.render_note_item(note, cx, true)),
-                );
-                children.extend(
-                    filtered_boards
-                        .into_iter()
-                        .map(|board| self.render_board_item(board, cx, true)),
-                );
+
+                children.extend(filtered_notes.into_iter().map(|note| {
+                    self.render_content_item(note.into(), cx, true, move_project_targets.clone())
+                }));
+
+                children.extend(filtered_boards.into_iter().map(|board| {
+                    self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+                }));
 
                 if adding_board_to_project == Some(Some(project_id)) {
                     let input = self.new_board_input.clone();
@@ -91,6 +192,7 @@ impl Render for SidebarView {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.adding_board_to_project = Some(Some(project_id));
                                 this.new_board_input.update(cx, |input, cx| {
+                                    input.set_value("", window, cx);
                                     input.focus(window, cx);
                                 });
                                 cx.notify();
@@ -132,14 +234,14 @@ impl Render for SidebarView {
 
         let mut standalone_items: Vec<SidebarMenuItem> = standalone_notes
             .into_iter()
-            .map(|note| self.render_note_item(note, cx, true))
+            .map(|note| {
+                self.render_content_item(note.into(), cx, true, move_project_targets.clone())
+            })
             .collect();
 
-        standalone_items.extend(
-            standalone_boards
-                .into_iter()
-                .map(|board| self.render_board_item(board, cx, true)),
-        );
+        standalone_items.extend(standalone_boards.into_iter().map(|board| {
+            self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+        }));
 
         div()
             .h_full()
@@ -244,6 +346,7 @@ impl Render for SidebarView {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.is_adding_project = true;
                                             this.new_project_input.update(cx, |input, cx| {
+                                                input.set_value("", window, cx);
                                                 input.focus(window, cx);
                                             });
                                             cx.notify();
@@ -305,210 +408,5 @@ impl Render for SidebarView {
                         ),
                     ),
             )
-    }
-}
-
-impl SidebarView {
-    fn render_board_item(
-        &self,
-        board: &BoardDTO,
-        cx: &mut Context<Self>,
-        search_matches: bool,
-    ) -> SidebarMenuItem {
-        let board_id = board.id;
-        let project_id = board.project_id;
-        let title = board.title.clone();
-        let is_active = self.active_item == Some(ActiveItem::Board(board_id));
-        let is_renaming = self.renaming_board == Some(board_id);
-        let projects = self
-            .projects
-            .iter()
-            .map(|project| (project.id, project.name.clone()))
-            .collect::<Vec<_>>();
-
-        SidebarMenuItem::new(title.clone())
-            .icon(IconName::LayoutDashboard)
-            .when(!search_matches, |this| this.disable(true))
-            .when(is_renaming, |this| {
-                let input = self.rename_board_input.clone();
-                this.suffix(move |_window, cx| {
-                    Input::new(&input)
-                        .small()
-                        .bg(cx.theme().sidebar.opacity(0.))
-                        .rounded_none()
-                        .focus_bordered(false)
-                        .border_0()
-                        .text_xs()
-                        .w_full()
-                })
-            })
-            .active(is_active)
-            .context_menu(move |mut menu, _, cx| {
-                let muted = cx.theme().muted_foreground;
-                menu = menu
-                    .menu_element(Box::new(EditBoardAction(board_id)), move |_window, _cx| {
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .items_center()
-                            .justify_between()
-                            .child("Edit")
-                            .child(Icon::new(IconName::Replace).xsmall().text_color(muted))
-                    })
-                    .menu_element(
-                        Box::new(MoveBoardAction {
-                            board_id,
-                            project_id: None,
-                        }),
-                        move |_window, _cx| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child("Move to Standalone")
-                                .child(Icon::new(IconName::Folder).xsmall().text_color(muted))
-                        },
-                    );
-
-                for (target_project_id, name) in projects.clone() {
-                    if Some(target_project_id) == project_id {
-                        continue;
-                    }
-                    menu = menu.menu_element(
-                        Box::new(MoveBoardAction {
-                            board_id,
-                            project_id: Some(target_project_id),
-                        }),
-                        move |_window, _cx| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child(format!("Move to {}", name))
-                                .child(Icon::new(IconName::FolderOpen).xsmall().text_color(muted))
-                        },
-                    );
-                }
-
-                menu.menu_element(
-                    Box::new(DeleteBoardAction(board_id)),
-                    move |_window, _cx| {
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .items_center()
-                            .justify_between()
-                            .child("Delete")
-                            .child(Icon::new(IconName::Delete).xsmall().text_color(muted))
-                    },
-                )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.select_board(board_id, project_id, title.clone(), cx);
-                this.focus_handle.focus(window, cx);
-                cx.notify();
-            }))
-    }
-
-    fn render_note_item(
-        &self,
-        note: &NoteDTO,
-        cx: &mut Context<Self>,
-        search_matches: bool,
-    ) -> SidebarMenuItem {
-        let note_id = note.id;
-        let project_id = note.project_id;
-        let title = note.title.clone();
-        let is_active = self.active_item == Some(ActiveItem::Note(note_id));
-        let is_renaming = self.renaming_note == Some(note_id);
-        let projects = self
-            .projects
-            .iter()
-            .map(|project| (project.id, project.name.clone()))
-            .collect::<Vec<_>>();
-
-        SidebarMenuItem::new(title.clone())
-            .icon(IconName::BookOpen)
-            .when(!search_matches, |this| this.disable(true))
-            .when(is_renaming, |this| {
-                let input = self.rename_note_input.clone();
-                this.suffix(move |_window, cx| {
-                    Input::new(&input)
-                        .small()
-                        .bg(cx.theme().sidebar.opacity(0.))
-                        .rounded_none()
-                        .focus_bordered(false)
-                        .border_0()
-                        .text_xs()
-                        .w_full()
-                })
-            })
-            .active(is_active)
-            .context_menu(move |mut menu, _, cx| {
-                let muted = cx.theme().muted_foreground;
-                menu = menu
-                    .menu_element(Box::new(EditNoteAction(note_id)), move |_window, _cx| {
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .items_center()
-                            .justify_between()
-                            .child("Edit")
-                            .child(Icon::new(IconName::Replace).xsmall().text_color(muted))
-                    })
-                    .menu_element(
-                        Box::new(MoveNoteAction {
-                            note_id,
-                            project_id: None,
-                        }),
-                        move |_window, _cx| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child("Move to Standalone")
-                                .child(Icon::new(IconName::Folder).xsmall().text_color(muted))
-                        },
-                    );
-
-                for (target_project_id, name) in projects.clone() {
-                    if Some(target_project_id) == project_id {
-                        continue;
-                    }
-                    menu = menu.menu_element(
-                        Box::new(MoveNoteAction {
-                            note_id,
-                            project_id: Some(target_project_id),
-                        }),
-                        move |_window, _cx| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child(format!("Move to {}", name))
-                                .child(Icon::new(IconName::FolderOpen).xsmall().text_color(muted))
-                        },
-                    );
-                }
-
-                menu.menu_element(Box::new(DeleteNoteAction(note_id)), move |_window, _cx| {
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .items_center()
-                        .justify_between()
-                        .child("Delete")
-                        .child(Icon::new(IconName::Delete).xsmall().text_color(muted))
-                })
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.select_note(note_id, project_id, title.clone(), cx);
-                this.focus_handle.focus(window, cx);
-                cx.notify();
-            }))
     }
 }

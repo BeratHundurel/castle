@@ -1,4 +1,5 @@
 mod action;
+mod content_item;
 mod dto;
 mod event;
 mod handlers;
