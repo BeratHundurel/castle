@@ -23,6 +23,7 @@ impl AppShell {
                 .child(
                     h_flex()
                         .id("sidebar-title-bar")
+                        .w(px(272.))
                         .h_full()
                         .items_center()
                         .gap_2()

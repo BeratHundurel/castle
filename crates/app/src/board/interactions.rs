@@ -11,7 +11,6 @@ use gpui_component::{
     v_flex,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use std::rc::Rc;
 
 use crate::DB;
 
@@ -123,31 +122,41 @@ impl BoardView {
     }
 
     pub(super) fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let board_view = cx.entity();
         let dialog_title_input = self.dialog_title_input.clone();
         let dialog_description_input = self.dialog_description_input.clone();
 
-        let confirm_handler = Rc::new(cx.listener(move |this, _, _, cx| {
-            let Some(card_id) = this.pending_card_id else {
-                return;
-            };
-
-            let entry_id = this.next_entry_id();
-            let entry = EntryDTO {
-                id: entry_id,
-                title: this.dialog_title_input.read(cx).value(),
-                description: this.dialog_description_input.read(cx).value(),
-                card_id,
-            };
-            this.pending_card_id = None;
-            this.add_entry(cx, entry, entry_id);
-        }));
-
         window.open_dialog(cx, move |dialog, _window, _cx| {
-            let confirm_handler = confirm_handler.clone();
             dialog
-                .on_ok(move |e, window, cx| {
-                    (confirm_handler)(e, window, cx);
-                    true
+                .on_ok({
+                    let board_view = board_view.clone();
+                    move |_, window, cx| {
+                        board_view.update(cx, |this, cx| {
+                            let Some(card_id) = this.pending_card_id else {
+                                return;
+                            };
+
+                            let entry_id = this.next_entry_id();
+                            let entry = EntryDTO {
+                                id: entry_id,
+                                title: this.dialog_title_input.read(cx).value(),
+                                description: this.dialog_description_input.read(cx).value(),
+                                card_id,
+                            };
+
+                            this.dialog_title_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                            });
+                            this.dialog_description_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                            });
+
+                            this.pending_card_id = None;
+                            this.add_entry(cx, entry, entry_id);
+                        });
+
+                        true
+                    }
                 })
                 .child(
                     DialogHeader::new()

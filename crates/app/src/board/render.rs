@@ -226,6 +226,7 @@ impl Render for BoardView {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.is_adding_list = true;
                             this.new_list_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
                                 input.focus(window, cx);
                             });
                             cx.notify();
