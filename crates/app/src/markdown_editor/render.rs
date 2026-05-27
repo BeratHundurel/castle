@@ -81,8 +81,10 @@ impl MarkdownEditorView {
         let mode = self.mode;
         let save_state = self.save_state.clone();
 
-        h_flex()
+        div()
             .id("markdown-toolbar")
+            .flex()
+            .flex_wrap()
             .w_full()
             .gap_2()
             .items_center()
@@ -95,6 +97,7 @@ impl MarkdownEditorView {
             .child(
                 h_flex()
                     .gap_1()
+                    .flex_shrink_0()
                     .child(
                         Button::new("save-note")
                             .icon(IconName::Check)
@@ -113,8 +116,14 @@ impl MarkdownEditorView {
                     ),
             )
             .child(
-                h_flex()
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .min_w_0()
+                    .flex_1()
                     .gap_1()
+                    .items_center()
+                    .justify_center()
                     .child(format_button("h1", "H1", MarkdownFormat::HeadingOne))
                     .child(format_button("h2", "H2", MarkdownFormat::HeadingTwo))
                     .child(format_button("h3", "H3", MarkdownFormat::HeadingThree))
@@ -142,14 +151,15 @@ impl MarkdownEditorView {
             .child(
                 h_flex()
                     .gap_1()
+                    .flex_shrink_0()
                     .child(
                         Button::new("mode-split")
                             .label("Split")
                             .ghost()
                             .small()
                             .selected(mode == EditorMode::Split)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_mode(EditorMode::Split, cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_mode(EditorMode::Split, window, cx);
                             })),
                     )
                     .child(
@@ -158,8 +168,8 @@ impl MarkdownEditorView {
                             .ghost()
                             .small()
                             .selected(mode == EditorMode::Source)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_mode(EditorMode::Source, cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_mode(EditorMode::Source, window, cx);
                             })),
                     )
                     .child(
@@ -168,8 +178,8 @@ impl MarkdownEditorView {
                             .ghost()
                             .small()
                             .selected(mode == EditorMode::Preview)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_mode(EditorMode::Preview, cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_mode(EditorMode::Preview, window, cx);
                             })),
                     )
                     .child(status_badge(save_state, cx)),
@@ -265,9 +275,26 @@ fn format_button(id: &'static str, label: &'static str, format: MarkdownFormat) 
         .label(label)
         .ghost()
         .small()
+        .tooltip(format_tooltip(format))
         .on_click(move |_, window, cx| {
             window.dispatch_action(Box::new(ApplyMarkdownFormat(format)), cx);
         })
+}
+
+fn format_tooltip(format: MarkdownFormat) -> &'static str {
+    match format {
+        MarkdownFormat::HeadingOne => "Heading 1",
+        MarkdownFormat::HeadingTwo => "Heading 2",
+        MarkdownFormat::HeadingThree => "Heading 3",
+        MarkdownFormat::Bold => "Bold",
+        MarkdownFormat::Italic => "Italic",
+        MarkdownFormat::InlineCode => "Inline code",
+        MarkdownFormat::Link => "Link",
+        MarkdownFormat::BulletList => "Bullet list",
+        MarkdownFormat::OrderedList => "Ordered list",
+        MarkdownFormat::Quote => "Quote",
+        MarkdownFormat::CodeBlock => "Code block",
+    }
 }
 
 fn status_badge(save_state: SaveState, cx: &mut Context<MarkdownEditorView>) -> impl IntoElement {

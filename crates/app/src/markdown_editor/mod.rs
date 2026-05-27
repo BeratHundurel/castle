@@ -66,6 +66,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-e", ToggleEditorMode, Some("MarkdownEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-e", ToggleEditorMode, Some("MarkdownEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-e", ToggleEditorMode, Some("TextView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-e", ToggleEditorMode, Some("TextView")),
         KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
         KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
     ]);
@@ -167,17 +171,31 @@ impl MarkdownEditorView {
         .detach();
     }
 
-    fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+    fn set_mode(&mut self, mode: EditorMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
+        self.focus_active_mode(window, cx);
         cx.notify();
     }
 
-    fn toggle_mode(&mut self, cx: &mut Context<Self>) {
+    fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = match self.mode {
             EditorMode::Split => EditorMode::Source,
             EditorMode::Source => EditorMode::Preview,
             EditorMode::Preview => EditorMode::Split,
         };
+        self.focus_active_mode(window, cx);
         cx.notify();
+    }
+
+    fn focus_active_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.mode {
+            EditorMode::Split | EditorMode::Source => {
+                self.editor
+                    .update(cx, |editor, cx| editor.focus(window, cx));
+            }
+            EditorMode::Preview => {
+                self.focus_handle.focus(window, cx);
+            }
+        }
     }
 }

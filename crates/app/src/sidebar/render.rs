@@ -266,16 +266,42 @@ impl Render for SidebarView {
                         SidebarFooter::new().child(
                             h_flex()
                                 .id("theme-select-footer")
+                                .w_full()
+                                .h_10()
                                 .gap_2()
+                                .justify_center()
                                 .items_center()
-                                .child(IconName::Palette)
+                                .rounded(theme.radius)
+                                .border_1()
+                                .border_color(theme.border.opacity(0.7))
+                                .bg(theme.secondary.opacity(0.55))
+                                .px_2()
+                                .hover(|this| {
+                                    this.bg(theme.secondary_hover.opacity(0.8))
+                                        .border_color(theme.primary.opacity(0.35))
+                                })
                                 .child(
-                                    Select::new(&self.theme_select)
-                                        .placeholder("Theme")
-                                        .w_full()
-                                        .menu_max_h(rems(14.)),
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size_6()
+                                        .flex_shrink_0()
+                                        .rounded(theme.radius)
+                                        .bg(theme.primary.opacity(0.18))
+                                        .text_color(theme.primary)
+                                        .child(Icon::new(IconName::Palette).xsmall()),
                                 )
-                                .w_full(),
+                                .child(
+                                    div().items_center().flex_1().child(
+                                        Select::new(&self.theme_select)
+                                            .placeholder("Theme")
+                                            .appearance(false)
+                                            .small()
+                                            .w_full()
+                                            .menu_max_h(rems(14.)),
+                                    ),
+                                ),
                         ),
                     ),
             )

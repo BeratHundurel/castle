@@ -27,10 +27,10 @@ impl MarkdownEditorView {
     pub(super) fn on_action_toggle_mode(
         &mut self,
         _: &ToggleEditorMode,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_mode(cx);
+        self.toggle_mode(window, cx);
     }
 
     pub(super) fn on_action_expand_emmet(

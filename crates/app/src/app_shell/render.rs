@@ -1,3 +1,5 @@
+use gpui_component::Icon;
+
 use super::*;
 
 impl AppShell {
@@ -21,10 +23,9 @@ impl AppShell {
                 .child(
                     h_flex()
                         .id("sidebar-title-bar")
-                        .w(px(260.))
                         .h_full()
                         .items_center()
-                        .gap_1()
+                        .gap_2()
                         .px_2()
                         .child(
                             SidebarToggleButton::new()
@@ -76,7 +77,7 @@ impl AppShell {
                     .suffix(
                         Button::new(("close-tab", tab.id as usize))
                             .icon(IconName::Close)
-                            .ghost()
+                            .when_else(index == active_index, |b| b.primary(), |b| b.ghost())
                             .xsmall()
                             .tooltip("Close tab")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -87,7 +88,6 @@ impl AppShell {
             .suffix(
                 Button::new("new-tab")
                     .icon(IconName::Plus)
-                    .text_color(cx.theme().primary_foreground)
                     .ghost()
                     .xsmall()
                     .tooltip("New tab")
@@ -293,11 +293,11 @@ impl Render for AppShell {
     }
 }
 
-fn active_tab_icon(tab: Option<&OpenTab>) -> IconName {
+fn active_tab_icon(tab: Option<&OpenTab>) -> Icon {
     match tab.map(|tab| &tab.kind) {
-        Some(OpenTabKind::Note { .. }) => IconName::BookOpen,
-        Some(OpenTabKind::Board { .. }) => IconName::LayoutDashboard,
-        _ => IconName::Plus,
+        Some(OpenTabKind::Note { .. }) => Icon::new(IconName::BookOpen).small(),
+        Some(OpenTabKind::Board { .. }) => Icon::new(IconName::LayoutDashboard).small(),
+        _ => Icon::new(IconName::Plus).small(),
     }
 }
 
