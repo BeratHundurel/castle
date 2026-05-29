@@ -1,17 +1,18 @@
 mod action;
+mod handler;
 mod render;
 mod tabs;
 mod workspace;
 
-use action::*;
+pub(crate) use action::*;
 use anyhow::Result;
 use entity::{
     board, board::Entity as Board, note, note::Entity as Note, project::Entity as Project,
 };
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyBinding, MouseButton, ParentElement, PathPromptOptions, Render, SharedString, Styled,
-    Window, div, prelude::FluentBuilder as _, px,
+    MouseButton, ParentElement, PathPromptOptions, Render, SharedString, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar,
@@ -70,7 +71,6 @@ pub struct AppShell {
     focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
     title_input: Entity<InputState>,
-    _title_subscription: gpui::Subscription,
     open_tabs: Vec<OpenTab>,
     active_tab_index: usize,
     next_tab_id: u64,
@@ -93,20 +93,15 @@ impl AppShell {
                 .default_value("New tab")
         });
 
-        let title_subscription =
-            cx.subscribe(&title_input, |this, input, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) || this.suppress_title_event {
-                    return;
-                }
+        cx.subscribe(&title_input, |this, input, event: &InputEvent, cx| {
+            if !matches!(event, InputEvent::Change) || this.suppress_title_event {
+                return;
+            }
 
-                let title = input.read(cx).text().to_string();
-                this.rename_active_tab(title, cx);
-            });
-
-        cx.bind_keys([
-            KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
-            KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
-        ]);
+            let title = input.read(cx).text().to_string();
+            this.rename_active_tab(title, cx);
+        })
+        .detach();
 
         cx.subscribe_in(
             &sidebar,
@@ -151,9 +146,7 @@ impl AppShell {
                 SidebarEvent::NoteRenamed { note_id, title } => {
                     let mut renamed_active = false;
                     for (i, tab) in this.open_tabs.iter_mut().enumerate() {
-                        if let OpenTabKind::Note {
-                            note_id: id, view, ..
-                        } = &tab.kind
+                        if let OpenTabKind::Note { note_id: id, view, .. } = &tab.kind
                             && *id == *note_id
                         {
                             tab.title = title.clone();
@@ -171,16 +164,18 @@ impl AppShell {
                     cx.notify();
                 }
                 SidebarEvent::BoardDeleted { board_id } => {
-                    if let Some(index) = this.open_tabs.iter().position(|tab| {
-                        matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id)
-                    }) {
+                    if let Some(index) = this.open_tabs.iter().position(
+                        |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id),
+                    ) {
                         this.close_tab(index, window, cx);
                     }
                 }
                 SidebarEvent::NoteDeleted { note_id } => {
-                    if let Some(index) = this.open_tabs.iter().position(|tab| {
-                        matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == *note_id)
-                    }) {
+                    if let Some(index) = this
+                        .open_tabs
+                        .iter()
+                        .position(|tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == *note_id))
+                    {
                         this.close_tab(index, window, cx);
                     }
                 }
@@ -192,7 +187,6 @@ impl AppShell {
             focus_handle: cx.focus_handle(),
             sidebar,
             title_input,
-            _title_subscription: title_subscription,
             open_tabs: vec![OpenTab {
                 id: 1,
                 title: "New tab".into(),

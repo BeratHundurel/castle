@@ -16,6 +16,7 @@ use super::drag::*;
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+
         let Some(board_id_for_render) = self.board_id else {
             return h_flex()
                 .id("scrollable-container")
@@ -148,12 +149,7 @@ impl Render for BoardView {
                                 .bg(cx.theme().primary)
                                 .text_color(cx.theme().primary_foreground)
                                 .rounded(cx.theme().radius)
-                                .hover(|this| {
-                                    this.bg(cx.theme().primary_hover)
-                                        .cursor(CursorStyle::PointingHand)
-                                        .border_1()
-                                        .border_color(cx.theme().primary_foreground)
-                                })
+                                .hover(|this| this.bg(cx.theme().primary_hover))
                                 .cursor_move()
                                 .text_sm()
                                 .w_full()
@@ -174,7 +170,6 @@ impl Render for BoardView {
                                 .hover(|this| {
                                     this.bg(cx.theme().secondary_hover)
                                         .text_color(cx.theme().accent_foreground)
-                                        .cursor(CursorStyle::PointingHand)
                                 })
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -213,7 +208,6 @@ impl Render for BoardView {
                         .border_1()
                         .border_color(theme.info.opacity(0.24))
                         .rounded(theme.radius)
-                        .cursor_pointer()
                         .hover(|this| this.bg(theme.info.opacity(0.18)))
                         .drag_over::<CardDragInfo>(|this, _, _, cx| {
                             this.bg(cx.theme().secondary_hover)

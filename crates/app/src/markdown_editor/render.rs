@@ -25,6 +25,17 @@ impl MarkdownEditorView {
         let mode = self.mode;
         let save_state = self.save_state.clone();
 
+        let save_shortcut = if cfg!(target_os = "macos") {
+            "Cmd+S"
+        } else {
+            "Ctrl+S"
+        };
+        let save_as_shortcut = if cfg!(target_os = "macos") {
+            "Cmd+Shift+S"
+        } else {
+            "Ctrl+Shift+S"
+        };
+
         div()
             .id("markdown-toolbar")
             .flex()
@@ -47,7 +58,7 @@ impl MarkdownEditorView {
                             .icon(IconName::Check)
                             .ghost()
                             .small()
-                            .tooltip("Save (Ctrl+S)")
+                            .tooltip(format!("Save ({save_shortcut})"))
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                     )
                     .child(
@@ -55,7 +66,7 @@ impl MarkdownEditorView {
                             .label("Save as")
                             .ghost()
                             .small()
-                            .tooltip("Save as (Ctrl+Shift+S)")
+                            .tooltip(format!("Save as ({save_as_shortcut})"))
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(window, cx))),
                     ),
             )
@@ -178,6 +189,12 @@ impl MarkdownEditorView {
     }
 
     pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let toggle_mode_shortcut = if cfg!(target_os = "macos") {
+            "Cmd+Shift+V"
+        } else {
+            "Ctrl+Shift+V"
+        };
+
         let path = self
             .current_path
             .as_ref()
@@ -209,7 +226,7 @@ impl MarkdownEditorView {
                     .child(format!("{} lines", self.stats.lines))
                     .child(format!("{} words", self.stats.words))
                     .child(format!("{} chars", self.stats.characters))
-                    .child("Ctrl+E toggles mode"),
+                    .child(format!("{toggle_mode_shortcut} toggles mode")),
             )
     }
 }

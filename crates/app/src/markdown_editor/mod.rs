@@ -1,4 +1,4 @@
-mod action;
+pub(crate) mod action;
 mod emmet;
 mod formatting;
 mod handlers;
@@ -9,10 +9,7 @@ mod util;
 
 use anyhow::Result;
 use entity::note;
-use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Task,
-    Window,
-};
+use gpui::{App, AppContext, Context, Entity, FocusHandle, Focusable, SharedString, Task, Window};
 use gpui_component::{
     highlighter::Language,
     input::{InputEvent, InputState, TabSize},
@@ -22,7 +19,6 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use std::{ops::Range, path::PathBuf, time::Duration};
 
 use crate::DB;
-use action::*;
 use types::*;
 
 pub use types::DocumentStats;
@@ -46,33 +42,6 @@ pub(crate) struct MarkdownEditorView {
     emmet_input: Entity<InputState>,
     show_emmet_input: bool,
     emmet_replacement_range: Option<Range<usize>>,
-}
-
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-p", ExpandEmmet, Some("MarkdownEditor")),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-p", ExpandEmmet, Some("MarkdownEditor")),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-s", SaveMarkdownFile, Some("MarkdownEditor")),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-s", SaveMarkdownFile, Some("MarkdownEditor")),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-s", SaveMarkdownFileAs, Some("MarkdownEditor")),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-s", SaveMarkdownFileAs, Some("MarkdownEditor")),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-e", ToggleEditorMode, Some("MarkdownEditor")),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-e", ToggleEditorMode, Some("MarkdownEditor")),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-e", ToggleEditorMode, Some("TextView")),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-e", ToggleEditorMode, Some("TextView")),
-        KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
-        KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
-    ]);
 }
 
 impl MarkdownEditorView {

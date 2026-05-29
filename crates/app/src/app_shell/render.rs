@@ -264,6 +264,9 @@ impl Render for AppShell {
             .on_action(cx.listener(|this, _: &CloseAllTabsAction, window, cx| {
                 this.close_all_tabs(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleSidebarAction, window, cx| {
+                this.on_toggle_sidebar_action(window, cx);
+            }))
             .child(self.render_title_bar(cx))
             .child(
                 h_flex()

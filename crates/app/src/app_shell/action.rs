@@ -3,20 +3,24 @@ use serde::Deserialize;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
-pub(super) struct CloseTabAction(pub(super) u64);
+pub(crate) struct CloseTabAction(pub(crate) u64);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
-pub(super) struct CloseOtherTabsAction(pub(super) u64);
+pub(crate) struct CloseOtherTabsAction(pub(crate) u64);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
-pub(super) struct CloseAllTabsAction;
+pub(crate) struct CloseAllTabsAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
-pub(super) struct CycleNextTab;
+pub(crate) struct CycleNextTab;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
-pub(super) struct CyclePrevTab;
+pub(crate) struct CyclePrevTab;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+pub(crate) struct ToggleSidebarAction;

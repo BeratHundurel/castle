@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
-use app::{DB, app_shell::AppShell, markdown_editor};
+use app::{DB, app_shell::AppShell, keymap};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
     app.run(move |cx| {
         gpui_component::init(cx);
-        markdown_editor::init(cx);
+        keymap::init(cx);
 
         init_http_client(cx);
         init_themes(cx);

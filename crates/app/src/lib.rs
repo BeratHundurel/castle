@@ -1,5 +1,6 @@
 pub mod app_shell;
 pub mod board;
+pub mod keymap;
 pub mod markdown_editor;
 pub mod sidebar;
 

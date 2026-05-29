@@ -203,7 +203,10 @@ impl Render for SidebarView {
                 Some(
                     SidebarMenuItem::new(project.name.clone())
                         .icon(IconName::FolderOpen)
-                        .active(self.active_project_id == Some(project_id))
+                        .active(
+                            self.active_project_id == Some(project_id)
+                                && self.active_item.is_none(),
+                        )
                         .default_open(project.is_expanded || !search_lower.is_empty())
                         .click_to_toggle(true)
                         .children(children)
@@ -329,7 +332,6 @@ impl Render for SidebarView {
                                         })
                                         .border_1()
                                         .border_color(theme.accent_foreground.opacity(0.30))
-                                        .cursor_pointer()
                                         .child(
                                             h_flex()
                                                 .id("add-project-btn")
