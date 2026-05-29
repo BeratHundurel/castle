@@ -1,6 +1,9 @@
 use gpui::{App, KeyBinding};
 
-use crate::app_shell::{CycleNextTab, CyclePrevTab, ToggleSidebarAction};
+use crate::app_shell::{
+    CloseCommandPaletteAction, CommandPaletteAction, CycleNextTab, CyclePrevTab,
+    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, ToggleSidebarAction,
+};
 use crate::markdown_editor::action::{
     EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, SaveMarkdownFile, SaveMarkdownFileAs,
     ToggleEditorMode,
@@ -10,6 +13,11 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
+        KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
+        KeyBinding::new("escape", CloseCommandPaletteAction, Some("AppShell")),
+        KeyBinding::new("escape", CloseCommandPaletteAction, Some("CommandPalette")),
+        KeyBinding::new("up", SelectPrevCommandPaletteItem, Some("CommandPalette")),
+        KeyBinding::new("down", SelectNextCommandPaletteItem, Some("CommandPalette")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-b", ToggleSidebarAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]

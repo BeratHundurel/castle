@@ -7,6 +7,7 @@ impl AppShell {
         cx.spawn(async move |this, cx| -> Result<()> {
             let projects = Project::find().all(&*db).await?;
             let boards = Board::find().all(&*db).await?;
+            let notes = Note::find().all(&*db).await?;
 
             let project_choices: Vec<ProjectChoice> = projects
                 .iter()
@@ -29,6 +30,26 @@ impl AppShell {
                     BoardChoice {
                         id: board.id as u32,
                         title: SharedString::from(board.title),
+                        project_id: board.project_id.map(|id| id as u32),
+                        project_name,
+                    }
+                })
+                .collect();
+
+            let note_choices: Vec<NoteChoice> = notes
+                .into_iter()
+                .map(|note| {
+                    let project_name = note.project_id.and_then(|project_id| {
+                        projects
+                            .iter()
+                            .find(|project| project.id == project_id)
+                            .map(|project| SharedString::from(project.name.clone()))
+                    });
+
+                    NoteChoice {
+                        id: note.id as u32,
+                        title: SharedString::from(note.title),
+                        project_id: note.project_id.map(|id| id as u32),
                         project_name,
                     }
                 })
@@ -37,6 +58,7 @@ impl AppShell {
             this.update(cx, |this, cx| {
                 this.projects = project_choices;
                 this.boards = board_choices;
+                this.notes = note_choices;
                 cx.notify();
             })
             .ok();
@@ -52,14 +74,23 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.create_note_with_title(project_id, "Untitled note".to_string(), window, cx);
+    }
+
+    pub(super) fn create_note_with_title(
+        &mut self,
+        project_id: Option<u32>,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let db = cx.global::<DB>().conn.clone();
-        let title = SharedString::from("Untitled note");
         let now = now_ts();
         let view = cx.entity();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = note::ActiveModel {
-                title: Set(title.to_string()),
+                title: Set(title),
                 project_id: Set(project_id.map(|id| id as i64)),
                 file_path: Set(None),
                 cached_content: Set(DEFAULT_NOTE.to_string()),
@@ -84,6 +115,7 @@ impl AppShell {
                         );
                         this.sidebar
                             .update(cx, |_, cx| SidebarView::list_projects(cx));
+                        this.refresh_workspace(cx);
                     });
                 })
                 .ok()?;
@@ -163,6 +195,7 @@ impl AppShell {
                         );
                         this.sidebar
                             .update(cx, |_, cx| SidebarView::list_projects(cx));
+                        this.refresh_workspace(cx);
                     });
                 })
                 .ok()?;
@@ -178,12 +211,22 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.create_board_with_title(project_id, "Board".to_string(), window, cx);
+    }
+
+    pub(super) fn create_board_with_title(
+        &mut self,
+        project_id: Option<u32>,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let db = cx.global::<DB>().conn.clone();
         let view = cx.entity();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = board::ActiveModel {
-                title: Set("Board".to_string()),
+                title: Set(title),
                 project_id: Set(project_id.map(|id| id as i64)),
                 ..Default::default()
             }

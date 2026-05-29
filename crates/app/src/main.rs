@@ -99,7 +99,7 @@ fn init_themes(cx: &mut App) {
 }
 
 fn apply_default_theme(cx: &mut App) {
-    let theme_name = SharedString::from("Gruvbox Dark");
+    let theme_name = SharedString::from("Sick");
     if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
         Theme::global_mut(cx).apply_config(&theme);
     }
