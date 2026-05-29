@@ -1,6 +1,6 @@
 # Project Overview
 
-This project is a note taking and canvas board app that uses GPUI and GPUI Components writen in rust.
+This project is a note taking and kanban board app that uses GPUI and GPUI Components writen in rust.
 
 ## Documentation
 
