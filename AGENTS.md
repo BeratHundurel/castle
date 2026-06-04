@@ -9,7 +9,7 @@ Don't make edits it's for reference only.
 
 ### Tools
 
-Use 'cargo check' and 'cargo clippy --fix --allow-dirty' to ensure code quality
+Use 'cargo check' and 'cargo clippy --fix --allow-dirty' for related files when it is applicable to ensure code quality
 
 ### Skills
 
