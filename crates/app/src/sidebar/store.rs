@@ -1,11 +1,12 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
-use entity::{
-    board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
-};
+use entity::{project, project::Entity as Project};
 use gpui::{Context, SharedString};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, PaginatorTrait};
 
 use crate::DB;
+use crate::workspace_data::load_workspace_rows;
 
 use super::{SidebarView, dto::*};
 
@@ -14,24 +15,67 @@ impl SidebarView {
         let db = cx.global::<DB>().conn.clone();
 
         cx.spawn(async move |this, cx| -> Result<()> {
-            let results = Project::load().with(Board).with(Note).all(&*db).await?;
-            let standalone_boards = Board::find()
-                .filter(board::Column::ProjectId.is_null())
-                .all(&*db)
-                .await?;
+            let rows = load_workspace_rows(db.as_ref()).await?;
+            let mut projects: Vec<ProjectDTO> = rows
+                .projects
+                .into_iter()
+                .map(|project| ProjectDTO {
+                    id: project.id,
+                    name: SharedString::from(project.name),
+                    position: project.position,
+                    is_expanded: false,
+                    boards: vec![],
+                    notes: vec![],
+                })
+                .collect();
 
-            let standalone_notes = Note::find()
-                .filter(note::Column::ProjectId.is_null())
-                .all(&*db)
-                .await?;
+            for (index, project) in projects.iter_mut().enumerate() {
+                if project.position == 0 {
+                    project.position = index as i32;
+                }
+            }
 
-            let mut projects: Vec<ProjectDTO> = results.into_iter().map(ProjectDTO::from).collect();
+            let project_indexes: HashMap<u32, usize> = projects
+                .iter()
+                .enumerate()
+                .map(|(index, project)| (project.id, index))
+                .collect();
 
-            let standalone_boards: Vec<BoardDTO> =
-                standalone_boards.into_iter().map(BoardDTO::from).collect();
+            let mut standalone_boards = Vec::new();
+            for board in rows.boards {
+                let dto = BoardDTO {
+                    id: board.id,
+                    title: SharedString::from(board.title),
+                    project_id: board.project_id,
+                };
 
-            let standalone_notes: Vec<NoteDTO> =
-                standalone_notes.into_iter().map(NoteDTO::from).collect();
+                if let Some(project_index) = dto
+                    .project_id
+                    .and_then(|id| project_indexes.get(&id).copied())
+                {
+                    projects[project_index].boards.push(dto);
+                } else if dto.project_id.is_none() {
+                    standalone_boards.push(dto);
+                }
+            }
+
+            let mut standalone_notes = Vec::new();
+            for note in rows.notes {
+                let dto = NoteDTO {
+                    id: note.id,
+                    title: SharedString::from(note.title),
+                    project_id: note.project_id,
+                };
+
+                if let Some(project_index) = dto
+                    .project_id
+                    .and_then(|id| project_indexes.get(&id).copied())
+                {
+                    projects[project_index].notes.push(dto);
+                } else if dto.project_id.is_none() {
+                    standalone_notes.push(dto);
+                }
+            }
 
             this.update(cx, |this, cx| {
                 if let Some(first) = projects.first_mut() {
@@ -54,8 +98,11 @@ impl SidebarView {
         let db = cx.global::<DB>().conn.clone();
 
         cx.spawn(async move |this, cx| -> Result<()> {
+            let position = Project::find().count(&*db).await? as i32;
             let project_entity = project::ActiveModel {
                 name: Set(name),
+                archived: Set(false),
+                position: Set(position),
                 ..Default::default()
             }
             .insert(&*db)
@@ -65,50 +112,11 @@ impl SidebarView {
                 this.projects.push(ProjectDTO {
                     id: project_entity.id as u32,
                     name: SharedString::from(project_entity.name),
+                    position: project_entity.position,
                     is_expanded: true,
                     boards: vec![],
                     notes: vec![],
                 });
-                cx.notify();
-            })
-            .ok();
-
-            Ok(())
-        })
-        .detach();
-    }
-
-    pub(super) fn add_board(
-        &mut self,
-        cx: &mut Context<Self>,
-        project_id: Option<u32>,
-        title: String,
-    ) {
-        let db = cx.global::<DB>().conn.clone();
-
-        cx.spawn(async move |this, cx| -> Result<()> {
-            let inserted = board::ActiveModel {
-                title: Set(title),
-                project_id: Set(project_id.map(|id| id as i64)),
-                ..Default::default()
-            }
-            .insert(&*db)
-            .await?;
-
-            this.update(cx, |this, cx| {
-                let board = BoardDTO {
-                    id: inserted.id as u32,
-                    title: SharedString::from(inserted.title),
-                    project_id,
-                };
-                if let Some(project_id) = project_id
-                    && let Some(project) = this.projects.iter_mut().find(|p| p.id == project_id)
-                {
-                    project.boards.push(board.clone());
-                } else {
-                    this.standalone_boards.push(board.clone());
-                }
-                this.select_board(board.id, project_id, board.title, cx);
                 cx.notify();
             })
             .ok();

@@ -29,4 +29,15 @@ pub(crate) enum SidebarEvent {
     NoteDeleted {
         note_id: u32,
     },
+    ProjectRenamed {
+        project_id: u32,
+        name: SharedString,
+    },
+    ProjectDeleted {
+        project_id: u32,
+    },
+    ProjectArchived {
+        project_id: u32,
+    },
+    ProjectsReordered,
 }

@@ -56,4 +56,49 @@ impl SidebarView {
     ) {
         self.start_renaming_note(action, window, cx);
     }
+
+    pub(super) fn on_rename_project_action(
+        &mut self,
+        action: &RenameProjectAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_renaming_project(action, window, cx);
+    }
+
+    pub(super) fn on_delete_project_action(
+        &mut self,
+        action: &DeleteProjectAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_project(cx, action.0);
+    }
+
+    pub(super) fn on_archive_project_action(
+        &mut self,
+        action: &ArchiveProjectAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.archive_project(cx, action.0);
+    }
+
+    pub(super) fn on_move_project_up_action(
+        &mut self,
+        action: &MoveProjectUpAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_project_up(cx, action.0);
+    }
+
+    pub(super) fn on_move_project_down_action(
+        &mut self,
+        action: &MoveProjectDownAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_project_down(cx, action.0);
+    }
 }

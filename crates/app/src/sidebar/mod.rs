@@ -31,12 +31,12 @@ pub(crate) struct SidebarView {
     is_adding_project: bool,
     collapsed: bool,
     new_project_input: Entity<InputState>,
-    new_board_input: Entity<InputState>,
     rename_board_input: Entity<InputState>,
     rename_note_input: Entity<InputState>,
-    adding_board_to_project: Option<Option<u32>>,
+    rename_project_input: Entity<InputState>,
     renaming_board: Option<u32>,
     renaming_note: Option<u32>,
+    renaming_project: Option<u32>,
 }
 
 impl SidebarView {
@@ -50,13 +50,14 @@ impl SidebarView {
         let new_project_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
 
-        let new_board_input = cx.new(|cx| InputState::new(window, cx).placeholder("Board name..."));
-
         let rename_board_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Board name..."));
 
         let rename_note_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Note name..."));
+
+        let rename_project_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
 
         let registry = ThemeRegistry::global(cx);
         let themes: Vec<SharedString> = registry
@@ -111,29 +112,6 @@ impl SidebarView {
         .detach();
 
         cx.subscribe(
-            &new_board_input,
-            |this: &mut Self, input, event: &InputEvent, cx| match event {
-                InputEvent::PressEnter { .. } => {
-                    let text = input.read(cx).text().to_string();
-                    let name = text.trim();
-                    if let Some(project_id) = this.adding_board_to_project
-                        && !name.is_empty()
-                    {
-                        this.add_board(cx, project_id, name.to_string());
-                    }
-                    this.adding_board_to_project = None;
-                    cx.notify();
-                }
-                InputEvent::Blur => {
-                    this.adding_board_to_project = None;
-                    cx.notify();
-                }
-                _ => {}
-            },
-        )
-        .detach();
-
-        cx.subscribe(
             &rename_board_input,
             |this: &mut Self, input, event: &InputEvent, cx| match event {
                 InputEvent::PressEnter { .. } => {
@@ -179,6 +157,29 @@ impl SidebarView {
         )
         .detach();
 
+        cx.subscribe(
+            &rename_project_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = input.read(cx).text().to_string();
+                    let name = text.trim();
+                    if let Some(project_id) = this.renaming_project
+                        && !name.is_empty()
+                    {
+                        this.rename_project(cx, project_id, name.to_string());
+                    }
+                    this.renaming_project = None;
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    this.renaming_project = None;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
             if let InputEvent::Change = event {
                 cx.notify();
@@ -198,12 +199,12 @@ impl SidebarView {
             is_adding_project: false,
             collapsed: false,
             new_project_input,
-            new_board_input,
             rename_board_input,
             rename_note_input,
-            adding_board_to_project: None,
+            rename_project_input,
             renaming_board: None,
             renaming_note: None,
+            renaming_project: None,
         }
     }
 
@@ -221,6 +222,12 @@ impl SidebarView {
             .flat_map(|project| project.boards.iter())
             .chain(self.standalone_boards.iter())
             .find(|board| board.id == board_id)
+    }
+
+    fn find_project(&self, project_id: u32) -> Option<&ProjectDTO> {
+        self.projects
+            .iter()
+            .find(|project| project.id == project_id)
     }
 
     pub(crate) fn is_collapsed(&self) -> bool {

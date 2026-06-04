@@ -6,16 +6,14 @@ mod workspace;
 
 pub(crate) use action::*;
 use anyhow::Result;
-use entity::{
-    board, board::Entity as Board, note, note::Entity as Note, project::Entity as Project,
-};
+use entity::{board, note, note::Entity as Note};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathPromptOptions, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    MouseButton, ParentElement, PathPromptOptions, Render, SharedString, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme, IconName, Root, Sizable as _, ThemeRegistry, TitleBar,
+    ActiveTheme, IconName, Root, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{
@@ -30,11 +28,13 @@ use gpui_component::{
 };
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
-use std::fs::read_to_string;
 
 use crate::DB;
 use crate::board::BoardView;
-use crate::markdown_editor::{DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts};
+use crate::command_palette::CommandPalette;
+use crate::markdown_editor::{
+    DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts, unique_note_path,
+};
 use crate::sidebar::{SidebarEvent, SidebarView};
 
 struct OpenTab {
@@ -57,87 +57,41 @@ enum OpenTabKind {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CommandPaletteMode {
-    Commands,
-    Themes,
+#[derive(Clone)]
+pub(crate) struct ProjectChoice {
+    pub(crate) id: u32,
+    pub(crate) name: SharedString,
 }
 
 #[derive(Clone)]
-struct ProjectChoice {
-    id: u32,
-    name: SharedString,
+pub(crate) struct BoardChoice {
+    pub(crate) id: u32,
+    pub(crate) title: SharedString,
+    pub(crate) project_id: Option<u32>,
+    pub(crate) project_name: Option<SharedString>,
 }
 
 #[derive(Clone)]
-struct BoardChoice {
-    id: u32,
-    title: SharedString,
-    project_id: Option<u32>,
-    project_name: Option<SharedString>,
-}
-
-#[derive(Clone)]
-struct NoteChoice {
-    id: u32,
-    title: SharedString,
-    project_id: Option<u32>,
-    project_name: Option<SharedString>,
-}
-
-#[derive(Clone)]
-struct PaletteCommand {
-    label: SharedString,
-    subtitle: SharedString,
-    icon: IconName,
-    kind: PaletteCommandKind,
-}
-
-#[derive(Clone)]
-enum PaletteCommandKind {
-    OpenNote {
-        note_id: u32,
-        project_id: Option<u32>,
-        title: SharedString,
-    },
-    OpenBoard {
-        board_id: u32,
-        project_id: Option<u32>,
-        title: SharedString,
-    },
-    NewNote {
-        project_id: Option<u32>,
-        title: String,
-    },
-    NewBoard {
-        project_id: Option<u32>,
-        title: String,
-    },
-    OpenFile,
-    NewTab,
-    CloseAllTabs,
-    SwitchTheme,
+pub(crate) struct NoteChoice {
+    pub(crate) id: u32,
+    pub(crate) title: SharedString,
+    pub(crate) project_id: Option<u32>,
+    pub(crate) project_name: Option<SharedString>,
 }
 
 pub struct AppShell {
-    focus_handle: FocusHandle,
+    pub(crate) focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
     title_input: Entity<InputState>,
-    command_palette_input: Entity<InputState>,
-    command_palette_open: bool,
-    command_palette_mode: CommandPaletteMode,
-    command_palette_query: String,
-    command_palette_selected_index: usize,
-    command_palette_scroll_handle: ScrollHandle,
+    pub(crate) command_palette: CommandPalette,
     open_tabs: Vec<OpenTab>,
     active_tab_index: usize,
     next_tab_id: u64,
-    projects: Vec<ProjectChoice>,
-    boards: Vec<BoardChoice>,
-    notes: Vec<NoteChoice>,
-    active_project_id: Option<u32>,
+    pub(crate) projects: Vec<ProjectChoice>,
+    pub(crate) boards: Vec<BoardChoice>,
+    pub(crate) notes: Vec<NoteChoice>,
+    pub(crate) active_project_id: Option<u32>,
     suppress_title_event: bool,
-    suppress_command_palette_event: bool,
 }
 
 impl AppShell {
@@ -153,8 +107,7 @@ impl AppShell {
                 .default_value("New tab")
         });
 
-        let command_palette_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a command"));
+        let command_palette = CommandPalette::new(window, cx);
 
         cx.subscribe(&title_input, |this, input, event: &InputEvent, cx| {
             if !matches!(event, InputEvent::Change) || this.suppress_title_event {
@@ -167,17 +120,17 @@ impl AppShell {
         .detach();
 
         cx.subscribe_in(
-            &command_palette_input,
+            &command_palette.input,
             window,
             |this, input, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
-                    if this.suppress_command_palette_event {
+                    if this.command_palette.suppress_input_event {
                         return;
                     }
 
-                    this.command_palette_query = input.read(cx).text().to_string();
-                    this.command_palette_selected_index = 0;
-                    this.command_palette_scroll_handle.scroll_to_item(0);
+                    this.command_palette.query = input.read(cx).text().to_string();
+                    this.command_palette.selected_index = 0;
+                    this.command_palette.scroll_handle.scroll_to_item(0);
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {
@@ -209,8 +162,7 @@ impl AppShell {
                     this.open_note_tab(*note_id, *project_id, title.clone(), window, cx);
                 }
                 SidebarEvent::ActivateProject { project_id } => {
-                    this.active_project_id = Some(*project_id);
-                    cx.notify();
+                    this.activate_project(*project_id, window, cx);
                 }
                 SidebarEvent::BoardRenamed { board_id, title } => {
                     let mut renamed_active = false;
@@ -264,6 +216,38 @@ impl AppShell {
                         this.close_tab(index, window, cx);
                     }
                 }
+                SidebarEvent::ProjectRenamed { project_id, name } => {
+                    for project in &mut this.projects {
+                        if project.id == *project_id {
+                            project.name = name.clone();
+                        }
+                    }
+
+                    for board in &mut this.boards {
+                        if board.project_id == Some(*project_id) {
+                            board.project_name = Some(name.clone());
+                        }
+                    }
+
+                    for note in &mut this.notes {
+                        if note.project_id == Some(*project_id) {
+                            note.project_name = Some(name.clone());
+                        }
+                    }
+
+                    this.rebuild_command_palette_workspace_commands();
+                    cx.notify();
+                }
+                SidebarEvent::ProjectDeleted { project_id }
+                | SidebarEvent::ProjectArchived { project_id } => {
+                    if this.active_project_id == Some(*project_id) {
+                        this.active_project_id = None;
+                    }
+                    this.refresh_workspace(cx);
+                }
+                SidebarEvent::ProjectsReordered => {
+                    this.refresh_workspace(cx);
+                }
             },
         )
         .detach();
@@ -272,12 +256,7 @@ impl AppShell {
             focus_handle: cx.focus_handle(),
             sidebar,
             title_input,
-            command_palette_input,
-            command_palette_open: false,
-            command_palette_mode: CommandPaletteMode::Commands,
-            command_palette_query: String::new(),
-            command_palette_selected_index: 0,
-            command_palette_scroll_handle: ScrollHandle::new(),
+            command_palette,
             open_tabs: vec![OpenTab {
                 id: 1,
                 title: "New tab".into(),
@@ -290,7 +269,6 @@ impl AppShell {
             notes: vec![],
             active_project_id: None,
             suppress_title_event: false,
-            suppress_command_palette_event: false,
         };
 
         this.refresh_workspace(cx);

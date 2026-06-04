@@ -1,57 +1,53 @@
+use std::collections::HashMap;
+use std::fs::{create_dir_all, read_to_string, write};
+
 use super::*;
+use crate::workspace_data::load_workspace_rows;
 
 impl AppShell {
-    pub(super) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
 
         cx.spawn(async move |this, cx| -> Result<()> {
-            let projects = Project::find().all(&*db).await?;
-            let boards = Board::find().all(&*db).await?;
-            let notes = Note::find().all(&*db).await?;
+            let rows = load_workspace_rows(db.as_ref()).await?;
 
-            let project_choices: Vec<ProjectChoice> = projects
+            let project_choices: Vec<ProjectChoice> = rows
+                .projects
                 .iter()
                 .map(|project| ProjectChoice {
-                    id: project.id as u32,
+                    id: project.id,
                     name: SharedString::from(project.name.clone()),
                 })
                 .collect();
 
-            let board_choices: Vec<BoardChoice> = boards
-                .into_iter()
-                .map(|board| {
-                    let project_name = board.project_id.and_then(|project_id| {
-                        projects
-                            .iter()
-                            .find(|project| project.id == project_id)
-                            .map(|project| SharedString::from(project.name.clone()))
-                    });
+            let project_names: HashMap<u32, SharedString> = project_choices
+                .iter()
+                .map(|project| (project.id, project.name.clone()))
+                .collect();
 
-                    BoardChoice {
-                        id: board.id as u32,
-                        title: SharedString::from(board.title),
-                        project_id: board.project_id.map(|id| id as u32),
-                        project_name,
-                    }
+            let board_choices: Vec<BoardChoice> = rows
+                .boards
+                .into_iter()
+                .map(|board| BoardChoice {
+                    id: board.id,
+                    title: SharedString::from(board.title),
+                    project_id: board.project_id,
+                    project_name: board
+                        .project_id
+                        .and_then(|project_id| project_names.get(&project_id).cloned()),
                 })
                 .collect();
 
-            let note_choices: Vec<NoteChoice> = notes
+            let note_choices: Vec<NoteChoice> = rows
+                .notes
                 .into_iter()
-                .map(|note| {
-                    let project_name = note.project_id.and_then(|project_id| {
-                        projects
-                            .iter()
-                            .find(|project| project.id == project_id)
-                            .map(|project| SharedString::from(project.name.clone()))
-                    });
-
-                    NoteChoice {
-                        id: note.id as u32,
-                        title: SharedString::from(note.title),
-                        project_id: note.project_id.map(|id| id as u32),
-                        project_name,
-                    }
+                .map(|note| NoteChoice {
+                    id: note.id,
+                    title: SharedString::from(note.title),
+                    project_id: note.project_id,
+                    project_name: note
+                        .project_id
+                        .and_then(|project_id| project_names.get(&project_id).cloned()),
                 })
                 .collect();
 
@@ -59,6 +55,7 @@ impl AppShell {
                 this.projects = project_choices;
                 this.boards = board_choices;
                 this.notes = note_choices;
+                this.rebuild_command_palette_workspace_commands();
                 cx.notify();
             })
             .ok();
@@ -77,7 +74,7 @@ impl AppShell {
         self.create_note_with_title(project_id, "Untitled note".to_string(), window, cx);
     }
 
-    pub(super) fn create_note_with_title(
+    pub(crate) fn create_note_with_title(
         &mut self,
         project_id: Option<u32>,
         title: String,
@@ -86,13 +83,28 @@ impl AppShell {
     ) {
         let db = cx.global::<DB>().conn.clone();
         let now = now_ts();
-        let view = cx.entity();
+        let view = cx.entity().downgrade();
+        let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
+        let path_string = path.display().to_string();
+        let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |_, window| {
+            let write_path = path.clone();
+            background_executor
+                .spawn(async move {
+                    if let Some(parent) = write_path.parent() {
+                        create_dir_all(parent)?;
+                    }
+                    write(write_path, DEFAULT_NOTE)
+                })
+                .await
+                .ok()?;
+
             let inserted = note::ActiveModel {
                 title: Set(title),
                 project_id: Set(project_id.map(|id| id as i64)),
-                file_path: Set(None),
+                file_path: Set(Some(path_string)),
+                file_managed_by_app: Set(true),
                 cached_content: Set(DEFAULT_NOTE.to_string()),
                 file_missing_since: Set(None),
                 created_at: Set(now),
@@ -105,6 +117,10 @@ impl AppShell {
 
             window
                 .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
                             inserted.id as u32,
@@ -125,20 +141,27 @@ impl AppShell {
         .detach();
     }
 
-    pub(super) fn open_note_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_note_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
             prompt: Some("Open note file".into()),
         });
+
+        let background_executor = cx.background_executor().clone();
         let db = cx.global::<DB>().conn.clone();
-        let view = cx.entity();
+        let view = cx.entity().downgrade();
 
         cx.spawn_in(window, async move |_, window| {
             let paths = paths.await.ok()?.ok()??;
             let path = paths.first()?.clone();
-            let content = read_to_string(&path).ok()?;
+            let readable_path = path.clone();
+            let content = background_executor
+                .spawn(async move { read_to_string(readable_path) })
+                .await
+                .ok()?;
+
             let path_string = path.display().to_string();
             let title = path
                 .file_name()
@@ -153,10 +176,9 @@ impl AppShell {
                 .ok()
                 .flatten();
 
-            let note = if let Some(existing) = existing {
+            let (note_id, note_title) = if let Some(existing) = existing {
                 note::ActiveModel {
                     id: Set(existing.id),
-                    title: Set(existing.title),
                     file_path: Set(Some(path_string)),
                     cached_content: Set(content),
                     file_missing_since: Set(None),
@@ -165,13 +187,16 @@ impl AppShell {
                 }
                 .update(&*db)
                 .await
-                .ok()?
+                .ok()?;
+
+                (existing.id as u32, existing.title)
             } else {
                 let now = now_ts();
-                note::ActiveModel {
+                let inserted = note::ActiveModel {
                     title: Set(title),
                     project_id: Set(None),
                     file_path: Set(Some(path_string)),
+                    file_managed_by_app: Set(false),
                     cached_content: Set(content),
                     file_missing_since: Set(None),
                     created_at: Set(now),
@@ -180,16 +205,22 @@ impl AppShell {
                 }
                 .insert(&*db)
                 .await
-                .ok()?
+                .ok()?;
+
+                (inserted.id as u32, inserted.title)
             };
 
             window
                 .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
-                            note.id as u32,
+                            note_id,
                             None,
-                            SharedString::from(note.title),
+                            SharedString::from(note_title),
                             window,
                             cx,
                         );
@@ -214,7 +245,7 @@ impl AppShell {
         self.create_board_with_title(project_id, "Board".to_string(), window, cx);
     }
 
-    pub(super) fn create_board_with_title(
+    pub(crate) fn create_board_with_title(
         &mut self,
         project_id: Option<u32>,
         title: String,
@@ -222,7 +253,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let view = cx.entity();
+        let view = cx.entity().downgrade();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = board::ActiveModel {
@@ -236,6 +267,10 @@ impl AppShell {
 
             window
                 .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+
                     view.update(cx, |this, cx| {
                         this.open_board_tab(
                             inserted.id as u32,

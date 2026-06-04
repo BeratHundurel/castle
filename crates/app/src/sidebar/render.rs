@@ -13,9 +13,9 @@ use gpui_component::{
     v_flex,
 };
 
-use super::SidebarView;
 use super::content_item::SidebarContentItem;
 use super::event::SidebarEvent;
+use super::{SidebarView, action::*};
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
 
@@ -75,7 +75,7 @@ impl SidebarView {
         let muted = cx.theme().muted_foreground;
         menu = menu
             .menu_element(item.edit_action(), move |_window, _cx| {
-                Self::render_context_menu_row("Edit", IconName::Replace, muted)
+                Self::render_context_menu_row("Rename", IconName::Replace, muted)
             })
             .menu_element(item.move_action(None), move |_window, _cx| {
                 Self::render_context_menu_row("Move to Standalone", IconName::Folder, muted)
@@ -123,7 +123,6 @@ impl SidebarView {
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let adding_board_to_project = self.adding_board_to_project;
         let search_query = self.search_input.read(cx).text().to_string();
         let search_lower = search_query.to_lowercase();
         let move_project_targets: Rc<Vec<(u32, SharedString)>> = Rc::new(
@@ -159,6 +158,19 @@ impl Render for SidebarView {
                 }
 
                 let project_id = project.id;
+                let project_name = project.name.clone();
+                let is_renaming = self.renaming_project == Some(project_id);
+                let rename_input = self.rename_project_input.clone();
+                let is_first_project = self
+                    .projects
+                    .first()
+                    .map(|project| project.id == project_id)
+                    .unwrap_or(false);
+                let is_last_project = self
+                    .projects
+                    .last()
+                    .map(|project| project.id == project_id)
+                    .unwrap_or(false);
                 let mut children: Vec<SidebarMenuItem> = Vec::new();
 
                 children.extend(filtered_notes.into_iter().map(|note| {
@@ -169,47 +181,77 @@ impl Render for SidebarView {
                     self.render_content_item(board.into(), cx, true, move_project_targets.clone())
                 }));
 
-                if adding_board_to_project == Some(Some(project_id)) {
-                    let input = self.new_board_input.clone();
-                    children.push(SidebarMenuItem::new("").disable(true).suffix(
-                        move |_window, cx| {
-                            Input::new(&input)
-                                .small()
-                                .bg(cx.theme().sidebar)
-                                .rounded_none()
-                                .focus_bordered(false)
-                                .border_0()
-                                .border_b_1()
-                                .border_color(cx.theme().foreground)
-                                .text_xs()
-                                .w_full()
-                        },
-                    ));
-                } else {
-                    children.push(
-                        SidebarMenuItem::new("Add board")
-                            .icon(IconName::Plus)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.adding_board_to_project = Some(Some(project_id));
-                                this.new_board_input.update(cx, |input, cx| {
-                                    input.set_value("", window, cx);
-                                    input.focus(window, cx);
-                                });
-                                cx.notify();
-                            })),
-                    );
-                }
-
                 Some(
-                    SidebarMenuItem::new(project.name.clone())
+                    SidebarMenuItem::new(project_name)
                         .icon(IconName::FolderOpen)
                         .active(
                             self.active_project_id == Some(project_id)
                                 && self.active_item.is_none(),
                         )
+                        .when(is_renaming, |this| {
+                            this.suffix(move |_window, cx| {
+                                Input::new(&rename_input)
+                                    .small()
+                                    .bg(cx.theme().sidebar.opacity(0.))
+                                    .rounded_none()
+                                    .focus_bordered(false)
+                                    .border_0()
+                                    .text_xs()
+                                    .w_full()
+                            })
+                        })
                         .default_open(project.is_expanded || !search_lower.is_empty())
                         .click_to_toggle(true)
                         .children(children)
+                        .context_menu(move |menu, _, cx| {
+                            let muted = cx.theme().muted_foreground;
+                            menu.menu_element(
+                                Box::new(RenameProjectAction(project_id)),
+                                move |_window, _cx| {
+                                    Self::render_context_menu_row(
+                                        "Rename",
+                                        IconName::Replace,
+                                        muted,
+                                    )
+                                },
+                            )
+                            .when(!is_first_project, |menu| {
+                                menu.menu_element(
+                                    Box::new(MoveProjectUpAction(project_id)),
+                                    move |_window, _cx| {
+                                        Self::render_context_menu_row(
+                                            "Move up",
+                                            IconName::ArrowUp,
+                                            muted,
+                                        )
+                                    },
+                                )
+                            })
+                            .when(!is_last_project, |menu| {
+                                menu.menu_element(
+                                    Box::new(MoveProjectDownAction(project_id)),
+                                    move |_window, _cx| {
+                                        Self::render_context_menu_row(
+                                            "Move down",
+                                            IconName::ArrowDown,
+                                            muted,
+                                        )
+                                    },
+                                )
+                            })
+                            .menu_element(
+                                Box::new(ArchiveProjectAction(project_id)),
+                                move |_window, _cx| {
+                                    Self::render_context_menu_row("Archive", IconName::Inbox, muted)
+                                },
+                            )
+                            .menu_element(
+                                Box::new(DeleteProjectAction(project_id)),
+                                move |_window, _cx| {
+                                    Self::render_context_menu_row("Delete", IconName::Delete, muted)
+                                },
+                            )
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.active_project_id = Some(project_id);
                             cx.emit(SidebarEvent::ActivateProject { project_id });
@@ -255,6 +297,11 @@ impl Render for SidebarView {
             .on_action(cx.listener(Self::on_move_note_action))
             .on_action(cx.listener(Self::on_delete_note_action))
             .on_action(cx.listener(Self::on_edit_note_action))
+            .on_action(cx.listener(Self::on_rename_project_action))
+            .on_action(cx.listener(Self::on_delete_project_action))
+            .on_action(cx.listener(Self::on_archive_project_action))
+            .on_action(cx.listener(Self::on_move_project_up_action))
+            .on_action(cx.listener(Self::on_move_project_down_action))
             .child(
                 Sidebar::new("sidebar")
                     .w(px(260.))

@@ -1,7 +1,7 @@
 use super::*;
 
 impl AppShell {
-    pub(super) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let index = self.open_tabs.len();
         let id = self.next_tab_id;
         self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -85,6 +85,45 @@ impl AppShell {
         cx.notify();
     }
 
+    pub(super) fn activate_project(
+        &mut self,
+        project_id: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_project_id = Some(project_id);
+
+        if matches!(
+            self.open_tabs
+                .get(self.active_tab_index)
+                .map(|tab| &tab.kind),
+            Some(OpenTabKind::Chooser)
+        ) {
+            self.sync_sidebar_active(cx);
+            cx.notify();
+            return;
+        }
+
+        if let Some(index) = self
+            .open_tabs
+            .iter()
+            .position(|tab| matches!(tab.kind, OpenTabKind::Chooser))
+        {
+            self.activate_tab(index, window, cx);
+            return;
+        }
+
+        let index = self.open_tabs.len();
+        let id = self.next_tab_id;
+        self.next_tab_id = self.next_tab_id.saturating_add(1);
+        self.open_tabs.push(OpenTab {
+            id,
+            title: "New tab".into(),
+            kind: OpenTabKind::Chooser,
+        });
+        self.activate_tab(index, window, cx);
+    }
+
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.open_tabs.len() {
             return;
@@ -110,6 +149,7 @@ impl AppShell {
             self.sync_sidebar_active(cx);
         }
         self.sync_title_input(window, cx);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -137,10 +177,11 @@ impl AppShell {
         self.active_tab_index = 0;
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
-    pub(super) fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_tabs.clear();
         self.open_tabs.push(OpenTab {
             id: self.next_tab_id,
@@ -151,6 +192,7 @@ impl AppShell {
         self.active_tab_index = 0;
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -230,7 +272,7 @@ impl AppShell {
         cx.notify();
     }
 
-    pub(super) fn open_board_tab(
+    pub(crate) fn open_board_tab(
         &mut self,
         board_id: u32,
         project_id: Option<u32>,
@@ -259,7 +301,7 @@ impl AppShell {
         );
     }
 
-    pub(super) fn open_note_tab(
+    pub(crate) fn open_note_tab(
         &mut self,
         note_id: u32,
         project_id: Option<u32>,

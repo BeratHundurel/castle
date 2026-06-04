@@ -10,6 +10,7 @@ pub(crate) enum ActiveItem {
 pub(crate) struct ProjectDTO {
     pub(crate) id: u32,
     pub(crate) name: SharedString,
+    pub(crate) position: i32,
     pub(crate) is_expanded: bool,
     pub(crate) boards: Vec<BoardDTO>,
     pub(crate) notes: Vec<NoteDTO>,
@@ -34,6 +35,7 @@ impl From<project::ModelEx> for ProjectDTO {
         Self {
             id: project.id as u32,
             name: SharedString::from(project.name),
+            position: project.position,
             is_expanded: false,
             boards: project.boards.into_iter().map(BoardDTO::from).collect(),
             notes: project.notes.into_iter().map(NoteDTO::from).collect(),

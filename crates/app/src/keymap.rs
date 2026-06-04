@@ -1,8 +1,9 @@
 use gpui::{App, KeyBinding};
 
-use crate::app_shell::{
-    CloseCommandPaletteAction, CommandPaletteAction, CycleNextTab, CyclePrevTab,
-    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, ToggleSidebarAction,
+use crate::app_shell::{CycleNextTab, CyclePrevTab, ToggleSidebarAction};
+use crate::command_palette::{
+    CloseCommandPaletteAction, CommandPaletteAction, SelectNextCommandPaletteItem,
+    SelectPrevCommandPaletteItem,
 };
 use crate::markdown_editor::action::{
     EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, SaveMarkdownFile, SaveMarkdownFileAs,
