@@ -23,7 +23,7 @@ use types::*;
 
 pub use types::DocumentStats;
 pub(crate) use types::{DEFAULT_NOTE, SaveState};
-pub(crate) use util::now_ts;
+pub(crate) use util::{now_ts, unique_note_path};
 
 const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 
@@ -35,8 +35,11 @@ pub(crate) struct MarkdownEditorView {
     preview: Entity<TextViewState>,
     mode: EditorMode,
     current_path: Option<PathBuf>,
+    file_managed_by_app: bool,
     save_state: SaveState,
     stats: DocumentStats,
+    is_loading: bool,
+    suppress_editor_events: bool,
     auto_save_epoch: u64,
     _auto_save_task: Option<Task<()>>,
     emmet_input: Entity<InputState>,
@@ -61,11 +64,11 @@ impl MarkdownEditorView {
                 .soft_wrap(true)
                 .searchable(true)
                 .placeholder("Write Markdown...")
-                .default_value(DEFAULT_NOTE)
+                .default_value("")
         });
 
         let preview = cx.new(|cx| {
-            TextViewState::markdown(DEFAULT_NOTE, cx)
+            TextViewState::markdown("", cx)
                 .scrollable(true)
                 .selectable(true)
         });
@@ -82,7 +85,7 @@ impl MarkdownEditorView {
         });
 
         cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
+            if matches!(event, InputEvent::Change) && !this.suppress_editor_events {
                 this.update_from_editor(cx);
             }
         })
@@ -98,8 +101,11 @@ impl MarkdownEditorView {
             preview,
             mode: EditorMode::Split,
             current_path: None,
+            file_managed_by_app: false,
             save_state: SaveState::Saved,
-            stats: DocumentStats::from_text(DEFAULT_NOTE),
+            stats: DocumentStats::from_text(""),
+            is_loading: true,
+            suppress_editor_events: false,
             auto_save_epoch: 0,
             _auto_save_task: None,
             emmet_input,

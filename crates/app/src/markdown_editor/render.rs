@@ -174,6 +174,18 @@ impl MarkdownEditorView {
     }
 
     pub(crate) fn render_editor_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.is_loading {
+            return div()
+                .id("markdown-loading")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(cx.theme().muted_foreground)
+                .child("Loading note...")
+                .into_any_element();
+        }
+
         match self.mode {
             EditorMode::Split => div()
                 .size_full()
