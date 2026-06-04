@@ -1,6 +1,7 @@
 mod action;
 mod drag;
 mod dto;
+mod entry_dialog;
 mod handlers;
 mod interactions;
 mod persistence;
@@ -10,13 +11,19 @@ use dto::*;
 use gpui::*;
 use gpui_component::input::{InputEvent, InputState};
 
+use crate::board::entry_dialog::EntryDialog;
+
 pub(crate) struct BoardView {
     board_id: Option<u32>,
     cards: Vec<CardDTO>,
     is_adding_list: bool,
+    is_entry_open: bool,
+    entry_dialog: EntryDialog,
     new_list_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
     dialog_description_input: Entity<InputState>,
+    entry_title_input: Entity<InputState>,
+    entry_description_input: Entity<InputState>,
     rename_card_input: Entity<InputState>,
     renaming_card_id: Option<u32>,
     pending_card_id: Option<u32>,
@@ -44,7 +51,20 @@ impl BoardView {
                 .searchable(true)
         });
 
+        let entry_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Entry title"));
+
+        let entry_description_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Entry description")
+                .multi_line(true)
+                .auto_grow(4, 24)
+                .soft_wrap(true)
+                .searchable(true)
+        });
+
         let card_edit_input = cx.new(|cx| InputState::new(window, cx).placeholder("Edit title..."));
+
+        let entry_dialog = EntryDialog::new();
 
         cx.subscribe(
             &new_list_input,
@@ -108,9 +128,13 @@ impl BoardView {
             board_id: None,
             cards: vec![],
             is_adding_list: false,
+            is_entry_open: false,
+            entry_dialog,
             new_list_input,
             dialog_title_input,
             dialog_description_input,
+            entry_title_input,
+            entry_description_input,
             rename_card_input: card_edit_input,
             renaming_card_id: None,
             pending_card_id: None,

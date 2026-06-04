@@ -16,6 +16,7 @@ pub(crate) struct EntryDTO {
     pub(crate) title: SharedString,
     pub(crate) description: SharedString,
     pub(crate) card_id: u32,
+    pub(crate) position: i32,
 }
 
 impl From<card::ModelEx> for CardDTO {
@@ -25,7 +26,12 @@ impl From<card::ModelEx> for CardDTO {
             board_id: c.board_id as u32,
             title: SharedString::from(c.title),
             position: c.position,
-            entries: c.entries.into_iter().map(EntryDTO::from).collect(),
+            entries: {
+                let mut entries: Vec<EntryDTO> =
+                    c.entries.into_iter().map(EntryDTO::from).collect();
+                entries.sort_by_key(|entry| (entry.position, entry.id));
+                entries
+            },
         }
     }
 }
@@ -37,6 +43,7 @@ impl From<entry::Model> for EntryDTO {
             title: SharedString::from(e.title),
             description: SharedString::from(e.description),
             card_id: e.card_id as u32,
+            position: e.position,
         }
     }
 }
@@ -48,6 +55,7 @@ impl From<entry::ModelEx> for EntryDTO {
             title: SharedString::from(e.title),
             description: SharedString::from(e.description),
             card_id: e.card_id as u32,
+            position: e.position,
         }
     }
 }

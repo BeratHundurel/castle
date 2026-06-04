@@ -1,5 +1,5 @@
 use anyhow::Result;
-use entity::{card, card::Entity as Card, entry};
+use entity::{card, card::Entity as Card, entry, entry::Entity as Entry};
 use gpui::{Context, ParentElement, SharedString, Styled, Window};
 use gpui_component::{
     WindowExt,
@@ -17,6 +17,14 @@ use crate::DB;
 use super::{BoardView, drag::*, dto::*};
 
 impl BoardView {
+    pub(super) fn entry_values(&self, entry_id: u32) -> Option<(SharedString, SharedString)> {
+        self.cards
+            .iter()
+            .flat_map(|card| card.entries.iter())
+            .find(|entry| entry.id == entry_id)
+            .map(|entry| (entry.title.clone(), entry.description.clone()))
+    }
+
     pub(super) fn next_card_id(&mut self) -> u32 {
         self.next_temporary_card_id = self.next_temporary_card_id.saturating_add(1);
         u32::MAX.saturating_sub(self.next_temporary_card_id)
@@ -40,6 +48,7 @@ impl BoardView {
                 title: Set(entry.title.to_string()),
                 description: Set(entry.description.to_string()),
                 card_id: Set(entry.card_id as i64),
+                position: Set(entry.position),
                 ..Default::default()
             };
             let inserted = model.insert(&*db).await?;
@@ -142,6 +151,12 @@ impl BoardView {
                                 title: this.dialog_title_input.read(cx).value(),
                                 description: this.dialog_description_input.read(cx).value(),
                                 card_id,
+                                position: this
+                                    .cards
+                                    .iter()
+                                    .find(|card| card.id == card_id)
+                                    .map(|card| card.entries.len() as i32)
+                                    .unwrap_or_default(),
                             };
 
                             this.dialog_title_input.update(cx, |input, cx| {
@@ -199,7 +214,7 @@ impl BoardView {
             return;
         };
 
-        if info.source_board_id == board_id && info.source_card_id == target_card_id {
+        if info.source_board_id != board_id {
             return;
         }
 
@@ -225,23 +240,188 @@ impl BoardView {
         {
             dto.card_id = target_card_id;
             target_card.entries.push(dto);
-            cx.notify();
-
-            let db = cx.global::<DB>().conn.clone();
-            let entry_id = info.entry_id;
-            cx.spawn(async move |_, _| -> Result<()> {
-                let model = entry::ActiveModel {
-                    id: Set(entry_id as i64),
-                    card_id: Set(target_card_id as i64),
-                    ..Default::default()
-                };
-
-                model.update(&*db).await?;
-
-                Ok(())
-            })
-            .detach();
+            self.persist_entry_positions(cx);
         }
+    }
+
+    pub(super) fn move_entry_before(
+        &mut self,
+        info: &DragInfo,
+        target_card_id: u32,
+        target_entry_id: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+
+        if info.source_board_id != board_id || info.entry_id == target_entry_id {
+            return;
+        }
+
+        let source_index = self
+            .cards
+            .iter()
+            .find(|card| card.id == info.source_card_id)
+            .and_then(|card| {
+                card.entries
+                    .iter()
+                    .position(|entry| entry.id == info.entry_id)
+            });
+
+        let target_index = self
+            .cards
+            .iter()
+            .find(|card| card.id == target_card_id)
+            .and_then(|card| {
+                card.entries
+                    .iter()
+                    .position(|entry| entry.id == target_entry_id)
+            });
+
+        let moving_down_in_same_card = info.source_card_id == target_card_id
+            && matches!(
+                (source_index, target_index),
+                (Some(source_index), Some(target_index)) if source_index < target_index
+            );
+
+        let moving_entry = self
+            .cards
+            .iter_mut()
+            .find(|card| card.id == info.source_card_id)
+            .and_then(|card| {
+                let index = card
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id == info.entry_id)?;
+
+                Some(card.entries.remove(index))
+            });
+
+        if let Some(mut dto) = moving_entry
+            && let Some(target_card) = self.cards.iter_mut().find(|card| card.id == target_card_id)
+        {
+            let Some(mut target_index) = target_card
+                .entries
+                .iter()
+                .position(|entry| entry.id == target_entry_id)
+            else {
+                return;
+            };
+
+            dto.card_id = target_card_id;
+            if moving_down_in_same_card {
+                target_index = target_index.saturating_add(1);
+            }
+            target_card.entries.insert(target_index, dto);
+            self.persist_entry_positions(cx);
+        }
+    }
+
+    fn persist_entry_positions(&mut self, cx: &mut Context<Self>) {
+        let positions: Vec<(u32, u32, i32)> = self
+            .cards
+            .iter_mut()
+            .flat_map(|card| {
+                card.entries
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        entry.card_id = card.id;
+                        entry.position = index as i32;
+                        (entry.id, entry.card_id, entry.position)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |_, _| -> Result<()> {
+            for (entry_id, card_id, position) in positions {
+                entry::ActiveModel {
+                    id: Set(entry_id as i64),
+                    card_id: Set(card_id as i64),
+                    position: Set(position),
+                    ..Default::default()
+                }
+                .update(&*db)
+                .await?;
+            }
+
+            Ok(())
+        })
+        .detach();
+    }
+
+    pub(super) fn update_selected_entry(&mut self, cx: &mut Context<Self>) {
+        let Some(entry_id) = self.entry_dialog.entry_id else {
+            return;
+        };
+
+        let title = self.entry_title_input.read(cx).value();
+        let description = self.entry_description_input.read(cx).value();
+        let trimmed_title = title.trim();
+
+        if trimmed_title.is_empty() {
+            return;
+        }
+
+        let Some(entry) = self
+            .cards
+            .iter_mut()
+            .flat_map(|card| card.entries.iter_mut())
+            .find(|entry| entry.id == entry_id)
+        else {
+            return;
+        };
+
+        entry.title = SharedString::from(trimmed_title);
+        entry.description = description.clone();
+        self.entry_dialog.editing = false;
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        let title = trimmed_title.to_string();
+        let description = description.to_string();
+
+        cx.spawn(async move |_, _| -> Result<()> {
+            let model = entry::ActiveModel {
+                id: Set(entry_id as i64),
+                title: Set(title),
+                description: Set(description),
+                ..Default::default()
+            };
+
+            model.update(&*db).await?;
+            Ok(())
+        })
+        .detach();
+    }
+
+    pub(super) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
+        let Some(entry_id) = self.entry_dialog.entry_id else {
+            return;
+        };
+
+        for card in &mut self.cards {
+            card.entries.retain(|entry| entry.id != entry_id);
+        }
+
+        self.is_entry_open = false;
+        self.entry_dialog.open = false;
+        self.entry_dialog.entry_id = None;
+        self.entry_dialog.editing = false;
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+
+        cx.spawn(async move |_, _| -> Result<()> {
+            Entry::delete_by_id(entry_id as i64).exec(&*db).await?;
+            Ok(())
+        })
+        .detach();
     }
 
     pub(super) fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
