@@ -11,6 +11,7 @@ pub struct Model {
     pub title: String,
     pub description: String,
     pub card_id: i64,
+    pub position: i32,
     #[sea_orm(
         belongs_to,
         from = "card_id",

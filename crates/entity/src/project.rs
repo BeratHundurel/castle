@@ -9,6 +9,8 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
     pub name: String,
+    pub archived: bool,
+    pub position: i32,
     #[sea_orm(has_many)]
     pub boards: HasMany<super::board::Entity>,
     #[sea_orm(has_many)]

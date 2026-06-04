@@ -11,6 +11,7 @@ pub struct Model {
     pub title: String,
     pub project_id: Option<i64>,
     pub file_path: Option<String>,
+    pub file_managed_by_app: bool,
     pub cached_content: String,
     pub file_missing_since: Option<i64>,
     pub created_at: i64,
