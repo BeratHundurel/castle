@@ -53,14 +53,20 @@ impl Render for DragInfo {
                     .justify_start()
                     .items_center()
                     .w(size.width)
-                    .h(size.height)
+                    .min_h(size.height)
                     .p_2()
                     .bg(cx.theme().primary.opacity(0.7))
                     .text_color(cx.theme().primary_foreground)
                     .rounded(cx.theme().radius)
                     .text_sm()
                     .shadow_md()
-                    .child(self.title.clone()),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .child(self.title.clone()),
+                    ),
             )
     }
 }

@@ -42,9 +42,22 @@ impl BoardView {
         &self,
         board_id_for_render: Option<u32>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let mut cards = Vec::new();
+
+        if let Some(error) = self.load_error.clone() {
+            return div()
+                .id("board-load-error")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_6()
+                .text_color(theme.danger)
+                .child(error)
+                .into_any_element();
+        }
 
         if let Some(board_id) = board_id_for_render {
             for card in &self.cards {
@@ -75,6 +88,7 @@ impl BoardView {
                     self.render_add_list_button(cx).into_any_element()
                 }
             })
+            .into_any_element()
     }
 
     fn render_card(
@@ -223,13 +237,11 @@ impl BoardView {
             .cursor_move()
             .text_sm()
             .w_full()
-            .overflow_hidden()
             .child(
                 div()
                     .w_full()
                     .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
+                    .whitespace_normal()
                     .child(entry.title.clone()),
             )
             .on_click(cx.listener(move |this, _, window, cx| {

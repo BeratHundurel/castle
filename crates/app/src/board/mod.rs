@@ -16,6 +16,7 @@ use crate::board::entry_dialog::EntryDialog;
 pub(crate) struct BoardView {
     board_id: Option<u32>,
     cards: Vec<CardDTO>,
+    load_error: Option<SharedString>,
     is_adding_list: bool,
     is_entry_open: bool,
     entry_dialog: EntryDialog,
@@ -127,6 +128,7 @@ impl BoardView {
         Self {
             board_id: None,
             cards: vec![],
+            load_error: None,
             is_adding_list: false,
             is_entry_open: false,
             entry_dialog,
