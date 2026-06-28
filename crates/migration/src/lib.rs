@@ -6,6 +6,7 @@ mod m20260522_000003_notes_and_optional_board_projects;
 mod m20260604_000004_project_archive_and_position;
 mod m20260604_000005_entry_position;
 mod m20260604_000006_note_file_ownership;
+mod m20260607_180117_full_text;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260604_000004_project_archive_and_position::Migration),
             Box::new(m20260604_000005_entry_position::Migration),
             Box::new(m20260604_000006_note_file_ownership::Migration),
+            Box::new(m20260607_180117_full_text::Migration),
         ]
     }
 }

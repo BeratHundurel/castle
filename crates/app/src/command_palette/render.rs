@@ -1,12 +1,14 @@
 use gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px, relative,
+    Context, HighlightStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, StyledText, div, prelude::FluentBuilder as _,
+    px, relative,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable as _, ThemeRegistry,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::Input,
+    scroll::ScrollableElement as _,
     v_flex,
 };
 
@@ -14,6 +16,7 @@ use crate::app_shell::AppShell;
 use crate::command_palette::{
     CommandPaletteMode, PaletteCommand, PaletteCommandKind, SearchablePaletteCommand,
 };
+use crate::search::{SearchResult, SearchResultKind};
 
 const COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 
@@ -143,6 +146,15 @@ impl AppShell {
                 icon: IconName::Close,
                 kind: PaletteCommandKind::CloseAllTabs,
             },
+            PaletteCommand {
+                label: "Search workspace".into(),
+                subtitle: SharedString::from(format!(
+                    "Full-text search ({})",
+                    workspace_search_shortcut()
+                )),
+                icon: IconName::Search,
+                kind: PaletteCommandKind::SearchWorkspace,
+            },
         ]);
 
         if query.is_empty() || explicit_new_command.is_some() {
@@ -189,11 +201,16 @@ impl AppShell {
     pub(crate) fn render_command_palette_overlay(
         &self,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::AnyElement {
+        if self.command_palette.mode == CommandPaletteMode::Search {
+            return self.render_workspace_search_overlay(cx);
+        }
+
         let theme = cx.theme().clone();
         let title = match self.command_palette.mode {
             CommandPaletteMode::Commands => "Command Palette",
             CommandPaletteMode::Themes => "Switch Theme",
+            CommandPaletteMode::Search => "Search Workspace",
         };
 
         div()
@@ -245,7 +262,7 @@ impl AppShell {
                                     .child(title),
                             )
                             .when(
-                                self.command_palette.mode == CommandPaletteMode::Themes,
+                                self.command_palette.mode != CommandPaletteMode::Commands,
                                 |this| {
                                     this.child(
                                         Button::new("command-palette-back")
@@ -256,6 +273,14 @@ impl AppShell {
                                                 this.command_palette.mode =
                                                     CommandPaletteMode::Commands;
                                                 this.command_palette.query.clear();
+                                                this.command_palette.search_generation = this
+                                                    .command_palette
+                                                    .search_generation
+                                                    .saturating_add(1);
+                                                this.command_palette.search_debounce_task = None;
+                                                this.command_palette.search_results.clear();
+                                                this.command_palette.search_loading = false;
+                                                this.command_palette.search_error = None;
                                                 this.command_palette.selected_index = 0;
                                                 this.command_palette
                                                     .scroll_handle
@@ -264,6 +289,11 @@ impl AppShell {
                                                 this.command_palette.input.update(
                                                     cx,
                                                     |input, cx| {
+                                                        input.set_placeholder(
+                                                            "Type a command",
+                                                            window,
+                                                            cx,
+                                                        );
                                                         input.set_value("", window, cx);
                                                         input.focus(window, cx);
                                                     },
@@ -295,8 +325,92 @@ impl AppShell {
                     .child(match self.command_palette.mode {
                         CommandPaletteMode::Commands => self.render_command_results(cx),
                         CommandPaletteMode::Themes => self.render_theme_results(cx),
+                        CommandPaletteMode::Search => self.render_search_results(cx),
                     }),
             )
+            .into_any_element()
+    }
+
+    fn render_workspace_search_overlay(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        let result_count = self.command_palette.search_results.len();
+
+        div()
+            .id("workspace-search-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .flex()
+            .items_start()
+            .justify_center()
+            .pt_8()
+            .bg(theme.overlay.opacity(0.72))
+            .key_context("CommandPalette")
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.close_command_palette(window, cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("workspace-search-panel")
+                    .w(relative(0.70))
+                    .max_w(px(900.))
+                    .h(relative(0.68))
+                    .max_h(px(560.))
+                    .overflow_hidden()
+                    .rounded(theme.radius)
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.popover)
+                    .shadow_md()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_3()
+                            .px_4()
+                            .py_2()
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.primary)
+                                    .child("find")
+                                    .child(div().text_color(theme.muted_foreground).child(">")),
+                            )
+                            .child(
+                                Input::new(&self.command_palette.input)
+                                    .flex_1()
+                                    .border_0()
+                                    .rounded_none()
+                                    .bg(theme.popover),
+                            ),
+                    )
+                    .child(self.render_search_results(cx))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .px_4()
+                            .py_2()
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Up/Down move  |  Enter open  |  Esc close")
+                            .child(format!("{result_count} results")),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_command_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -374,6 +488,246 @@ impl AppShell {
                         )
                     }))
                 },
+            )
+            .into_any_element()
+    }
+
+    fn render_search_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        let result_count = self.command_palette.search_results.len();
+
+        let container = v_flex()
+            .id("search-palette-results")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .gap_1()
+            .p_2()
+            .pr_4()
+            .overflow_y_scroll()
+            .track_scroll(&self.command_palette.scroll_handle);
+
+        if let Some(error) = self.command_palette.search_error.clone() {
+            return container
+                .child(
+                    div()
+                        .px_3()
+                        .py_6()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+                .into_any_element();
+        }
+
+        if self.command_palette.search_loading && result_count == 0 {
+            return container.into_any_element();
+        }
+
+        if result_count == 0 {
+            return container
+                .child(
+                    div()
+                        .px_3()
+                        .py_6()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("No results found"),
+                )
+                .into_any_element();
+        }
+
+        let results = container.children(
+            self.command_palette
+                .search_results
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, result)| {
+                    self.render_search_result_row(
+                        index,
+                        result,
+                        index == self.command_palette.selected_index,
+                        cx,
+                    )
+                }),
+        );
+
+        let selected_result = self
+            .command_palette
+            .search_results
+            .get(
+                self.command_palette
+                    .selected_index
+                    .min(result_count.saturating_sub(1)),
+            )
+            .cloned();
+
+        h_flex()
+            .items_stretch()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .w(relative(0.46))
+                    .h_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(results)
+                    .vertical_scrollbar(&self.command_palette.scroll_handle),
+            )
+            .child(
+                div()
+                    .w(relative(0.54))
+                    .h_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .border_l_1()
+                    .border_color(theme.border)
+                    .child(self.render_search_preview(selected_result, cx)),
+            )
+            .into_any_element()
+    }
+
+    fn render_search_preview(
+        &self,
+        result: Option<SearchResult>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        let Some(result) = result else {
+            return div().size_full().into_any_element();
+        };
+        let kind_label = search_result_kind_label(&result.kind);
+        let preview = highlighted_search_text(search_result_preview_source(&result), cx);
+
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_4()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme.popover_foreground)
+                            .text_ellipsis()
+                            .overflow_hidden()
+                            .child(result.title),
+                    )
+                    .child(search_result_kind_pill(kind_label, cx)),
+            )
+            .child(
+                v_flex()
+                    .id("search-result-preview-content")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .text_sm()
+                    .line_height(relative(1.6))
+                    .text_color(theme.popover_foreground)
+                    .whitespace_normal()
+                    .child(preview),
+            )
+            .into_any_element()
+    }
+
+    fn render_search_result_row(
+        &self,
+        index: usize,
+        result: SearchResult,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        let icon = search_result_icon(&result.kind);
+        let label = highlighted_search_text(&result.highlighted_title, cx);
+        let kind_label = search_result_kind_label(&result.kind);
+        let snippet = highlighted_search_text(search_result_snippet_source(&result), cx);
+
+        h_flex()
+            .id(("search-result-row", index))
+            .flex_none()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_2()
+            .rounded(theme.radius)
+            .text_color(theme.popover_foreground)
+            .bg(if is_selected {
+                theme.accent
+            } else {
+                theme.popover.opacity(0.)
+            })
+            .hover(|this| this.bg(theme.accent))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_search_result(result.clone(), window, cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size_6()
+                    .text_color(if is_selected {
+                        theme.primary
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .child(Icon::new(icon).xsmall()),
+            )
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .text_sm()
+                                    .font_weight(if is_selected {
+                                        gpui::FontWeight::SEMIBOLD
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .line_height(relative(1.25))
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .child(label),
+                            )
+                            .child(search_result_kind_pill(kind_label, cx)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(relative(1.25))
+                            .text_color(if is_selected {
+                                theme.secondary_foreground
+                            } else {
+                                theme.muted_foreground
+                            })
+                            .text_ellipsis()
+                            .overflow_hidden()
+                            .child(snippet),
+                    ),
             )
             .into_any_element()
     }
@@ -503,8 +857,109 @@ impl AppShell {
     }
 }
 
+fn search_result_icon(kind: &SearchResultKind) -> IconName {
+    match kind {
+        SearchResultKind::Note => IconName::BookOpen,
+        SearchResultKind::Board | SearchResultKind::Card => IconName::LayoutDashboard,
+        SearchResultKind::Entry => IconName::BookOpen,
+    }
+}
+
+fn search_result_kind_label(kind: &SearchResultKind) -> &'static str {
+    match kind {
+        SearchResultKind::Note => "Note",
+        SearchResultKind::Board => "Board",
+        SearchResultKind::Card => "List in board",
+        SearchResultKind::Entry => "Entry in board",
+    }
+}
+
+fn search_result_kind_pill(label: &'static str, cx: &mut Context<AppShell>) -> gpui::AnyElement {
+    let theme = cx.theme().clone();
+
+    div()
+        .flex_shrink_0()
+        .px_2()
+        .py_1()
+        .rounded(theme.radius)
+        .bg(theme.secondary.opacity(0.8))
+        .text_color(theme.muted_foreground)
+        .text_xs()
+        .child(label)
+        .into_any_element()
+}
+
+fn search_result_snippet_source(result: &SearchResult) -> &str {
+    if result.snippet.trim().is_empty() {
+        "Title match"
+    } else {
+        &result.snippet
+    }
+}
+
+fn highlighted_search_text(value: &str, cx: &mut Context<AppShell>) -> StyledText {
+    let mut text = String::with_capacity(value.len());
+    let mut match_start = None;
+    let mut ranges = Vec::new();
+
+    for ch in value.chars() {
+        match ch {
+            '\u{1}' => match_start = Some(text.len()),
+            '\u{2}' => {
+                if let Some(start) = match_start.take()
+                    && start < text.len()
+                {
+                    ranges.push((
+                        start..text.len(),
+                        HighlightStyle {
+                            color: Some(cx.theme().primary),
+                            font_weight: Some(gpui::FontWeight::SEMIBOLD),
+                            background_color: Some(cx.theme().primary.opacity(0.18)),
+                            ..Default::default()
+                        },
+                    ));
+                }
+            }
+            '\r' | '\n' => text.push(' '),
+            _ => text.push(ch),
+        }
+    }
+
+    if let Some(start) = match_start
+        && start < text.len()
+    {
+        ranges.push((
+            start..text.len(),
+            HighlightStyle {
+                color: Some(cx.theme().primary),
+                font_weight: Some(gpui::FontWeight::SEMIBOLD),
+                background_color: Some(cx.theme().primary.opacity(0.18)),
+                ..Default::default()
+            },
+        ));
+    }
+
+    StyledText::new(SharedString::from(text)).with_highlights(ranges)
+}
+
+fn search_result_preview_source(result: &SearchResult) -> &str {
+    if result.preview.trim().is_empty() {
+        search_result_snippet_source(result)
+    } else {
+        &result.preview
+    }
+}
+
 fn command_matches(command: &PaletteCommand, query: &str) -> bool {
     command.label.to_lowercase().contains(query) || command.subtitle.to_lowercase().contains(query)
+}
+
+fn workspace_search_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Shift+F"
+    } else {
+        "Ctrl+Shift+F"
+    }
 }
 
 fn searchable_command(command: PaletteCommand) -> SearchablePaletteCommand {

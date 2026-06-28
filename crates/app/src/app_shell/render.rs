@@ -1,8 +1,8 @@
 use gpui_component::Icon;
 
 use crate::command_palette::{
-    CloseCommandPaletteAction, CommandPaletteAction, SelectNextCommandPaletteItem,
-    SelectPrevCommandPaletteItem,
+    CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
+    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem,
 };
 
 use super::*;
@@ -282,6 +282,11 @@ impl Render for AppShell {
             .on_action(cx.listener(|this, _: &CommandPaletteAction, window, cx| {
                 this.on_command_palette_action(window, cx);
             }))
+            .on_action(
+                cx.listener(|this, _: &OpenWorkspaceSearchAction, window, cx| {
+                    this.open_workspace_search(window, cx);
+                }),
+            )
             .on_action(
                 cx.listener(|this, _: &CloseCommandPaletteAction, window, cx| {
                     this.on_close_command_palette_action(window, cx);

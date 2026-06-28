@@ -31,7 +31,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::DB;
 use crate::board::BoardView;
-use crate::command_palette::CommandPalette;
+use crate::command_palette::{CommandPalette, CommandPaletteMode};
 use crate::markdown_editor::{
     DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts, unique_note_path,
 };
@@ -131,6 +131,10 @@ impl AppShell {
                     this.command_palette.query = input.read(cx).text().to_string();
                     this.command_palette.selected_index = 0;
                     this.command_palette.scroll_handle.scroll_to_item(0);
+
+                    if this.command_palette.mode == CommandPaletteMode::Search {
+                        this.run_workspace_search(cx);
+                    }
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {

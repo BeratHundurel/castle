@@ -4,12 +4,15 @@ mod render;
 
 pub(crate) use action::*;
 
-use gpui::{AppContext, Entity, ScrollHandle, SharedString, Window};
+use gpui::{AppContext, Entity, ScrollHandle, SharedString, Task, Window};
 use gpui_component::{IconName, input::InputState};
+
+use crate::search::SearchResult;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandPaletteMode {
     Commands,
+    Search,
     Themes,
 }
 
@@ -50,6 +53,7 @@ pub(crate) enum PaletteCommandKind {
     NewTab,
     CloseAllTabs,
     SwitchTheme,
+    SearchWorkspace,
 }
 
 pub(crate) struct CommandPalette {
@@ -61,6 +65,11 @@ pub(crate) struct CommandPalette {
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) suppress_input_event: bool,
     pub(crate) workspace_commands: Vec<SearchablePaletteCommand>,
+    pub(crate) search_results: Vec<SearchResult>,
+    pub(crate) search_loading: bool,
+    pub(crate) search_error: Option<SharedString>,
+    pub(crate) search_generation: i64,
+    pub(crate) search_debounce_task: Option<Task<()>>,
 }
 
 impl CommandPalette {
@@ -77,6 +86,11 @@ impl CommandPalette {
             scroll_handle: ScrollHandle::new(),
             suppress_input_event: false,
             workspace_commands: Vec::new(),
+            search_results: Vec::new(),
+            search_loading: false,
+            search_error: None,
+            search_generation: 0,
+            search_debounce_task: None,
         }
     }
 }
