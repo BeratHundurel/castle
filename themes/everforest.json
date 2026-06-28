@@ -33,6 +33,7 @@
         "scrollbar.thumb.background": "#D7D5C4",
         "secondary.background": "#EEEADA",
         "secondary.foreground": "#5F6D75",
+        "secondary.hover.background": "#D7D5C4",
         "tab.active.background": "#FEFCEE",
         "tab.active.foreground": "#5F6D75",
         "tab.background": "#F4F1E200",
