@@ -21,7 +21,34 @@ impl MarkdownEditorView {
         let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |_, window| {
-            let model = Note::find_by_id(note_id as i64).one(&*db).await.ok()??;
+            let model = match Note::find_by_id(note_id as i64).one(&*db).await {
+                Ok(Some(model)) => model,
+                Ok(None) => {
+                    let message = format!("Note {note_id} was not found.");
+                    eprintln!("{message}");
+                    window
+                        .update(|_, cx| {
+                            view.update(cx, |this, cx| {
+                                this.fail_load(message, cx);
+                            });
+                        })
+                        .ok()?;
+                    return Some(());
+                }
+                Err(err) => {
+                    let message = format!("Failed to load note {note_id}: {err}");
+                    eprintln!("{message}");
+                    window
+                        .update(|_, cx| {
+                            view.update(cx, |this, cx| {
+                                this.fail_load(message, cx);
+                            });
+                        })
+                        .ok()?;
+                    return Some(());
+                }
+            };
+
             let path = model.file_path.as_ref().map(PathBuf::from);
             let cached_content = model.cached_content.clone();
 
@@ -137,6 +164,7 @@ impl MarkdownEditorView {
         self.file_managed_by_app = model.file_managed_by_app;
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = is_loading;
+        self.load_error = None;
 
         self.save_state = if missing {
             SaveState::Missing
@@ -161,8 +189,17 @@ impl MarkdownEditorView {
         cx.notify();
     }
 
+    pub(super) fn fail_load(&mut self, message: String, cx: &mut Context<Self>) {
+        let message = SharedString::from(message);
+        self.is_loading = false;
+        self.load_error = Some(message.clone());
+        self.save_state = SaveState::Error(message);
+        cx.notify();
+    }
+
     pub(super) fn mark_file_missing(&mut self, cx: &mut Context<Self>) {
         self.is_loading = false;
+        self.load_error = None;
         self.save_state = SaveState::Missing;
         cx.notify();
     }

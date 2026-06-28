@@ -186,6 +186,19 @@ impl MarkdownEditorView {
                 .into_any_element();
         }
 
+        if let Some(error) = self.load_error.clone() {
+            return div()
+                .id("markdown-load-error")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_6()
+                .text_color(cx.theme().danger)
+                .child(error)
+                .into_any_element();
+        }
+
         match self.mode {
             EditorMode::Split => div()
                 .size_full()
