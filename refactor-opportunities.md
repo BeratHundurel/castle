@@ -1,8 +1,8 @@
 # Code Analysis: Idiomatic Rust, Simplifications & Memory Improvements
 
-> Scope: `crates/app/src/board/`, `crates/app/src/sidebar/`, `crates/app/src/markdown_editor
+> Scope: `crates/app/src/board/`, `crates/app/src/sidebar/`, `crates/app/src/markdown_editor`
 
-This document lists concrete refactoring opportunities sorted from **easiest / safest** to **harder / more structural**. Each item includes the file, the problem, the suggested fix, and a code snippet.
+This document lists concrete refactoring opportunities sorted from **easiest / safest** to **harder / more structural**. Each item includes the file, the problem, the suggested fix, and a code snippet
 
 ## Priority 1: Trivial & Safe (Cosmetic / Compile-time)
 
@@ -15,7 +15,7 @@ This document lists concrete refactoring opportunities sorted from **easiest / s
 ```rust
 // BEFORE
 #[action(namespace = sidebar, no_json)]
-pub(crate) struct DeleteCardAction(pub(crate) u32); 
+pub(crate) struct DeleteCardAction(pub(crate) u32);
 
 // AFTER
 #[action(namespace = board, no_json)]
