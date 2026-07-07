@@ -1,3 +1,4 @@
+use gpui::Hsla;
 use gpui_component::Icon;
 
 use crate::command_palette::{
@@ -11,12 +12,6 @@ impl AppShell {
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let sidebar_collapsed = self.sidebar.read(cx).is_collapsed();
-        let show_title_input = !matches!(
-            self.open_tabs
-                .get(self.active_tab_index)
-                .map(|tab| &tab.kind),
-            Some(OpenTabKind::Chooser) | None
-        );
 
         TitleBar::new().border_0().bg(theme.sidebar).child(
             h_flex()
@@ -42,20 +37,68 @@ impl AppShell {
                                     });
                                     cx.notify();
                                 })),
-                        )
-                        .when(show_title_input, |this| {
-                            this.child(active_tab_icon(self.open_tabs.get(self.active_tab_index)))
-                                .child(
-                                    Input::new(&self.title_input)
-                                        .border_0()
-                                        .bg(theme.sidebar)
-                                        .rounded_none()
-                                        .w_full(),
-                                )
-                        }),
+                        ),
                 )
-                .child(self.render_tabs(cx)),
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(self.render_tabs(cx)),
+                )
+                .child(self.render_note_save_controls(cx)),
         )
+    }
+
+    fn render_note_save_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(view) =
+            self.open_tabs
+                .get(self.active_tab_index)
+                .and_then(|tab| match &tab.kind {
+                    OpenTabKind::Note { view, .. } => Some(view.clone()),
+                    _ => None,
+                })
+        else {
+            return div().into_any_element();
+        };
+
+        let save_state = view.read(cx).save_state();
+        let save_shortcut = platform_shortcut("S");
+        let save_as_shortcut = platform_shortcut("Shift+S");
+        let save_view = view.clone();
+        let save_as_view = view;
+
+        h_flex()
+            .id("title-bar-note-actions")
+            .h_full()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .border_l_1()
+            .border_color(cx.theme().border.opacity(0.72))
+            .flex_shrink_0()
+            .child(
+                Button::new("title-save-note")
+                    .icon(IconName::Check)
+                    .ghost()
+                    .xsmall()
+                    .tooltip(format!("Save ({save_shortcut})"))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        save_view.update(cx, |note, cx| note.save(cx));
+                    })),
+            )
+            .child(
+                Button::new("title-save-note-as")
+                    .icon(IconName::File)
+                    .ghost()
+                    .xsmall()
+                    .tooltip(format!("Save as ({save_as_shortcut})"))
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        save_as_view.update(cx, |note, cx| note.save_as(window, cx));
+                    })),
+            )
+            .child(save_status_pill(save_state, cx))
+            .into_any_element()
     }
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -68,18 +111,25 @@ impl AppShell {
         let tab_bar = TabBar::new("open-tabs")
             .pill()
             .small()
-            .menu(true)
             .bg(cx.theme().sidebar)
             .selected_index(active_index)
             .on_click(cx.listener(|this, index: &usize, window, cx| {
                 this.activate_tab(*index, window, cx);
             }))
+            .last_empty_space(
+                Button::new("new-tab")
+                    .icon(IconName::Plus)
+                    .ghost()
+                    .xsmall()
+                    .tooltip("New tab")
+                    .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
+            )
+            .suffix(div().w_0())
             .children(self.open_tabs.iter().enumerate().map(|(index, tab)| {
                 Tab::new()
                     .px_2()
                     .text_color(cx.theme().primary_foreground)
                     .label(tab_label(tab, cx))
-                    .prefix(active_tab_icon(Some(tab)))
                     .suffix(
                         Button::new(("close-tab", tab.id as usize))
                             .icon(IconName::Close)
@@ -90,15 +140,7 @@ impl AppShell {
                                 this.close_tab(index, window, cx);
                             })),
                     )
-            }))
-            .suffix(
-                Button::new("new-tab")
-                    .icon(IconName::Plus)
-                    .ghost()
-                    .xsmall()
-                    .tooltip("New tab")
-                    .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
-            );
+            }));
 
         if let Some(tab_id) = active_tab_id {
             div()
@@ -131,113 +173,121 @@ impl AppShell {
             .active_project_id
             .and_then(|id| self.projects.iter().find(|project| project.id == id));
 
+        let active_project_id = active_project.map(|project| project.id);
+
         v_flex()
             .id("new-tab-chooser")
             .size_full()
             .items_center()
             .justify_center()
-            .gap_4()
             .p_6()
+            .pb(px(120.))
             .bg(cx.theme().background)
             .child(
                 v_flex()
-                    .gap_1()
+                    .w_full()
+                    .max_w(px(640.))
                     .items_center()
+                    .gap_4()
                     .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Create or open"),
+                        v_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("New tab"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Create or open something to work on."),
+                            ),
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_center()
+                            .gap_2()
+                            .child(
+                                Button::new("new-note-active")
+                                    .label(match active_project {
+                                        Some(project) => format!("New note in {}", project.name),
+                                        None => "New note".to_string(),
+                                    })
+                                    .primary()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.create_note(active_project_id, window, cx);
+                                    })),
+                            )
+                            .when(active_project.is_some(), |this| {
+                                this.child(
+                                    Button::new("new-note-standalone")
+                                        .label("Standalone note")
+                                        .outline()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.create_note(None, window, cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("open-note-file")
+                                    .label("Open note file")
+                                    .outline()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_note_file(window, cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_center()
+                            .gap_2()
+                            .child(
+                                Button::new("new-board-active")
+                                    .label(match active_project {
+                                        Some(project) => format!("New board in {}", project.name),
+                                        None => "New board".to_string(),
+                                    })
+                                    .outline()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.create_board(active_project_id, window, cx);
+                                    })),
+                            )
+                            .when(active_project.is_some(), |this| {
+                                this.child(
+                                    Button::new("new-board-standalone")
+                                        .label("Standalone board")
+                                        .outline()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.create_board(None, window, cx);
+                                        })),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_4()
+                            .items_center()
+                            .flex_wrap()
+                            .justify_center()
+                            .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Choose a note or board."),
+                            .child(shortcut_hint("Command palette", platform_shortcut("P"), cx))
+                            .child(shortcut_hint(
+                                "Workspace search",
+                                platform_shortcut("Shift+F"),
+                                cx,
+                            ))
+                            .child(shortcut_hint("Switch tabs", "Ctrl+Tab", cx)),
                     ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("new-note-active")
-                            .label(match active_project {
-                                Some(project) => format!("New note in {}", project.name),
-                                None => "New note".to_string(),
-                            })
-                            .primary()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.create_note(this.active_project_id, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("new-note-standalone")
-                            .label("Standalone note")
-                            .outline()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.create_note(None, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("open-note-file")
-                            .label("Open note file")
-                            .outline()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_note_file(window, cx);
-                            })),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("new-board-active")
-                            .label(match active_project {
-                                Some(project) => format!("New board in {}", project.name),
-                                None => "New board".to_string(),
-                            })
-                            .outline()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.create_board(this.active_project_id, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("new-board-standalone")
-                            .label("Standalone board")
-                            .outline()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.create_board(None, window, cx);
-                            })),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .w(px(420.))
-                    .max_h(px(220.))
-                    .overflow_y_scrollbar()
-                    .children(self.boards.iter().map(|board| {
-                        let board_id = board.id;
-                        let project_id = board.project_id;
-                        let title = board.title.clone();
-                        let subtitle = board
-                            .project_name
-                            .clone()
-                            .unwrap_or_else(|| "Standalone".into());
-
-                        Button::new(("open-board", board_id as usize))
-                            .label(format!("{} - {}", title, subtitle))
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_board_tab(
-                                    board_id,
-                                    project_id,
-                                    title.clone(),
-                                    window,
-                                    cx,
-                                );
-                            }))
-                    })),
             )
     }
 }
@@ -345,14 +395,6 @@ impl Render for AppShell {
     }
 }
 
-fn active_tab_icon(tab: Option<&OpenTab>) -> Icon {
-    match tab.map(|tab| &tab.kind) {
-        Some(OpenTabKind::Note { .. }) => Icon::new(IconName::BookOpen).small(),
-        Some(OpenTabKind::Board { .. }) => Icon::new(IconName::LayoutDashboard).small(),
-        _ => Icon::new(IconName::Plus).small(),
-    }
-}
-
 fn tab_label(tab: &OpenTab, cx: &mut Context<AppShell>) -> SharedString {
     match &tab.kind {
         OpenTabKind::Note { view, .. } => {
@@ -368,4 +410,56 @@ fn tab_label(tab: &OpenTab, cx: &mut Context<AppShell>) -> SharedString {
         }
         _ => tab.title.clone(),
     }
+}
+
+fn save_status_pill(save_state: SaveState, cx: &mut Context<AppShell>) -> impl IntoElement {
+    let (icon, color, label) = save_state_status(save_state, cx);
+
+    Button::new("title-save-status")
+        .icon(Icon::new(icon).text_color(color))
+        .ghost()
+        .xsmall()
+        .rounded_full()
+        .bg(color.opacity(0.12))
+        .tab_stop(false)
+        .tooltip(label)
+        .into_any_element()
+}
+
+fn save_state_status(
+    save_state: SaveState,
+    cx: &mut Context<AppShell>,
+) -> (IconName, Hsla, &'static str) {
+    match save_state {
+        SaveState::Saved => (IconName::CircleCheck, cx.theme().success, "Saved"),
+        SaveState::Dirty => (IconName::Asterisk, cx.theme().warning, "Unsaved changes"),
+        SaveState::Saving => (IconName::Loader, cx.theme().info, "Saving"),
+        SaveState::Missing => (IconName::TriangleAlert, cx.theme().warning, "File missing"),
+        SaveState::Error(_) => (IconName::TriangleAlert, cx.theme().danger, "Save failed"),
+    }
+}
+
+fn platform_shortcut(keys: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("Cmd+{keys}")
+    } else {
+        format!("Ctrl+{keys}")
+    }
+}
+
+fn shortcut_hint(
+    label: &'static str,
+    shortcut: impl Into<SharedString>,
+    cx: &mut Context<AppShell>,
+) -> impl IntoElement {
+    h_flex()
+        .gap_1()
+        .items_center()
+        .child(div().child(label))
+        .child(
+            div()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_color(cx.theme().muted_foreground.opacity(0.8))
+                .child(shortcut.into()),
+        )
 }

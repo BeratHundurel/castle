@@ -327,7 +327,7 @@ impl MarkdownEditorView {
         }));
     }
 
-    pub(super) fn save(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
         let (path, file_managed_by_app) = self
             .current_path
             .clone()
@@ -344,7 +344,7 @@ impl MarkdownEditorView {
         self.save_to_path(path, file_managed_by_app, cx);
     }
 
-    pub(super) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let start_dir = self
             .current_path
             .as_ref()

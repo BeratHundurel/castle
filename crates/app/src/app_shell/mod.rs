@@ -17,11 +17,10 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{
-        Escape as InputEscape, Input, InputEvent, InputState, MoveDown as InputMoveDown,
+        Escape as InputEscape, InputEvent, InputState, MoveDown as InputMoveDown,
         MoveUp as InputMoveUp,
     },
     menu::ContextMenuExt as _,
-    scroll::ScrollableElement as _,
     sidebar::SidebarToggleButton,
     tab::{Tab, TabBar},
     v_flex,
