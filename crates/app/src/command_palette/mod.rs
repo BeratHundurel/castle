@@ -1,6 +1,9 @@
 mod action;
+mod commands;
 mod handler;
 mod render;
+mod search_preview;
+mod search_render;
 
 pub(crate) use action::*;
 

@@ -24,6 +24,7 @@ pub(crate) struct SearchResult {
     pub(crate) open_id: u32,
     pub(crate) project_id: Option<u32>,
     pub(crate) title: String,
+    pub(crate) parent_title: Option<String>,
     pub(crate) highlighted_title: String,
     pub(crate) snippet: String,
     pub(crate) preview: String,
@@ -59,14 +60,31 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(card::Column::Id)
         .column(card::Column::BoardId)
         .column(card::Column::Title)
-        .into_tuple::<(i64, i64, String)>()
+        .column(card::Column::Position)
+        .into_tuple::<(i64, i64, String, i32)>()
         .all(db)
         .await?;
 
     let card_boards = cards
         .iter()
-        .map(|(id, board_id, _)| (*id, *board_id))
+        .map(|(id, board_id, _, _)| (*id, *board_id))
         .collect::<HashMap<_, _>>();
+
+    let mut cards_by_board: HashMap<i64, Vec<CardSearchSource>> = HashMap::new();
+    for (index, (id, board_id, _, position)) in cards.iter().enumerate() {
+        cards_by_board
+            .entry(*board_id)
+            .or_default()
+            .push(CardSearchSource {
+                index,
+                id: *id,
+                position: *position,
+            });
+    }
+
+    for cards in cards_by_board.values_mut() {
+        cards.sort_by_key(|card| (card.position, card.id));
+    }
 
     let entries = Entry::find()
         .select_only()
@@ -74,11 +92,30 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(entry::Column::CardId)
         .column(entry::Column::Title)
         .column(entry::Column::Description)
-        .into_tuple::<(i64, i64, String, String)>()
+        .column(entry::Column::Position)
+        .into_tuple::<(i64, i64, String, String, i32)>()
         .all(db)
         .await?;
 
-    let mut documents = Vec::with_capacity(notes.len() + boards.len() + cards.len());
+    let mut entries_by_card: HashMap<i64, Vec<EntrySearchSource>> = HashMap::new();
+    for (id, card_id, title, description, position) in entries {
+        entries_by_card
+            .entry(card_id)
+            .or_default()
+            .push(EntrySearchSource {
+                id,
+                title,
+                description,
+                position,
+            });
+    }
+
+    for entries in entries_by_card.values_mut() {
+        entries.sort_by_key(|entry| (entry.position, entry.id));
+    }
+
+    let entry_count = entries_by_card.values().map(Vec::len).sum::<usize>();
+    let mut documents = Vec::with_capacity(notes.len() + boards.len() + cards.len() + entry_count);
 
     for (id, project_id, title, content) in notes {
         documents.push(SearchDocument {
@@ -98,34 +135,42 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
             parent_id: Some(id),
             project_id,
             title,
-            body: String::new(),
+            body: search_board_body(
+                &cards,
+                cards_by_board.get(&id).map(Vec::as_slice),
+                &entries_by_card,
+            ),
         });
     }
 
-    for (id, board_id, title) in cards {
+    for (id, board_id, title, _) in cards {
+        let body = search_card_body(&title, entries_by_card.get(&id).map(Vec::as_slice));
+
         documents.push(SearchDocument {
             item_type: "card",
             item_id: id,
             parent_id: Some(board_id),
             project_id: board_projects.get(&board_id).copied().flatten(),
             title,
-            body: String::new(),
+            body,
         });
     }
 
-    for (id, card_id, title, description) in entries {
+    for (card_id, entries) in entries_by_card {
         let Some(board_id) = card_boards.get(&card_id).copied() else {
             continue;
         };
 
-        documents.push(SearchDocument {
-            item_type: "entry",
-            item_id: id,
-            parent_id: Some(board_id),
-            project_id: board_projects.get(&board_id).copied().flatten(),
-            title,
-            body: description,
-        });
+        for entry in entries {
+            documents.push(SearchDocument {
+                item_type: "entry",
+                item_id: entry.id,
+                parent_id: Some(board_id),
+                project_id: board_projects.get(&board_id).copied().flatten(),
+                title: entry.title,
+                body: entry.description,
+            });
+        }
     }
 
     let txn = db.begin().await?;
@@ -136,7 +181,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
     ))
     .await?;
 
-    insert_search_documents(&txn, &documents).await?;
+    insert_search_documents(&txn, documents).await?;
     txn.commit().await?;
 
     Ok(())
@@ -157,7 +202,7 @@ pub(crate) async fn search_workspace(
                 project_id,
                 title,
                 highlight(search_index, 4, char(1), char(2)) AS highlighted_title,
-                snippet(search_index, -1, char(1), char(2), '...', 12) AS snippet,
+                snippet(search_index, 5, char(1), char(2), '...', 18) AS snippet,
                 substr(
                     highlight(search_index, 5, char(1), char(2)),
                     max(
@@ -196,18 +241,34 @@ pub(crate) async fn search_workspace(
         .await?
     };
 
-    let mut results = vec![];
+    let mut search_rows = Vec::with_capacity(rows.len());
+    let mut board_title_ids = Vec::new();
+
     for row in rows {
         let item_type: String = row.try_get("", "item_type")?;
-        let item_id: i64 = row.try_get("", "item_id")?;
         let open_id: i64 = row.try_get("", "open_id")?;
-        let project_id: Option<i64> = row.try_get("", "project_id")?;
-        let title: String = row.try_get("", "title")?;
-        let highlighted_title: String = row.try_get("", "highlighted_title")?;
-        let snippet: String = row.try_get("", "snippet")?;
-        let preview: String = row.try_get("", "preview")?;
 
-        let kind = match item_type.as_str() {
+        if !board_title_ids.contains(&open_id) {
+            board_title_ids.push(open_id);
+        }
+
+        search_rows.push(SearchRow {
+            item_type,
+            item_id: row.try_get("", "item_id")?,
+            open_id,
+            project_id: row.try_get("", "project_id")?,
+            title: row.try_get("", "title")?,
+            highlighted_title: row.try_get("", "highlighted_title")?,
+            snippet: row.try_get("", "snippet")?,
+            preview: row.try_get("", "preview")?,
+        });
+    }
+
+    let board_titles = load_board_titles(db, &board_title_ids).await?;
+
+    let mut results = Vec::with_capacity(search_rows.len());
+    for row in search_rows {
+        let kind = match row.item_type.as_str() {
             "note" => SearchResultKind::Note,
             "board" => SearchResultKind::Board,
             "card" => SearchResultKind::Card,
@@ -217,30 +278,137 @@ pub(crate) async fn search_workspace(
 
         results.push(SearchResult {
             kind,
-            item_id: item_id as u32,
-            open_id: open_id as u32,
-            project_id: project_id.map(|id| id as u32),
-            title,
-            highlighted_title,
-            snippet,
-            preview,
+            item_id: row.item_id as u32,
+            open_id: row.open_id as u32,
+            project_id: row.project_id.map(|id| id as u32),
+            parent_title: board_titles.get(&row.open_id).cloned(),
+            title: row.title,
+            highlighted_title: row.highlighted_title,
+            snippet: row.snippet,
+            preview: row.preview,
         });
     }
 
     Ok(results)
 }
 
+fn search_card_body(title: &str, entries: Option<&[EntrySearchSource]>) -> String {
+    let mut body = String::with_capacity(search_card_body_capacity(title, entries));
+    append_search_card_body(&mut body, title, entries);
+    body
+}
+
+fn append_search_card_body(body: &mut String, title: &str, entries: Option<&[EntrySearchSource]>) {
+    body.push_str("## ");
+    body.push_str(title);
+
+    if let Some(entries) = entries {
+        for entry in entries {
+            body.push_str("\n- ");
+            body.push_str(&entry.title);
+
+            if !entry.description.trim().is_empty() {
+                body.push_str(": ");
+                body.push_str(&entry.description);
+            }
+        }
+    }
+}
+
+fn search_board_body(
+    cards: &[(i64, i64, String, i32)],
+    board_cards: Option<&[CardSearchSource]>,
+    entries_by_card: &HashMap<i64, Vec<EntrySearchSource>>,
+) -> String {
+    let Some(board_cards) = board_cards else {
+        return String::new();
+    };
+
+    let mut body = String::with_capacity(
+        board_cards
+            .iter()
+            .map(|card| {
+                let (card_id, _, card_title, _) = &cards[card.index];
+                search_card_body_capacity(
+                    card_title,
+                    entries_by_card.get(card_id).map(Vec::as_slice),
+                ) + 2
+            })
+            .sum::<usize>()
+            .saturating_sub(2),
+    );
+
+    for (index, card) in board_cards.iter().enumerate() {
+        if index > 0 {
+            body.push_str("\n\n");
+        }
+
+        let (card_id, _, card_title, _) = &cards[card.index];
+        append_search_card_body(
+            &mut body,
+            card_title,
+            entries_by_card.get(card_id).map(Vec::as_slice),
+        );
+    }
+
+    body
+}
+
+fn search_card_body_capacity(title: &str, entries: Option<&[EntrySearchSource]>) -> usize {
+    let entries_capacity = entries
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| {
+                    let description_capacity = if entry.description.trim().is_empty() {
+                        0
+                    } else {
+                        2 + entry.description.len()
+                    };
+
+                    3 + entry.title.len() + description_capacity
+                })
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+
+    3 + title.len() + entries_capacity
+}
+
 fn fts_query(query: &str) -> Option<String> {
-    let terms = query
+    let raw_terms = query
         .split(|ch: char| !ch.is_alphanumeric() && ch != '_')
         .filter(|term| !term.is_empty())
-        .map(|term| format!("{term}*"))
         .collect::<Vec<_>>();
+
+    let multi_term = raw_terms.len() > 1;
+    let mut terms = raw_terms
+        .iter()
+        .filter_map(|term| fts_query_term(term, multi_term))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        terms = raw_terms.iter().map(|term| (*term).to_string()).collect();
+    }
 
     if terms.is_empty() {
         None
     } else {
         Some(terms.join(" "))
+    }
+}
+
+fn fts_query_term(term: &str, multi_term: bool) -> Option<String> {
+    let char_count = term.chars().count();
+
+    if multi_term && char_count == 1 {
+        return None;
+    }
+
+    if multi_term && char_count <= 2 {
+        Some(term.to_string())
+    } else {
+        Some(format!("{term}*"))
     }
 }
 
@@ -262,6 +430,24 @@ mod tests {
     }
 
     #[test]
+    fn fts_query_does_not_prefix_single_letter_terms_in_phrases() {
+        assert_eq!(
+            fts_query("This is a working"),
+            Some("This* is working*".to_string())
+        );
+    }
+
+    #[test]
+    fn fts_query_keeps_single_letter_query_searchable() {
+        assert_eq!(fts_query("a"), Some("a*".to_string()));
+    }
+
+    #[test]
+    fn fts_query_keeps_two_letter_terms_exact_in_phrases() {
+        assert_eq!(fts_query("ui state"), Some("ui state*".to_string()));
+    }
+
+    #[test]
     fn fts_query_rejects_punctuation_only_queries() {
         assert_eq!(fts_query("---"), None);
     }
@@ -276,43 +462,116 @@ struct SearchDocument {
     body: String,
 }
 
-async fn insert_search_documents(
-    db: &impl ConnectionTrait,
-    documents: &[SearchDocument],
-) -> Result<(), DbErr> {
-    for chunk in documents.chunks(100) {
-        if chunk.is_empty() {
-            continue;
-        }
+struct SearchRow {
+    item_type: String,
+    item_id: i64,
+    open_id: i64,
+    project_id: Option<i64>,
+    title: String,
+    highlighted_title: String,
+    snippet: String,
+    preview: String,
+}
 
-        let placeholders = std::iter::repeat_n("(?, ?, ?, ?, ?, ?)", chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
+struct EntrySearchSource {
+    id: i64,
+    title: String,
+    description: String,
+    position: i32,
+}
 
-        let sql = format!(
-            "INSERT INTO search_index
-                 (item_type, item_id, parent_id, project_id, title, body)
-              VALUES {placeholders}"
-        );
+struct CardSearchSource {
+    index: usize,
+    id: i64,
+    position: i32,
+}
 
-        let mut values: Vec<Value> = Vec::with_capacity(chunk.len() * 6);
+async fn load_board_titles(
+    db: &DatabaseConnection,
+    board_ids: &[i64],
+) -> Result<HashMap<i64, String>, DbErr> {
+    if board_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-        for doc in chunk {
-            values.push(doc.item_type.into());
-            values.push(doc.item_id.into());
-            values.push(doc.parent_id.into());
-            values.push(doc.project_id.into());
-            values.push(doc.title.clone().into());
-            values.push(doc.body.clone().into());
-        }
+    let placeholders = std::iter::repeat_n("?", board_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
 
-        db.execute_raw(Statement::from_sql_and_values(
+    let sql = format!("SELECT id, title FROM board WHERE id IN ({placeholders})");
+    let values = board_ids
+        .iter()
+        .map(|id| (*id).into())
+        .collect::<Vec<Value>>();
+
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
             values,
         ))
         .await?;
+
+    let mut board_titles = HashMap::with_capacity(rows.len());
+    for row in rows {
+        board_titles.insert(row.try_get("", "id")?, row.try_get("", "title")?);
     }
+
+    Ok(board_titles)
+}
+
+async fn insert_search_documents(
+    db: &impl ConnectionTrait,
+    documents: Vec<SearchDocument>,
+) -> Result<(), DbErr> {
+    let mut chunk = Vec::with_capacity(100);
+
+    for document in documents {
+        chunk.push(document);
+
+        if chunk.len() == 100 {
+            insert_search_document_chunk(db, &mut chunk).await?;
+        }
+    }
+
+    if !chunk.is_empty() {
+        insert_search_document_chunk(db, &mut chunk).await?;
+    }
+
+    Ok(())
+}
+
+async fn insert_search_document_chunk(
+    db: &impl ConnectionTrait,
+    chunk: &mut Vec<SearchDocument>,
+) -> Result<(), DbErr> {
+    let placeholders = std::iter::repeat_n("(?, ?, ?, ?, ?, ?)", chunk.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let sql = format!(
+        "INSERT INTO search_index
+                 (item_type, item_id, parent_id, project_id, title, body)
+              VALUES {placeholders}"
+    );
+
+    let mut values: Vec<Value> = Vec::with_capacity(chunk.len() * 6);
+
+    for doc in chunk.drain(..) {
+        values.push(doc.item_type.into());
+        values.push(doc.item_id.into());
+        values.push(doc.parent_id.into());
+        values.push(doc.project_id.into());
+        values.push(doc.title.into());
+        values.push(doc.body.into());
+    }
+
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        sql,
+        values,
+    ))
+    .await?;
 
     Ok(())
 }
