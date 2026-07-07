@@ -6,8 +6,8 @@ use crate::command_palette::{
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem,
 };
 use crate::markdown_editor::action::{
-    EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, SaveMarkdownFile, SaveMarkdownFileAs,
-    ToggleEditorMode,
+    ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
+    SaveMarkdownFile, SaveMarkdownFileAs, ToggleEditorMode,
 };
 
 pub fn init(cx: &mut App) {
@@ -31,6 +31,66 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-alt-e", ExpandEmmet, Some("MarkdownEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-alt-e", ExpandEmmet, Some("MarkdownEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-b",
+            ApplyMarkdownFormat(MarkdownFormat::Bold),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-b",
+            ApplyMarkdownFormat(MarkdownFormat::Bold),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-i",
+            ApplyMarkdownFormat(MarkdownFormat::Italic),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-i",
+            ApplyMarkdownFormat(MarkdownFormat::Italic),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-k",
+            ApplyMarkdownFormat(MarkdownFormat::Link),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-k",
+            ApplyMarkdownFormat(MarkdownFormat::Link),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-7",
+            ApplyMarkdownFormat(MarkdownFormat::OrderedList),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-7",
+            ApplyMarkdownFormat(MarkdownFormat::OrderedList),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-8",
+            ApplyMarkdownFormat(MarkdownFormat::BulletList),
+            Some("MarkdownEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-8",
+            ApplyMarkdownFormat(MarkdownFormat::BulletList),
+            Some("MarkdownEditor"),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", SaveMarkdownFile, Some("MarkdownEditor")),
         #[cfg(not(target_os = "macos"))]

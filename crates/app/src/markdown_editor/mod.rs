@@ -57,9 +57,10 @@ impl MarkdownEditorView {
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor(Language::Markdown)
-                .line_number(true)
+                .line_number(false)
+                .indent_guides(false)
                 .tab_size(TabSize {
-                    tab_size: 4,
+                    tab_size: 2,
                     ..Default::default()
                 })
                 .soft_wrap(true)
@@ -85,11 +86,19 @@ impl MarkdownEditorView {
             editor_focus.focus(window, cx);
         });
 
-        cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) && !this.suppress_editor_events {
-                this.update_from_editor(cx);
-            }
-        })
+        cx.subscribe_in(
+            &editor,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change if !this.suppress_editor_events => {
+                    this.update_from_editor(cx);
+                }
+                InputEvent::PressEnter { .. } if !this.suppress_editor_events => {
+                    this.continue_markdown_after_enter(window, cx);
+                }
+                _ => {}
+            },
+        )
         .detach();
 
         Self::load_note_async(note_id, window, cx);
@@ -100,7 +109,7 @@ impl MarkdownEditorView {
             focus_handle,
             editor,
             preview,
-            mode: EditorMode::Split,
+            mode: EditorMode::Source,
             current_path: None,
             file_managed_by_app: false,
             save_state: SaveState::Saved,
