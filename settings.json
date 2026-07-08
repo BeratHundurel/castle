@@ -1,10 +1,12 @@
 {
   "theme_name": "Ayu Dark",
+  "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
   "show_sidebar": true,
   "scrollbar_show": "scrolling",
-  "markdown_font_size": 16.0,
+  "editor_font_family": "IBM Plex Mono",
+  "markdown_font_size": 13.0,
   "markdown_editor_mode": "source",
   "markdown_line_numbers": false,
   "markdown_soft_wrap": true

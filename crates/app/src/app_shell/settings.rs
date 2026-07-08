@@ -1,10 +1,12 @@
 use gpui::{
-    App, Context, IntoElement, ParentElement, SharedString, StyleRefinement, Styled, Window, div,
-    px,
+    App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement, SharedString,
+    StyleRefinement, Styled, Subscription, Window, div, px, rems,
 };
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable as _, Size, ThemeRegistry, WindowExt as _,
+    ActiveTheme, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry, WindowExt as _,
     group_box::GroupBoxVariant,
+    searchable_list::{SearchableListItem, SearchableVec},
+    select::{Select, SelectEvent, SelectState},
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 
@@ -12,6 +14,58 @@ use crate::app_settings::{AppSettings, scrollbar_show_key};
 use crate::markdown_editor::types::EditorMode;
 
 use super::AppShell;
+
+const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
+const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
+const SETTINGS_DIALOG_MARGIN: f32 = 32.0;
+const SETTINGS_DIALOG_MIN_WIDTH: f32 = 640.0;
+const SETTINGS_DIALOG_MIN_HEIGHT: f32 = 360.0;
+const SETTINGS_SIDEBAR_WIDE_WIDTH: f32 = 300.0;
+const SETTINGS_SIDEBAR_MEDIUM_WIDTH: f32 = 260.0;
+const SETTINGS_SIDEBAR_NARROW_WIDTH: f32 = 220.0;
+const SETTINGS_SIDEBAR_HORIZONTAL_PADDING: f32 = 24.0;
+const SETTINGS_PICKER_WIDTH: f32 = 360.0;
+const THEME_SEARCH_PLACEHOLDER: &str = "Search themes...";
+const FONT_SEARCH_PLACEHOLDER: &str = "Search fonts...";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PickerOption {
+    value: SharedString,
+    label: SharedString,
+}
+
+impl PickerOption {
+    fn new(value: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+        }
+    }
+}
+
+impl SearchableListItem for PickerOption {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.value
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        self.label.to_lowercase().contains(&query) || self.value.to_lowercase().contains(&query)
+    }
+}
+
+type PickerSelectState = SelectState<SearchableVec<PickerOption>>;
+
+struct SearchablePickerState {
+    select: Entity<PickerSelectState>,
+    _subscription: Subscription,
+}
 
 impl AppShell {
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -26,10 +80,22 @@ impl AppShell {
         let app = cx.entity();
         let settings_owner = app.clone();
 
-        window.open_dialog(cx, move |dialog, _, _cx| {
+        window.open_dialog(cx, move |dialog, window, _cx| {
+            let dialog_width = responsive_dialog_dimension(
+                window.viewport_size().width.as_f32(),
+                SETTINGS_DIALOG_WIDTH,
+                SETTINGS_DIALOG_MIN_WIDTH,
+            );
+            let dialog_height = responsive_dialog_dimension(
+                window.viewport_size().height.as_f32(),
+                SETTINGS_DIALOG_HEIGHT,
+                SETTINGS_DIALOG_MIN_HEIGHT,
+            );
+            let sidebar_width = settings_sidebar_width(dialog_width);
+
             dialog
-                .w(px(960.))
-                .h(px(640.))
+                .w(px(dialog_width))
+                .h(px(dialog_height))
                 .title("Settings")
                 .on_close({
                     let settings_owner = settings_owner.clone();
@@ -43,13 +109,13 @@ impl AppShell {
                 .content({
                     let app = app.clone();
                     move |content, _, cx| {
-                        content.px_3().pb_3().child(
+                        content.px_4().pb_4().child(
                             div().size_full().overflow_hidden().child(
                                 Settings::new("castle-settings")
                                     .with_size(Size::Medium)
                                     .with_group_variant(GroupBoxVariant::Outline)
-                                    .sidebar_width(px(260.))
-                                    .header_style(&settings_header_style())
+                                    .sidebar_width(px(sidebar_width))
+                                    .header_style(&settings_header_style(sidebar_width))
                                     .pages(setting_pages(app.clone(), cx)),
                             ),
                         )
@@ -59,8 +125,30 @@ impl AppShell {
     }
 }
 
-fn settings_header_style() -> StyleRefinement {
-    StyleRefinement::default().w_full().flex_1()
+fn responsive_dialog_dimension(available: f32, preferred: f32, minimum: f32) -> f32 {
+    let max = (available - SETTINGS_DIALOG_MARGIN * 2.0).max(1.0);
+
+    if max >= minimum {
+        preferred.min(max).max(minimum)
+    } else {
+        max
+    }
+}
+
+fn settings_sidebar_width(dialog_width: f32) -> f32 {
+    if dialog_width < 760.0 {
+        SETTINGS_SIDEBAR_NARROW_WIDTH
+    } else if dialog_width < 900.0 {
+        SETTINGS_SIDEBAR_MEDIUM_WIDTH
+    } else {
+        SETTINGS_SIDEBAR_WIDE_WIDTH
+    }
+}
+
+fn settings_header_style(sidebar_width: f32) -> StyleRefinement {
+    let search_width = sidebar_width - SETTINGS_SIDEBAR_HORIZONTAL_PADDING;
+
+    StyleRefinement::default().w(px(search_width)).max_w_full()
 }
 
 fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> {
@@ -72,15 +160,28 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                 SettingGroup::new().title("Appearance").items(vec![
                     SettingItem::new(
                         "Theme",
-                        SettingField::scrollable_dropdown(
+                        searchable_select_field(
+                            "theme",
+                            THEME_SEARCH_PLACEHOLDER,
                             theme_options(cx),
-                            |cx: &App| cx.theme().theme_name().clone(),
-                            |theme_name: SharedString, cx: &mut App| {
-                                AppSettings::set_theme_name(theme_name, cx);
-                            },
+                            current_theme_name,
+                            AppSettings::set_theme_name,
                         ),
                     )
-                    .description("Choose the color theme used across Castle."),
+                    .description("Choose the color theme used across Castle.")
+                    .layout(Axis::Vertical),
+                    SettingItem::new(
+                        "Interface Font",
+                        searchable_select_field(
+                            "interface-font",
+                            FONT_SEARCH_PLACEHOLDER,
+                            font_options(cx),
+                            AppSettings::font_family,
+                            AppSettings::set_font_family,
+                        ),
+                    )
+                    .description("Choose the font family used across the interface.")
+                    .layout(Axis::Vertical),
                     SettingItem::new(
                         "Font Size",
                         SettingField::number_input(
@@ -155,6 +256,18 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
         SettingPage::new("Editor")
             .icon(Icon::new(IconName::BookOpen))
             .group(SettingGroup::new().title("Markdown").items(vec![
+                        SettingItem::new(
+                            "Editor Font",
+                            searchable_select_field(
+                                "editor-font",
+                                FONT_SEARCH_PLACEHOLDER,
+                                font_options(cx),
+                                AppSettings::editor_font_family,
+                                AppSettings::set_editor_font_family,
+                            ),
+                        )
+                        .description("Choose the monospace font family used while writing notes.")
+                        .layout(Axis::Vertical),
                         SettingItem::new(
                             "Editor Font Size",
                             SettingField::number_input(
@@ -234,10 +347,103 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
     ]
 }
 
-fn theme_options(cx: &App) -> Vec<(SharedString, SharedString)> {
+fn current_theme_name(cx: &App) -> SharedString {
+    cx.theme().theme_name().clone()
+}
+
+fn theme_options(cx: &App) -> Vec<PickerOption> {
     ThemeRegistry::global(cx)
         .sorted_themes()
         .iter()
-        .map(|theme| (theme.name.clone(), theme.name.clone()))
+        .map(|theme| PickerOption::new(theme.name.clone(), theme.name.clone()))
         .collect()
+}
+
+fn font_options(cx: &App) -> Vec<PickerOption> {
+    cx.text_system()
+        .all_font_names()
+        .into_iter()
+        .map(|font_name| {
+            let label = if font_name == ".SystemUIFont" {
+                "System UI".to_string()
+            } else {
+                font_name.clone()
+            };
+
+            PickerOption::new(font_name, label)
+        })
+        .collect()
+}
+
+fn searchable_select_field(
+    id: &'static str,
+    search_placeholder: &'static str,
+    options: Vec<PickerOption>,
+    value: fn(&App) -> SharedString,
+    set_value: fn(SharedString, &mut App),
+) -> SettingField<SharedString> {
+    SettingField::render(move |render_options, window: &mut Window, cx: &mut App| {
+        let selected_value = value(cx);
+        let picker_options = with_selected_option(options.clone(), selected_value.clone());
+        let selected_index = selected_index(&picker_options, &selected_value);
+        let state_key = SharedString::from(format!(
+            "settings-{id}-{}-{}-{}",
+            render_options.page_ix, render_options.group_ix, render_options.item_ix
+        ));
+
+        let state = window.use_keyed_state(state_key, cx, |window, cx| {
+            let initial_options = picker_options.clone();
+            let select = cx.new(|cx| {
+                SelectState::new(
+                    SearchableVec::new(initial_options),
+                    selected_index,
+                    window,
+                    cx,
+                )
+                .searchable(true)
+            });
+            let _subscription = cx.subscribe(&select, move |_, _, event, cx| {
+                let SelectEvent::Confirm(next_value) = event;
+                if let Some(next_value) = next_value {
+                    set_value(next_value.clone(), cx);
+                }
+            });
+
+            SearchablePickerState {
+                select,
+                _subscription,
+            }
+        });
+
+        let select = state.read(cx).select.clone();
+
+        div().w(px(SETTINGS_PICKER_WIDTH)).max_w_full().child(
+            Select::new(&select)
+                .with_size(render_options.size)
+                .search_placeholder(search_placeholder)
+                .menu_max_h(rems(18.))
+                .w_full(),
+        )
+    })
+}
+
+fn selected_index(options: &[PickerOption], selected_value: &SharedString) -> Option<IndexPath> {
+    options
+        .iter()
+        .position(|option| &option.value == selected_value)
+        .map(|index| IndexPath::default().row(index))
+}
+
+fn with_selected_option(
+    mut options: Vec<PickerOption>,
+    selected_value: SharedString,
+) -> Vec<PickerOption> {
+    if !selected_value.is_empty() && !options.iter().any(|option| option.value == selected_value) {
+        options.push(PickerOption::new(
+            selected_value.clone(),
+            selected_value.clone(),
+        ));
+    }
+
+    options
 }

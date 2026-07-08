@@ -6,6 +6,7 @@ use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, p
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
@@ -39,6 +40,7 @@ async fn main() -> Result<()> {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+        load_bundled_fonts(cx);
         keymap::init(cx);
 
         init_http_client(cx);
@@ -67,6 +69,52 @@ async fn main() -> Result<()> {
     });
 
     Ok(())
+}
+
+fn load_bundled_fonts(cx: &mut App) {
+    let fonts = vec![
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-Medium.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-MediumItalic.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf")
+                .as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-Bold.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-BoldItalic.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Italic.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Bold.ttf").as_slice(),
+        ),
+        Cow::Borrowed(
+            include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-BoldItalic.ttf").as_slice(),
+        ),
+    ];
+
+    if let Err(err) = cx.text_system().add_fonts(fonts) {
+        eprintln!("Failed to load bundled fonts: {err}");
+    }
 }
 
 fn init_http_client(cx: &mut App) {

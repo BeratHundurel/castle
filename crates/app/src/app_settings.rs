@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DEFAULT_THEME_NAME: &str = "Sick";
+pub(crate) const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
 const DEFAULT_FONT_SIZE: f64 = 16.0;
 const DEFAULT_RADIUS: f64 = 6.0;
 const DEFAULT_SHOW_SIDEBAR: bool = true;
 const DEFAULT_SCROLLBAR_SHOW: &str = "scrolling";
+pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
 const DEFAULT_MARKDOWN_FONT_SIZE: f64 = 13.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
 const DEFAULT_MARKDOWN_LINE_NUMBERS: bool = false;
@@ -29,10 +31,12 @@ pub struct AppSettings {
 #[serde(default)]
 struct StoredSettings {
     theme_name: String,
+    font_family: String,
     font_size: f64,
     radius: f64,
     show_sidebar: bool,
     scrollbar_show: String,
+    editor_font_family: String,
     markdown_font_size: f64,
     markdown_editor_mode: String,
     markdown_line_numbers: bool,
@@ -43,10 +47,12 @@ impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             theme_name: DEFAULT_THEME_NAME.to_string(),
+            font_family: DEFAULT_FONT_FAMILY.to_string(),
             font_size: DEFAULT_FONT_SIZE,
             radius: DEFAULT_RADIUS,
             show_sidebar: DEFAULT_SHOW_SIDEBAR,
             scrollbar_show: DEFAULT_SCROLLBAR_SHOW.to_string(),
+            editor_font_family: DEFAULT_EDITOR_FONT_FAMILY.to_string(),
             markdown_font_size: DEFAULT_MARKDOWN_FONT_SIZE,
             markdown_editor_mode: DEFAULT_MARKDOWN_EDITOR_MODE.to_string(),
             markdown_line_numbers: DEFAULT_MARKDOWN_LINE_NUMBERS,
@@ -78,9 +84,11 @@ impl AppSettings {
 
     pub fn apply_to_theme(&self, cx: &mut App) {
         apply_theme_name(&self.values.theme_name, cx);
+        apply_font_family(&self.values.font_family, cx);
         apply_font_size(self.values.font_size, cx);
         apply_radius(self.values.radius, cx);
         apply_scrollbar_show(&self.values.scrollbar_show, cx);
+        apply_editor_font_family(&self.values.editor_font_family, cx);
         apply_markdown_font_size(self.values.markdown_font_size, cx);
         cx.refresh_windows();
     }
@@ -104,10 +112,24 @@ impl AppSettings {
         };
 
         apply_theme_name(&values.theme_name, cx);
+        apply_font_family(&values.font_family, cx);
         apply_font_size(values.font_size, cx);
         apply_radius(values.radius, cx);
         apply_scrollbar_show(&values.scrollbar_show, cx);
+        apply_editor_font_family(&values.editor_font_family, cx);
         apply_markdown_font_size(values.markdown_font_size, cx);
+        cx.refresh_windows();
+    }
+
+    pub(crate) fn font_family(cx: &App) -> SharedString {
+        cx.global::<Self>().values.font_family.as_str().into()
+    }
+
+    pub(crate) fn set_font_family(font_family: SharedString, cx: &mut App) {
+        apply_font_family(font_family.as_ref(), cx);
+        Self::update(cx, |settings| {
+            settings.values.font_family = font_family.to_string();
+        });
         cx.refresh_windows();
     }
 
@@ -131,6 +153,22 @@ impl AppSettings {
         apply_scrollbar_show(value.as_ref(), cx);
         Self::update(cx, |settings| {
             settings.values.scrollbar_show = value.to_string();
+        });
+        cx.refresh_windows();
+    }
+
+    pub(crate) fn editor_font_family(cx: &App) -> SharedString {
+        cx.global::<Self>()
+            .values
+            .editor_font_family
+            .as_str()
+            .into()
+    }
+
+    pub(crate) fn set_editor_font_family(font_family: SharedString, cx: &mut App) {
+        apply_editor_font_family(font_family.as_ref(), cx);
+        Self::update(cx, |settings| {
+            settings.values.editor_font_family = font_family.to_string();
         });
         cx.refresh_windows();
     }
@@ -213,8 +251,11 @@ impl AppSettings {
 
 impl StoredSettings {
     fn normalize(&mut self) {
+        self.font_family = normalize_font_family(&self.font_family, DEFAULT_FONT_FAMILY);
         self.font_size = self.font_size.clamp(12.0, 20.0);
         self.radius = self.radius.clamp(0.0, 12.0);
+        self.editor_font_family =
+            normalize_font_family(&self.editor_font_family, DEFAULT_EDITOR_FONT_FAMILY);
         self.markdown_font_size = self.markdown_font_size.clamp(10.0, 22.0);
 
         if !matches!(
@@ -233,11 +274,26 @@ impl StoredSettings {
     }
 }
 
+fn normalize_font_family(font_family: &str, default: &str) -> String {
+    let font_family = font_family.trim();
+    match font_family {
+        "" => default.to_string(),
+        "IBM Flex Mono" if default == DEFAULT_FONT_FAMILY => DEFAULT_FONT_FAMILY.to_string(),
+        "IBM Plex Mono" if default == DEFAULT_FONT_FAMILY => DEFAULT_FONT_FAMILY.to_string(),
+        "IBM Flex Mono" => DEFAULT_EDITOR_FONT_FAMILY.to_string(),
+        _ => font_family.to_string(),
+    }
+}
+
 fn apply_theme_name(theme_name: &str, cx: &mut App) {
     let theme_name = SharedString::from(theme_name);
     if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
         Theme::global_mut(cx).apply_config(&theme_config);
     }
+}
+
+fn apply_font_family(font_family: &str, cx: &mut App) {
+    Theme::global_mut(cx).font_family = SharedString::from(font_family);
 }
 
 fn apply_font_size(font_size: f64, cx: &mut App) {
@@ -257,6 +313,10 @@ fn apply_radius(radius: f64, cx: &mut App) {
 
 fn apply_scrollbar_show(value: &str, cx: &mut App) {
     Theme::global_mut(cx).scrollbar_show = scrollbar_show_from_key(value);
+}
+
+fn apply_editor_font_family(font_family: &str, cx: &mut App) {
+    Theme::global_mut(cx).mono_font_family = SharedString::from(font_family);
 }
 
 fn apply_markdown_font_size(font_size: f64, cx: &mut App) {
