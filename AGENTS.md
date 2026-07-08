@@ -5,7 +5,7 @@ This project is a note taking and kanban board app that uses GPUI and GPUI Compo
 ## Documentation
 
 You can find the source code of the GPUI components library in /docs.
-Don't make edits it's for reference only.
+Don't make edits, it's for reference only.
 
 ### Tools
 

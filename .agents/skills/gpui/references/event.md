@@ -1,7 +1,6 @@
----
-name: gpui-event
-description: Event handling and subscriptions in GPUI. Use when implementing events, observers, or event-driven patterns. Supports custom events, entity observations, and event subscriptions for coordinating between components.
----
+# Events & Subscriptions
+
+**Contents:** [Overview](#overview) · [Quick Start](#quick-start) · [Common Patterns](#common-patterns) · [subscribe_in](#subscribe_in--subscription-with-window-access) · [observe_window_activation](#observe_window_activation) · [observe_global](#observe_global) · [Subscription Lifetime](#subscription-lifetime) · [Best Practices](#best-practices)
 
 ## Overview
 
@@ -133,6 +132,78 @@ cx.observe(&entity, |this, observed, cx| {
 }).detach();
 ```
 
+## subscribe_in — Subscription with Window Access
+
+Use when the subscription callback needs `&mut Window`:
+
+```rust
+// Store subscriptions to keep them alive
+struct MyComponent {
+    _subscriptions: Vec<Subscription>,
+}
+
+impl MyComponent {
+    fn new(input: &Entity<InputState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let _subscriptions = vec![
+            cx.subscribe_in(input, window, |this, state, event, window, cx| {
+                match event {
+                    InputEvent::PressEnter { .. } => this.on_submit(window, cx),
+                    InputEvent::Change => {
+                        let val = state.read(cx).value();
+                        this.on_change(val, cx);
+                    }
+                    _ => {}
+                }
+            }),
+        ];
+        Self { _subscriptions }
+    }
+}
+```
+
+`subscribe` vs `subscribe_in`:
+- `cx.subscribe(&entity, |this, source, event, cx|)` — no window
+- `cx.subscribe_in(&entity, window, |this, source, event, window, cx|)` — window access
+
+## observe_window_activation
+
+```rust
+let _sub = cx.observe_window_activation(window, |this, window, cx| {
+    if window.is_window_active() {
+        this.start_polling(cx);
+    } else {
+        this.stop_polling(cx);
+    }
+});
+```
+
+## observe_global
+
+```rust
+cx.observe_global::<Theme>(|cx| {
+    cx.notify(); // Re-render when theme changes
+});
+```
+
+## Subscription Lifetime
+
+Subscriptions are cancelled when dropped. Two ways to keep alive:
+
+```rust
+// 1. .detach() — lives until entity is dropped
+cx.subscribe(&entity, |this, _, event, cx| {
+    // ...
+}).detach();
+
+// 2. Store in struct — cancelled when struct drops
+struct MyView {
+    _subscriptions: Vec<Subscription>,
+}
+// _subscriptions.push(cx.subscribe(...));
+```
+
+Use `.detach()` for permanent subscriptions; store in struct for subscriptions that should stop when the component unmounts.
+
 ## Best Practices
 
 ### ✅ Detach Subscriptions
@@ -165,12 +236,3 @@ entity2.subscribe(entity1) → emits event → infinite loop!
 
 ## Reference Documentation
 
-- **API Reference**: See [api-reference.md](references/api-reference.md)
-  - Event definition, emission, subscriptions
-  - Observations, global events
-  - Subscription lifecycle
-
-- **Patterns**: See [patterns.md](references/patterns.md)
-  - Event-driven architectures
-  - Communication patterns
-  - Best practices and pitfalls
