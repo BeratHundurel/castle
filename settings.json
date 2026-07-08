@@ -1,0 +1,11 @@
+{
+  "theme_name": "Ayu Dark",
+  "font_size": 16.0,
+  "radius": 6.0,
+  "show_sidebar": true,
+  "scrollbar_show": "scrolling",
+  "markdown_font_size": 16.0,
+  "markdown_editor_mode": "source",
+  "markdown_line_numbers": false,
+  "markdown_soft_wrap": true
+}

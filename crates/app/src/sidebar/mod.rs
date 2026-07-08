@@ -10,7 +10,7 @@ mod store;
 use dto::*;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Theme, ThemeRegistry,
+    ActiveTheme, ThemeRegistry,
     input::{InputEvent, InputState},
     searchable_list::SearchableListDelegate,
     select::{SearchableVec, SelectEvent, SelectState},
@@ -18,6 +18,8 @@ use gpui_component::{
 
 pub(crate) use dto::ActiveItem;
 pub(crate) use event::SidebarEvent;
+
+use crate::app_settings::AppSettings;
 
 pub(crate) struct SidebarView {
     pub(crate) active_project_id: Option<u32>,
@@ -79,12 +81,8 @@ impl SidebarView {
             &theme_select,
             |_, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
                 let SelectEvent::Confirm(theme_name) = event;
-                if let Some(theme_name) = theme_name
-                    && let Some(theme_config) =
-                        ThemeRegistry::global(cx).themes().get(theme_name).cloned()
-                {
-                    Theme::global_mut(cx).apply_config(&theme_config);
-                    cx.refresh_windows();
+                if let Some(theme_name) = theme_name {
+                    AppSettings::set_theme_name(theme_name.clone(), cx);
                 }
             },
         )
@@ -234,8 +232,12 @@ impl SidebarView {
         self.collapsed
     }
 
-    pub(crate) fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
-        self.collapsed = !self.collapsed;
+    pub(crate) fn set_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        if self.collapsed == collapsed {
+            return;
+        }
+
+        self.collapsed = collapsed;
         cx.notify();
     }
 }

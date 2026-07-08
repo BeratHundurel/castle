@@ -1,6 +1,6 @@
 use gpui::{App, KeyBinding};
 
-use crate::app_shell::{CycleNextTab, CyclePrevTab, ToggleSidebarAction};
+use crate::app_shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 use crate::command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem,
@@ -15,6 +15,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-,", OpenSettingsAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-,", OpenSettingsAction, Some("AppShell")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-f", OpenWorkspaceSearchAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]

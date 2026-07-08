@@ -121,6 +121,15 @@ impl AppShell {
                 kind: PaletteCommandKind::OpenFile,
             },
             PaletteCommand {
+                label: "Open settings".into(),
+                subtitle: SharedString::from(format!(
+                    "Change app preferences ({})",
+                    settings_shortcut()
+                )),
+                icon: IconName::Settings2,
+                kind: PaletteCommandKind::OpenSettings,
+            },
+            PaletteCommand {
                 label: "Switch theme".into(),
                 subtitle: "Preview available themes".into(),
                 icon: IconName::Palette,
@@ -194,6 +203,14 @@ fn workspace_search_shortcut() -> &'static str {
         "Cmd+Shift+F"
     } else {
         "Ctrl+Shift+F"
+    }
+}
+
+fn settings_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+,"
+    } else {
+        "Ctrl+,"
     }
 }
 

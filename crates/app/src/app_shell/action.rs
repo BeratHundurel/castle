@@ -24,3 +24,7 @@ pub(crate) struct CyclePrevTab;
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
 pub(crate) struct ToggleSidebarAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+pub(crate) struct OpenSettingsAction;

@@ -8,10 +8,18 @@ use crate::command_palette::{
 
 use super::*;
 
+const SIDEBAR_WIDTH: f32 = 260.;
+const COLLAPSED_TITLE_BAR_WIDTH: f32 = 48.;
+
 impl AppShell {
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let sidebar_collapsed = self.sidebar.read(cx).is_collapsed();
+        let sidebar_title_width = if sidebar_collapsed {
+            COLLAPSED_TITLE_BAR_WIDTH
+        } else {
+            SIDEBAR_WIDTH
+        };
 
         TitleBar::new().border_0().bg(theme.sidebar).child(
             h_flex()
@@ -23,7 +31,7 @@ impl AppShell {
                 .child(
                     h_flex()
                         .id("sidebar-title-bar")
-                        .w(px(272.))
+                        .w(px(sidebar_title_width))
                         .h_full()
                         .items_center()
                         .gap_2()
@@ -32,10 +40,8 @@ impl AppShell {
                             SidebarToggleButton::new()
                                 .collapsed(sidebar_collapsed)
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sidebar.update(cx, |sidebar, cx| {
-                                        sidebar.toggle_collapsed(cx);
-                                    });
-                                    cx.notify();
+                                    let visible = this.sidebar.read(cx).is_collapsed();
+                                    this.set_sidebar_visible(visible, cx);
                                 })),
                         ),
                 )
@@ -46,8 +52,30 @@ impl AppShell {
                         .overflow_hidden()
                         .child(self.render_tabs(cx)),
                 )
+                .child(self.render_settings_button(cx))
                 .child(self.render_note_save_controls(cx)),
         )
+    }
+
+    fn render_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .id("title-bar-settings")
+            .h_full()
+            .items_center()
+            .px_2()
+            .border_l_1()
+            .border_color(cx.theme().border.opacity(0.72))
+            .flex_shrink_0()
+            .child(
+                Button::new("title-open-settings")
+                    .icon(IconName::Settings2)
+                    .ghost()
+                    .xsmall()
+                    .tooltip(format!("Settings ({})", settings_shortcut()))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_settings(window, cx);
+                    })),
+            )
     }
 
     fn render_note_save_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -329,6 +357,9 @@ impl Render for AppShell {
             .on_action(cx.listener(|this, _: &ToggleSidebarAction, window, cx| {
                 this.on_toggle_sidebar_action(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &OpenSettingsAction, window, cx| {
+                this.open_settings(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &CommandPaletteAction, window, cx| {
                 this.on_command_palette_action(window, cx);
             }))
@@ -444,6 +475,14 @@ fn platform_shortcut(keys: &str) -> String {
         format!("Cmd+{keys}")
     } else {
         format!("Ctrl+{keys}")
+    }
+}
+
+fn settings_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+,"
+    } else {
+        "Ctrl+,"
     }
 }
 

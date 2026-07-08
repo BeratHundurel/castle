@@ -7,6 +7,24 @@ pub(crate) enum EditorMode {
     Preview,
 }
 
+impl EditorMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Split => "split",
+            Self::Source => "source",
+            Self::Preview => "preview",
+        }
+    }
+
+    pub(crate) fn from_str(value: &str) -> Self {
+        match value {
+            "split" => Self::Split,
+            "preview" => Self::Preview,
+            _ => Self::Source,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SaveState {
     Saved,

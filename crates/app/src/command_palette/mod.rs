@@ -55,6 +55,7 @@ pub(crate) enum PaletteCommandKind {
     OpenFile,
     NewTab,
     CloseAllTabs,
+    OpenSettings,
     SwitchTheme,
     SearchWorkspace,
 }

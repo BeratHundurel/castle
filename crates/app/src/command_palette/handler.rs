@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use gpui::{Context, SharedString, Window};
-use gpui_component::{Theme, ThemeRegistry};
 
 use crate::DB;
+use crate::app_settings::AppSettings;
 use crate::app_shell::AppShell;
 use crate::command_palette::{CommandPaletteMode, PaletteCommand, PaletteCommandKind};
 use crate::search::{SearchResult, SearchResultKind};
@@ -185,6 +185,10 @@ impl AppShell {
             PaletteCommandKind::CloseAllTabs => {
                 self.close_command_palette(window, cx);
                 self.close_all_tabs(window, cx);
+            }
+            PaletteCommandKind::OpenSettings => {
+                self.close_command_palette(window, cx);
+                self.open_settings(window, cx);
             }
             PaletteCommandKind::SwitchTheme => {
                 self.command_palette.mode = CommandPaletteMode::Themes;
@@ -369,10 +373,7 @@ impl AppShell {
     }
 
     pub(crate) fn apply_theme(&mut self, theme_name: &gpui::SharedString, cx: &mut Context<Self>) {
-        if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(theme_name).cloned() {
-            Theme::global_mut(cx).apply_config(&theme_config);
-            cx.refresh_windows();
-            cx.notify();
-        }
+        AppSettings::set_theme_name(theme_name.clone(), cx);
+        cx.notify();
     }
 }

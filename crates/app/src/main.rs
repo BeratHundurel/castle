@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
-use app::{DB, app_shell::AppShell, keymap};
+use app::{DB, app_settings::AppSettings, app_shell::AppShell, keymap};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
         conn: Arc::new(connection),
         data_dir,
     };
+    let app_settings = AppSettings::load(&db.data_dir);
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -43,6 +44,8 @@ async fn main() -> Result<()> {
         init_http_client(cx);
         init_themes(cx);
 
+        app_settings.apply_to_theme(cx);
+        cx.set_global(app_settings.clone());
         cx.set_global(db);
 
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
@@ -75,14 +78,12 @@ fn init_http_client(cx: &mut App) {
 
 fn init_themes(cx: &mut App) {
     let theme_contents = [
-        include_str!("../../../themes/alduin.json"),
         include_str!("../../../themes/ayu.json"),
         include_str!("../../../themes/catppuccin.json"),
         include_str!("../../../themes/everforest.json"),
         include_str!("../../../themes/gruvbox.json"),
         include_str!("../../../themes/harper.json"),
         include_str!("../../../themes/jellybeans.json"),
-        include_str!("../../../themes/molokai.json"),
         include_str!("../../../themes/tokyonight.json"),
         include_str!("../../../themes/twilight.json"),
         include_str!("../../../themes/sick.json"),

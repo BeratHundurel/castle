@@ -1,6 +1,7 @@
 mod action;
 mod handler;
 mod render;
+mod settings;
 mod tabs;
 mod workspace;
 
@@ -29,6 +30,7 @@ use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::DB;
+use crate::app_settings::AppSettings;
 use crate::board::BoardView;
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
 use crate::markdown_editor::{
@@ -91,6 +93,7 @@ pub struct AppShell {
     pub(crate) notes: Vec<NoteChoice>,
     pub(crate) active_project_id: Option<u32>,
     suppress_title_event: bool,
+    settings_dialog_open: bool,
 }
 
 impl AppShell {
@@ -272,8 +275,13 @@ impl AppShell {
             notes: vec![],
             active_project_id: None,
             suppress_title_event: false,
+            settings_dialog_open: false,
         };
 
+        let show_sidebar = AppSettings::show_sidebar(cx);
+        this.sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_collapsed(!show_sidebar, cx);
+        });
         this.refresh_workspace(cx);
         this.sidebar
             .update(cx, |_, cx| SidebarView::list_projects(cx));

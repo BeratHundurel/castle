@@ -19,6 +19,7 @@ use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use std::{ops::Range, path::PathBuf, time::Duration};
 
 use crate::DB;
+use crate::app_settings::AppSettings;
 use types::*;
 
 pub use types::DocumentStats;
@@ -54,16 +55,20 @@ impl MarkdownEditorView {
     }
 
     fn new(note_id: u32, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let line_numbers = AppSettings::markdown_line_numbers(cx);
+        let soft_wrap = AppSettings::markdown_soft_wrap(cx);
+        let mode = EditorMode::from_str(AppSettings::markdown_editor_mode(cx).as_ref());
+
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor(Language::Markdown)
-                .line_number(false)
+                .line_number(line_numbers)
                 .indent_guides(false)
                 .tab_size(TabSize {
                     tab_size: 2,
                     ..Default::default()
                 })
-                .soft_wrap(true)
+                .soft_wrap(soft_wrap)
                 .searchable(true)
                 .placeholder("Write Markdown...")
                 .default_value("")
@@ -109,7 +114,7 @@ impl MarkdownEditorView {
             focus_handle,
             editor,
             preview,
-            mode: EditorMode::Source,
+            mode,
             current_path: None,
             file_managed_by_app: false,
             save_state: SaveState::Saved,

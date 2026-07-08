@@ -7,7 +7,7 @@ use gpui_component::{
     input::Input,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
-    text::TextView,
+    text::{TextView, TextViewStyle},
     v_flex,
 };
 
@@ -35,14 +35,14 @@ impl MarkdownEditorView {
                     .min_w_0()
                     .px_5()
                     .py_4()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(cx.theme().mono_font_size)
                     .child(
                         Input::new(&self.editor)
                             .h_full()
                             .w_full()
                             .p_0()
                             .border_0()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(cx.theme().mono_font_size)
                             .focus_bordered(false),
                     ),
             )
@@ -58,10 +58,12 @@ impl MarkdownEditorView {
                     div().w_full().flex().justify_center().child(
                         div().w_full().max_w(px(920.)).min_w_0().child(
                             TextView::new(&self.preview)
+                                .style(markdown_preview_style(cx.theme().mono_font_size))
                                 .code_block_actions(|code_block, _window, _cx| {
                                     Clipboard::new("copy-code").value(code_block.code().clone())
                                 })
                                 .p_6()
+                                .text_size(cx.theme().mono_font_size)
                                 .scrollable(false)
                                 .selectable(true),
                         ),
@@ -320,4 +322,11 @@ fn status_metric(icon: IconName, label: String) -> impl IntoElement {
         .gap_1()
         .child(Icon::new(icon).xsmall())
         .child(label)
+}
+
+fn markdown_preview_style(font_size: Pixels) -> TextViewStyle {
+    TextViewStyle {
+        heading_base_font_size: font_size,
+        ..Default::default()
+    }
 }
