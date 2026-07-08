@@ -99,7 +99,8 @@ impl BoardView {
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let card_id = card.id;
-        let card_drag_info = CardDragInfo::new(card_id, board_id, card.title.clone());
+        let card_drag_info =
+            CardDragInfo::new(card_id, board_id, card.title.clone(), card.entries.len());
         let mut entries = Vec::new();
 
         for entry in &card.entries {

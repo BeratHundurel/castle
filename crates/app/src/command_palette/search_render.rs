@@ -21,7 +21,12 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = cx.theme().clone();
-        let result_count = self.command_palette.search_results.len();
+        let query_is_empty = self.command_palette.query.trim().is_empty();
+        let result_count = if query_is_empty {
+            0
+        } else {
+            self.command_palette.search_results.len()
+        };
 
         div()
             .id("workspace-search-overlay")
@@ -110,6 +115,7 @@ impl AppShell {
 
     pub(super) fn render_search_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = cx.theme().clone();
+        let query_is_empty = self.command_palette.query.trim().is_empty();
         let result_count = self.command_palette.search_results.len();
 
         let container = v_flex()
@@ -132,6 +138,41 @@ impl AppShell {
                         .text_sm()
                         .text_color(theme.danger)
                         .child(error),
+                )
+                .into_any_element();
+        }
+
+        if query_is_empty {
+            return h_flex()
+                .items_stretch()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .w(relative(0.38))
+                        .h_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .px_8()
+                        .py_8()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("type to search your workspace"),
+                )
+                .child(
+                    div()
+                        .w(relative(0.62))
+                        .h_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .border_l_1()
+                        .border_color(theme.border)
+                        .px_8()
+                        .py_8()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("no match"),
                 )
                 .into_any_element();
         }
