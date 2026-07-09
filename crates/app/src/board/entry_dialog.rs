@@ -2,6 +2,7 @@ pub(crate) struct EntryDialog {
     pub(crate) open: bool,
     pub(crate) entry_id: Option<u32>,
     pub(crate) editing: bool,
+    pub(crate) managing_labels: bool,
 }
 
 impl EntryDialog {
@@ -10,6 +11,7 @@ impl EntryDialog {
             open: false,
             entry_id: None,
             editing: false,
+            managing_labels: false,
         }
     }
 }

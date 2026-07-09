@@ -15,6 +15,7 @@ sea-orm.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 dotenvy = "0.15"

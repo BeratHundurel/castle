@@ -1,8 +1,129 @@
-use gpui::{Context, Window};
+use chrono::NaiveDate;
+use gpui::{Context, Styled, Window};
+use gpui_component::{
+    ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, calendar::Date,
+    dialog::DialogButtonProps,
+};
 
+use super::filters::DueDateFilter;
 use super::{BoardView, action::*};
 
 impl BoardView {
+    pub(super) fn start_adding_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.is_adding_list = true;
+        self.new_list_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    pub(super) fn start_managing_labels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.entry_dialog.managing_labels = true;
+        self.renaming_label_id = None;
+        self.new_label_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    pub(super) fn stop_managing_labels(&mut self, cx: &mut Context<Self>) {
+        self.entry_dialog.managing_labels = false;
+        self.renaming_label_id = None;
+        cx.notify();
+    }
+
+    pub(super) fn start_renaming_board_label(
+        &mut self,
+        label_id: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(label) = self.board_labels.iter().find(|label| label.id == label_id) else {
+            return;
+        };
+
+        self.renaming_label_id = Some(label_id);
+        self.rename_label_input.update(cx, |input, cx| {
+            input.set_value(label.name.clone(), window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    pub(super) fn select_label_color(&mut self, color: &str, cx: &mut Context<Self>) {
+        self.selected_label_color = color.into();
+        cx.notify();
+    }
+
+    pub(super) fn toggle_filter_panel(&mut self, cx: &mut Context<Self>) {
+        self.filter_panel_open = !self.filter_panel_open;
+        cx.notify();
+    }
+
+    pub(super) fn set_label_filter(
+        &mut self,
+        label_id: u32,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if selected {
+            self.filters.label_ids.insert(label_id);
+        } else {
+            self.filters.label_ids.remove(&label_id);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn set_due_date_filter(
+        &mut self,
+        filter: DueDateFilter,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if selected {
+            self.filters.due_dates.insert(filter);
+        } else {
+            self.filters.due_dates.remove(&filter);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn clear_filters(&mut self, cx: &mut Context<Self>) {
+        self.filters.clear();
+        cx.notify();
+    }
+
+    pub(super) fn focus_checklist_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_checklist_item_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+    }
+
+    pub(super) fn start_renaming_checklist_item(
+        &mut self,
+        item_id: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = self
+            .cards
+            .iter()
+            .flat_map(|list| list.entries.iter())
+            .flat_map(|card| card.checklist_items.iter())
+            .find(|item| item.id == item_id)
+        else {
+            return;
+        };
+        self.renaming_checklist_item_id = Some(item_id);
+        self.rename_checklist_item_input.update(cx, |input, cx| {
+            input.set_value(item.title.clone(), window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
     pub(super) fn open_entry_dialog(
         &mut self,
         entry_id: u32,
@@ -13,6 +134,7 @@ impl BoardView {
         self.entry_dialog.open = true;
         self.entry_dialog.entry_id = Some(entry_id);
         self.entry_dialog.editing = false;
+        self.entry_dialog.managing_labels = false;
         self.sync_entry_edit_inputs(window, cx);
         cx.notify();
     }
@@ -22,6 +144,7 @@ impl BoardView {
         self.entry_dialog.open = false;
         self.entry_dialog.entry_id = None;
         self.entry_dialog.editing = false;
+        self.entry_dialog.managing_labels = false;
         cx.notify();
     }
 
@@ -40,7 +163,7 @@ impl BoardView {
     }
 
     fn sync_entry_edit_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((title, description)) = self
+        let Some((title, description, due_on)) = self
             .entry_dialog
             .entry_id
             .and_then(|entry_id| self.entry_values(entry_id))
@@ -54,15 +177,58 @@ impl BoardView {
         self.entry_description_input.update(cx, |input, cx| {
             input.set_value(description, window, cx);
         });
+        self.due_date_picker.update(cx, |picker, cx| {
+            let due_on = due_on
+                .as_deref()
+                .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok());
+            picker.set_date(Date::Single(due_on), window, cx);
+        });
     }
 
     pub(super) fn on_delete_card_action(
         &mut self,
         action: &DeleteCardAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(list) = self.cards.iter().find(|list| list.id == action.0) else {
+            return;
+        };
+        let title = list.title.clone();
+        let card_count = list.entries.len();
+        let view = cx.entity();
+        let list_id = action.0;
+        window.open_alert_dialog(cx, move |alert, _, cx| {
+            alert
+                .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
+                .title(format!("Delete list ‘{title}’"))
+                .description(format!(
+                    "This permanently deletes this list and its {card_count} card(s). This cannot be undone."
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
+                        .ok_text("Delete list")
+                        .cancel_text("Cancel")
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| this.delete_card(cx, list_id));
+                        true
+                    }
+                })
+        });
+    }
+
+    pub(super) fn on_duplicate_card_action(
+        &mut self,
+        action: &DuplicateCardAction,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_card(cx, action.0)
+        self.duplicate_card(action.0, cx);
     }
 
     pub(super) fn start_renaming_card(
@@ -95,9 +261,44 @@ impl BoardView {
     pub(super) fn on_delete_entry_action(
         &mut self,
         _: &DeleteEntryAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry_id) = self.entry_dialog.entry_id else {
+            return;
+        };
+        let Some((title, _, _)) = self.entry_values(entry_id) else {
+            return;
+        };
+        let view = cx.entity();
+        window.open_alert_dialog(cx, move |alert, _, cx| {
+            alert
+                .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
+                .title(format!("Delete card ‘{title}’"))
+                .description("This permanently deletes this card and its checklist items. This cannot be undone.")
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
+                        .ok_text("Delete card")
+                        .cancel_text("Cancel")
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| this.delete_selected_entry(cx));
+                        true
+                    }
+                })
+        });
+    }
+
+    pub(super) fn on_duplicate_entry_action(
+        &mut self,
+        _: &DuplicateEntryAction,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_selected_entry(cx);
+        self.duplicate_selected_entry(cx);
     }
 }
