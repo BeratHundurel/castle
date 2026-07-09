@@ -7,6 +7,9 @@ mod m20260604_000004_project_archive_and_position;
 mod m20260604_000005_entry_position;
 mod m20260604_000006_note_file_ownership;
 mod m20260607_180117_full_text;
+mod m20260709_000008_board_labels;
+mod m20260710_000009_entry_due_date;
+mod m20260710_000010_entry_checklist_items;
 
 pub struct Migrator;
 
@@ -21,6 +24,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260604_000005_entry_position::Migration),
             Box::new(m20260604_000006_note_file_ownership::Migration),
             Box::new(m20260607_180117_full_text::Migration),
+            Box::new(m20260709_000008_board_labels::Migration),
+            Box::new(m20260710_000009_entry_due_date::Migration),
+            Box::new(m20260710_000010_entry_checklist_items::Migration),
         ]
     }
 }

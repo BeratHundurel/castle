@@ -4,23 +4,23 @@ use sea_orm::entity::prelude::*;
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "entry")]
+#[sea_orm(table_name = "board_label")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
-    pub title: String,
-    pub description: String,
-    pub card_id: i64,
-    pub position: i32,
-    pub due_on: Option<String>,
+    pub board_id: i64,
+    pub name: String,
+    pub color: String,
     #[sea_orm(
         belongs_to,
-        from = "card_id",
+        from = "board_id",
         to = "id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    pub card: HasOne<super::card::Entity>,
+    pub board: HasOne<super::board::Entity>,
+    #[sea_orm(has_many)]
+    pub entry_labels: HasMany<super::entry_label::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

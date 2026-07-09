@@ -3,7 +3,10 @@
 pub mod prelude;
 
 pub mod board;
+pub mod board_label;
 pub mod card;
 pub mod entry;
+pub mod entry_checklist_item;
+pub mod entry_label;
 pub mod note;
 pub mod project;
