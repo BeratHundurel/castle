@@ -412,47 +412,6 @@ fn fts_query_term(term: &str, multi_term: bool) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::fts_query;
-
-    #[test]
-    fn fts_query_splits_hyphenated_terms() {
-        assert_eq!(fts_query("edge-case"), Some("edge* case*".to_string()));
-    }
-
-    #[test]
-    fn fts_query_ignores_repeated_punctuation() {
-        assert_eq!(
-            fts_query("Rust / GPUI: search"),
-            Some("Rust* GPUI* search*".to_string())
-        );
-    }
-
-    #[test]
-    fn fts_query_does_not_prefix_single_letter_terms_in_phrases() {
-        assert_eq!(
-            fts_query("This is a working"),
-            Some("This* is working*".to_string())
-        );
-    }
-
-    #[test]
-    fn fts_query_keeps_single_letter_query_searchable() {
-        assert_eq!(fts_query("a"), Some("a*".to_string()));
-    }
-
-    #[test]
-    fn fts_query_keeps_two_letter_terms_exact_in_phrases() {
-        assert_eq!(fts_query("ui state"), Some("ui state*".to_string()));
-    }
-
-    #[test]
-    fn fts_query_rejects_punctuation_only_queries() {
-        assert_eq!(fts_query("---"), None);
-    }
-}
-
 struct SearchDocument {
     item_type: &'static str,
     item_id: i64,
@@ -589,4 +548,45 @@ pub(crate) async fn delete_search_item(
     ))
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fts_query;
+
+    #[test]
+    fn fts_query_splits_hyphenated_terms() {
+        assert_eq!(fts_query("edge-case"), Some("edge* case*".to_string()));
+    }
+
+    #[test]
+    fn fts_query_ignores_repeated_punctuation() {
+        assert_eq!(
+            fts_query("Rust / GPUI: search"),
+            Some("Rust* GPUI* search*".to_string())
+        );
+    }
+
+    #[test]
+    fn fts_query_does_not_prefix_single_letter_terms_in_phrases() {
+        assert_eq!(
+            fts_query("This is a working"),
+            Some("This* is working*".to_string())
+        );
+    }
+
+    #[test]
+    fn fts_query_keeps_single_letter_query_searchable() {
+        assert_eq!(fts_query("a"), Some("a*".to_string()));
+    }
+
+    #[test]
+    fn fts_query_keeps_two_letter_terms_exact_in_phrases() {
+        assert_eq!(fts_query("ui state"), Some("ui state*".to_string()));
+    }
+
+    #[test]
+    fn fts_query_rejects_punctuation_only_queries() {
+        assert_eq!(fts_query("---"), None);
+    }
 }
