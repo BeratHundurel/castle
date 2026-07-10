@@ -57,8 +57,8 @@ impl BoardView {
         cx.notify();
     }
 
-    pub(super) fn toggle_filter_panel(&mut self, cx: &mut Context<Self>) {
-        self.filter_panel_open = !self.filter_panel_open;
+    pub(super) fn set_filter_panel_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.filter_panel_open = open;
         cx.notify();
     }
 
