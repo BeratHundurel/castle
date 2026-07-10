@@ -30,7 +30,7 @@ use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::DB;
-use crate::app_settings::AppSettings;
+use crate::app_settings::{AppSettings, StoredTab};
 use crate::board::BoardView;
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
 use crate::markdown_editor::{
@@ -102,11 +102,63 @@ impl AppShell {
     }
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
+        let mut open_tabs = Vec::with_capacity(tab_session.tabs.len().max(1));
+        let mut next_tab_id = 1_u64;
+        for stored_tab in tab_session.tabs {
+            let (title, kind) = match stored_tab {
+                StoredTab::Chooser => (SharedString::from("New tab"), OpenTabKind::Chooser),
+                StoredTab::Board {
+                    board_id,
+                    project_id,
+                    title,
+                } => {
+                    let view = BoardView::view(window, cx);
+                    view.update(cx, |board, cx| board.load_board(board_id, cx));
+                    (
+                        SharedString::from(title),
+                        OpenTabKind::Board {
+                            board_id,
+                            project_id,
+                            view,
+                        },
+                    )
+                }
+                StoredTab::Note {
+                    note_id,
+                    project_id,
+                    title,
+                } => (
+                    SharedString::from(title),
+                    OpenTabKind::Note {
+                        note_id,
+                        project_id,
+                        view: MarkdownEditorView::view(note_id, window, cx),
+                    },
+                ),
+            };
+            open_tabs.push(OpenTab {
+                id: next_tab_id,
+                title,
+                kind,
+            });
+            next_tab_id = next_tab_id.saturating_add(1);
+        }
+        if open_tabs.is_empty() {
+            open_tabs.push(OpenTab {
+                id: next_tab_id,
+                title: "New tab".into(),
+                kind: OpenTabKind::Chooser,
+            });
+            next_tab_id = next_tab_id.saturating_add(1);
+        }
+        let active_tab_index = tab_session.active_tab_index.min(open_tabs.len() - 1);
+        let active_title = open_tabs[active_tab_index].title.to_string();
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("New tab")
-                .default_value("New tab")
+                .default_value(active_title)
         });
 
         let command_palette = CommandPalette::new(window, cx);
@@ -184,6 +236,7 @@ impl AppShell {
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
+                    this.persist_tab_session(cx);
                     cx.notify();
                 }
                 SidebarEvent::NoteRenamed { note_id, title } => {
@@ -204,6 +257,7 @@ impl AppShell {
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
+                    this.persist_tab_session(cx);
                     cx.notify();
                 }
                 SidebarEvent::BoardDeleted { board_id } => {
@@ -249,6 +303,7 @@ impl AppShell {
                     if this.active_project_id == Some(*project_id) {
                         this.active_project_id = None;
                     }
+                    this.persist_tab_session(cx);
                     this.refresh_workspace(cx);
                 }
                 SidebarEvent::ProjectsReordered => {
@@ -263,17 +318,13 @@ impl AppShell {
             sidebar,
             title_input,
             command_palette,
-            open_tabs: vec![OpenTab {
-                id: 1,
-                title: "New tab".into(),
-                kind: OpenTabKind::Chooser,
-            }],
-            active_tab_index: 0,
-            next_tab_id: 2,
+            open_tabs,
+            active_tab_index,
+            next_tab_id,
             projects: vec![],
             boards: vec![],
             notes: vec![],
-            active_project_id: None,
+            active_project_id: tab_session.active_project_id,
             suppress_title_event: false,
             settings_dialog_open: false,
         };
@@ -285,6 +336,7 @@ impl AppShell {
         this.refresh_workspace(cx);
         this.sidebar
             .update(cx, |_, cx| SidebarView::list_projects(cx));
+        this.sync_sidebar_active(cx);
         this
     }
 }

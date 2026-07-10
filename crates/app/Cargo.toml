@@ -19,3 +19,9 @@ chrono.workspace = true
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 dotenvy = "0.15"
+global-hotkey = "0.8.0"
+raw-window-handle = "0.6.2"
+tray-icon = "0.24.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }

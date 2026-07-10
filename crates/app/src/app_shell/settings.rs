@@ -5,12 +5,14 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry, WindowExt as _,
     group_box::GroupBoxVariant,
+    kbd::Kbd,
     searchable_list::{SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 
 use crate::app_settings::{AppSettings, scrollbar_show_key};
+use crate::keymap::{humanize_identifier, shortcuts};
 use crate::markdown_editor::types::EditorMode;
 
 use super::AppShell;
@@ -252,6 +254,30 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                     )
                     .description("Choose when scrollbars are shown in long lists and editors."),
                 ]),
+                SettingGroup::new().title("Tray").items(vec![
+                    SettingItem::new(
+                        "Close to Tray",
+                        SettingField::switch(
+                            AppSettings::close_to_tray,
+                            AppSettings::set_close_to_tray,
+                        )
+                        .default_value(true),
+                    )
+                    .description(
+                        "Keep Castle running in the system tray when its window is closed.",
+                    ),
+                    SettingItem::new(
+                        "Open Shortcut",
+                        SettingField::input(
+                            AppSettings::tray_shortcut,
+                            AppSettings::set_tray_shortcut,
+                        )
+                        .default_value(crate::app_settings::DEFAULT_TRAY_SHORTCUT),
+                    )
+                    .description(
+                        "Global shortcut used to restore Castle, for example Ctrl+Alt+Space.",
+                    ),
+                ]),
             ]),
         SettingPage::new("Editor")
             .icon(Icon::new(IconName::BookOpen))
@@ -269,7 +295,7 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                         .description("Choose the monospace font family used while writing notes.")
                         .layout(Axis::Vertical),
                         SettingItem::new(
-                            "Editor Font Size",
+                            "Source Font Size",
                             SettingField::number_input(
                                 NumberFieldOptions {
                                     min: 10.0,
@@ -282,6 +308,20 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                             .default_value(13.0),
                         )
                         .description("Adjust the monospace font size used while writing notes."),
+                        SettingItem::new(
+                            "Preview Font Size",
+                            SettingField::number_input(
+                                NumberFieldOptions {
+                                    min: 10.0,
+                                    max: 22.0,
+                                    step: 1.0,
+                                },
+                                AppSettings::markdown_preview_font_size,
+                                AppSettings::set_markdown_preview_font_size,
+                            )
+                            .default_value(16.0),
+                        )
+                        .description("Adjust the font size used while reading rendered notes."),
                         SettingItem::new(
                             "Default Note View",
                             SettingField::dropdown(
@@ -315,6 +355,11 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                         )
                         .description("Wrap long lines in newly opened note editors."),
                     ])),
+        SettingPage::new("Shortcuts")
+            .icon(Icon::new(IconName::SquareTerminal))
+            .description("Keyboard shortcuts currently registered by Castle.")
+            .resettable(false)
+            .groups(shortcut_groups(cx)),
         SettingPage::new("About")
             .icon(Icon::new(IconName::Info))
             .group(
@@ -345,6 +390,61 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                     })]),
             ),
     ]
+}
+
+fn shortcut_groups(cx: &App) -> Vec<SettingGroup> {
+    let mut contexts = std::collections::BTreeMap::<SharedString, Vec<_>>::new();
+
+    for shortcut in shortcuts(cx).iter().cloned() {
+        contexts
+            .entry(shortcut.context.clone())
+            .or_default()
+            .push(shortcut);
+    }
+
+    contexts
+        .into_iter()
+        .map(|(context, mut shortcuts)| {
+            shortcuts.sort_by(|left, right| left.action.cmp(&right.action));
+            SettingGroup::new()
+                .title(shortcut_context_name(&context))
+                .items(shortcuts.into_iter().map(|shortcut| {
+                    SettingItem::render(move |_, _, cx| {
+                        gpui_component::h_flex()
+                            .w_full()
+                            .min_h(rems(2.25))
+                            .justify_between()
+                            .gap_4()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().foreground)
+                                    .child(shortcut.action.clone()),
+                            )
+                            .child(
+                                gpui_component::h_flex().flex_shrink_0().gap_1().children(
+                                    shortcut
+                                        .keystrokes
+                                        .iter()
+                                        .cloned()
+                                        .map(|stroke| Kbd::new(stroke).outline()),
+                                ),
+                            )
+                    })
+                }))
+        })
+        .collect()
+}
+
+fn shortcut_context_name(context: &str) -> SharedString {
+    match context {
+        "AppShell" => "Application".into(),
+        "CommandPalette" => "Command Palette".into(),
+        "MarkdownEditor" => "Markdown Editor".into(),
+        "EmmetInput" => "Emmet Input".into(),
+        "TextView" => "Text View".into(),
+        _ => humanize_identifier(context),
+    }
 }
 
 fn current_theme_name(cx: &App) -> SharedString {

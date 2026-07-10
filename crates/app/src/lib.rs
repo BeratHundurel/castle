@@ -6,6 +6,7 @@ pub mod keymap;
 pub mod markdown_editor;
 pub mod search;
 pub mod sidebar;
+pub mod tray;
 pub(crate) mod workspace_data;
 
 use std::{path::PathBuf, sync::Arc};

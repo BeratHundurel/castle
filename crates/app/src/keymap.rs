@@ -1,4 +1,4 @@
-use gpui::{App, KeyBinding};
+use gpui::{App, AsKeystroke as _, Global, KeyBinding, Keystroke, SharedString};
 
 use crate::app_shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 use crate::command_palette::{
@@ -10,8 +10,23 @@ use crate::markdown_editor::action::{
     SaveMarkdownFile, SaveMarkdownFileAs, ToggleEditorMode,
 };
 
+#[derive(Clone)]
+pub(crate) struct ShortcutReference {
+    pub(crate) action: SharedString,
+    pub(crate) context: SharedString,
+    pub(crate) keystrokes: Vec<Keystroke>,
+}
+
+struct ShortcutRegistry(Vec<ShortcutReference>);
+
+impl Global for ShortcutRegistry {}
+
+pub(crate) fn shortcuts(cx: &App) -> &[ShortcutReference] {
+    &cx.global::<ShortcutRegistry>().0
+}
+
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
+    let bindings = vec![
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
@@ -185,5 +200,87 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-v", ToggleEditorMode, Some("TextView")),
         KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
         KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
-    ]);
+    ];
+
+    let shortcuts = bindings
+        .iter()
+        .map(|binding| ShortcutReference {
+            action: shortcut_action_name(binding),
+            context: binding
+                .predicate()
+                .map(|predicate| predicate.to_string().into())
+                .unwrap_or_else(|| "Global".into()),
+            keystrokes: binding
+                .keystrokes()
+                .iter()
+                .map(|stroke| stroke.as_keystroke().clone())
+                .collect(),
+        })
+        .collect();
+
+    cx.set_global(ShortcutRegistry(shortcuts));
+    cx.bind_keys(bindings);
+}
+
+fn shortcut_action_name(binding: &KeyBinding) -> SharedString {
+    if let Some(action) = binding
+        .action()
+        .as_any()
+        .downcast_ref::<ApplyMarkdownFormat>()
+    {
+        return humanize_identifier(match action.0 {
+            MarkdownFormat::HeadingOne => "HeadingOne",
+            MarkdownFormat::HeadingTwo => "HeadingTwo",
+            MarkdownFormat::HeadingThree => "HeadingThree",
+            MarkdownFormat::Bold => "Bold",
+            MarkdownFormat::Italic => "Italic",
+            MarkdownFormat::InlineCode => "InlineCode",
+            MarkdownFormat::Link => "Link",
+            MarkdownFormat::BulletList => "BulletList",
+            MarkdownFormat::OrderedList => "OrderedList",
+            MarkdownFormat::Quote => "Quote",
+            MarkdownFormat::CodeBlock => "CodeBlock",
+        });
+    }
+
+    let name = binding
+        .action()
+        .name()
+        .rsplit("::")
+        .next()
+        .unwrap_or(binding.action().name())
+        .strip_suffix("Action")
+        .unwrap_or_else(|| {
+            binding
+                .action()
+                .name()
+                .rsplit("::")
+                .next()
+                .unwrap_or(binding.action().name())
+        });
+
+    humanize_identifier(name)
+}
+
+pub(crate) fn humanize_identifier(value: &str) -> SharedString {
+    let mut label = String::with_capacity(value.len() + 4);
+    let mut previous_is_lowercase = false;
+
+    for character in value.chars() {
+        if character == '_' || character == '-' {
+            if !label.ends_with(' ') {
+                label.push(' ');
+            }
+            previous_is_lowercase = false;
+            continue;
+        }
+
+        if character.is_uppercase() && previous_is_lowercase {
+            label.push(' ');
+        }
+        label.push(character);
+        previous_is_lowercase = character.is_lowercase();
+    }
+
+    label.into()
 }

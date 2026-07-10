@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs, path::Path};
 
-use app::{DB, app_settings::AppSettings, app_shell::AppShell, keymap};
+use app::{DB, app_settings::AppSettings, app_shell::AppShell, keymap, tray};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,8 +51,8 @@ async fn main() -> Result<()> {
         cx.set_global(db);
 
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
-        cx.spawn(async move |cx| {
-            cx.open_window(
+        let window = cx
+            .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitleBar::title_bar_options()),
@@ -64,8 +64,10 @@ async fn main() -> Result<()> {
                 },
             )
             .expect("Failed to open window");
-        })
-        .detach();
+
+        if let Err(err) = tray::init(window.into(), cx) {
+            eprintln!("Failed to initialize tray mode: {err}");
+        }
     });
 
     Ok(())

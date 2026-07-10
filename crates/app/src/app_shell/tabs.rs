@@ -1,6 +1,43 @@
 use super::*;
+use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
+    pub(super) fn persist_tab_session(&self, cx: &mut Context<Self>) {
+        let tabs = self
+            .open_tabs
+            .iter()
+            .map(|tab| match &tab.kind {
+                OpenTabKind::Chooser => StoredTab::Chooser,
+                OpenTabKind::Board {
+                    board_id,
+                    project_id,
+                    ..
+                } => StoredTab::Board {
+                    board_id: *board_id,
+                    project_id: *project_id,
+                    title: tab.title.to_string(),
+                },
+                OpenTabKind::Note {
+                    note_id,
+                    project_id,
+                    ..
+                } => StoredTab::Note {
+                    note_id: *note_id,
+                    project_id: *project_id,
+                    title: tab.title.to_string(),
+                },
+            })
+            .collect();
+        AppSettings::set_tab_session(
+            TabSession {
+                tabs,
+                active_tab_index: self.active_tab_index,
+                active_project_id: self.active_project_id,
+            },
+            cx,
+        );
+    }
+
     pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let index = self.open_tabs.len();
         let id = self.next_tab_id;
@@ -82,6 +119,7 @@ impl AppShell {
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
+        self.persist_tab_session(cx);
         cx.notify();
     }
 
@@ -100,6 +138,7 @@ impl AppShell {
             Some(OpenTabKind::Chooser)
         ) {
             self.sync_sidebar_active(cx);
+            self.persist_tab_session(cx);
             cx.notify();
             return;
         }
@@ -150,6 +189,7 @@ impl AppShell {
         }
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
+        self.persist_tab_session(cx);
         cx.notify();
     }
 
@@ -178,6 +218,7 @@ impl AppShell {
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
+        self.persist_tab_session(cx);
         cx.notify();
     }
 
@@ -193,6 +234,7 @@ impl AppShell {
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
+        self.persist_tab_session(cx);
         cx.notify();
     }
 
@@ -269,6 +311,7 @@ impl AppShell {
             OpenTabKind::Chooser => {}
         }
 
+        self.persist_tab_session(cx);
         cx.notify();
     }
 
@@ -343,6 +386,7 @@ impl AppShell {
             tab.title = title;
             self.sync_sidebar_active(cx);
             self.sync_title_input(window, cx);
+            self.persist_tab_session(cx);
             cx.notify();
             return;
         }

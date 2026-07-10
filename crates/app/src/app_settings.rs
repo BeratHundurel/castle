@@ -17,9 +17,35 @@ const DEFAULT_SHOW_SIDEBAR: bool = true;
 const DEFAULT_SCROLLBAR_SHOW: &str = "scrolling";
 pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
 const DEFAULT_MARKDOWN_FONT_SIZE: f64 = 13.0;
+const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE: f64 = 16.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
 const DEFAULT_MARKDOWN_LINE_NUMBERS: bool = false;
 const DEFAULT_MARKDOWN_SOFT_WRAP: bool = true;
+const DEFAULT_CLOSE_TO_TRAY: bool = true;
+pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum StoredTab {
+    Chooser,
+    Board {
+        board_id: u32,
+        project_id: Option<u32>,
+        title: String,
+    },
+    Note {
+        note_id: u32,
+        project_id: Option<u32>,
+        title: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct TabSession {
+    pub(crate) tabs: Vec<StoredTab>,
+    pub(crate) active_tab_index: usize,
+    pub(crate) active_project_id: Option<u32>,
+}
 
 #[derive(Clone)]
 pub struct AppSettings {
@@ -38,9 +64,13 @@ struct StoredSettings {
     scrollbar_show: String,
     editor_font_family: String,
     markdown_font_size: f64,
+    markdown_preview_font_size: f64,
     markdown_editor_mode: String,
     markdown_line_numbers: bool,
     markdown_soft_wrap: bool,
+    close_to_tray: bool,
+    tray_shortcut: String,
+    tab_session: TabSession,
 }
 
 impl Default for StoredSettings {
@@ -54,9 +84,13 @@ impl Default for StoredSettings {
             scrollbar_show: DEFAULT_SCROLLBAR_SHOW.to_string(),
             editor_font_family: DEFAULT_EDITOR_FONT_FAMILY.to_string(),
             markdown_font_size: DEFAULT_MARKDOWN_FONT_SIZE,
+            markdown_preview_font_size: DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE,
             markdown_editor_mode: DEFAULT_MARKDOWN_EDITOR_MODE.to_string(),
             markdown_line_numbers: DEFAULT_MARKDOWN_LINE_NUMBERS,
             markdown_soft_wrap: DEFAULT_MARKDOWN_SOFT_WRAP,
+            close_to_tray: DEFAULT_CLOSE_TO_TRAY,
+            tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
+            tab_session: TabSession::default(),
         }
     }
 }
@@ -185,6 +219,17 @@ impl AppSettings {
         cx.global::<Self>().values.markdown_font_size
     }
 
+    pub(crate) fn set_markdown_preview_font_size(font_size: f64, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.markdown_preview_font_size = font_size;
+        });
+        cx.refresh_windows();
+    }
+
+    pub(crate) fn markdown_preview_font_size(cx: &App) -> f64 {
+        cx.global::<Self>().values.markdown_preview_font_size
+    }
+
     pub(crate) fn markdown_editor_mode(cx: &App) -> SharedString {
         cx.global::<Self>()
             .values
@@ -216,6 +261,38 @@ impl AppSettings {
     pub(crate) fn set_markdown_soft_wrap(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_soft_wrap = enabled;
+        });
+    }
+
+    pub(crate) fn close_to_tray(cx: &App) -> bool {
+        cx.global::<Self>().values.close_to_tray
+    }
+
+    pub(crate) fn set_close_to_tray(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.close_to_tray = enabled;
+        });
+    }
+
+    pub(crate) fn tray_shortcut(cx: &App) -> SharedString {
+        cx.global::<Self>().values.tray_shortcut.as_str().into()
+    }
+
+    pub(crate) fn set_tray_shortcut(shortcut: SharedString, cx: &mut App) {
+        let shortcut = shortcut.to_string();
+        Self::update(cx, |settings| {
+            settings.values.tray_shortcut = shortcut.clone();
+        });
+        crate::tray::update_shortcut(&shortcut, cx);
+    }
+
+    pub(crate) fn tab_session(cx: &App) -> TabSession {
+        cx.global::<Self>().values.tab_session.clone()
+    }
+
+    pub(crate) fn set_tab_session(tab_session: TabSession, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.tab_session = tab_session;
         });
     }
 
@@ -257,6 +334,7 @@ impl StoredSettings {
         self.editor_font_family =
             normalize_font_family(&self.editor_font_family, DEFAULT_EDITOR_FONT_FAMILY);
         self.markdown_font_size = self.markdown_font_size.clamp(10.0, 22.0);
+        self.markdown_preview_font_size = self.markdown_preview_font_size.clamp(10.0, 22.0);
 
         if !matches!(
             self.scrollbar_show.as_str(),
@@ -270,6 +348,23 @@ impl StoredSettings {
             "source" | "split" | "preview"
         ) {
             self.markdown_editor_mode = DEFAULT_MARKDOWN_EDITOR_MODE.to_string();
+        }
+
+        if self
+            .tray_shortcut
+            .parse::<global_hotkey::hotkey::HotKey>()
+            .is_err()
+        {
+            self.tray_shortcut = DEFAULT_TRAY_SHORTCUT.to_string();
+        }
+
+        if self.tab_session.tabs.is_empty() {
+            self.tab_session.active_tab_index = 0;
+        } else {
+            self.tab_session.active_tab_index = self
+                .tab_session
+                .active_tab_index
+                .min(self.tab_session.tabs.len() - 1);
         }
     }
 }
@@ -336,5 +431,67 @@ fn scrollbar_show_from_key(value: &str) -> ScrollbarShow {
         "hover" => ScrollbarShow::Hover,
         "always" => ScrollbarShow::Always,
         _ => ScrollbarShow::Scrolling,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_without_a_tab_session_remain_compatible() {
+        let settings: StoredSettings = serde_json::from_str(r#"{"theme_name":"Sick"}"#)
+            .expect("legacy settings should deserialize");
+
+        assert_eq!(settings.tab_session, TabSession::default());
+        assert_eq!(
+            settings.markdown_preview_font_size,
+            DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE
+        );
+        assert!(settings.close_to_tray);
+        assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
+    }
+
+    #[test]
+    fn tab_session_round_trips_and_normalizes_the_active_index() {
+        let mut settings = StoredSettings {
+            tab_session: TabSession {
+                tabs: vec![
+                    StoredTab::Board {
+                        board_id: 12,
+                        project_id: Some(3),
+                        title: "Roadmap".to_string(),
+                    },
+                    StoredTab::Note {
+                        note_id: 27,
+                        project_id: None,
+                        title: "Scratchpad".to_string(),
+                    },
+                ],
+                active_tab_index: 9,
+                active_project_id: Some(3),
+            },
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+        let serialized = serde_json::to_string(&settings).expect("settings should serialize");
+        let restored: StoredSettings =
+            serde_json::from_str(&serialized).expect("settings should deserialize");
+
+        assert_eq!(restored.tab_session.active_tab_index, 1);
+        assert_eq!(restored.tab_session, settings.tab_session);
+    }
+
+    #[test]
+    fn invalid_tray_shortcut_is_reset_to_default() {
+        let mut settings = StoredSettings {
+            tray_shortcut: "Ctrl+not-a-key".to_string(),
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+
+        assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
     }
 }

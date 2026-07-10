@@ -1,13 +1,23 @@
 {
-  "theme_name": "Ayu Dark",
+  "theme_name": "Sick",
   "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
-  "show_sidebar": true,
+  "show_sidebar": false,
   "scrollbar_show": "scrolling",
   "editor_font_family": "IBM Plex Mono",
-  "markdown_font_size": 13.0,
+  "markdown_font_size": 16.0,
+  "markdown_preview_font_size": 16.0,
   "markdown_editor_mode": "source",
   "markdown_line_numbers": false,
-  "markdown_soft_wrap": true
+  "markdown_soft_wrap": true,
+  "tab_session": {
+    "tabs": [
+      {
+        "kind": "chooser"
+      }
+    ],
+    "active_tab_index": 0,
+    "active_project_id": 1
+  }
 }

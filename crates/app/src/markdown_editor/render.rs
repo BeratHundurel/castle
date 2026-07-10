@@ -13,6 +13,7 @@ use gpui_component::{
 
 use super::MarkdownEditorView;
 use super::types::*;
+use crate::app_settings::AppSettings;
 
 impl Focusable for MarkdownEditorView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -49,6 +50,8 @@ impl MarkdownEditorView {
     }
 
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let font_size = px(AppSettings::markdown_preview_font_size(cx) as f32);
+
         div()
             .id("markdown-preview")
             .size_full()
@@ -58,12 +61,12 @@ impl MarkdownEditorView {
                     div().w_full().flex().justify_center().child(
                         div().w_full().max_w(px(920.)).min_w_0().child(
                             TextView::new(&self.preview)
-                                .style(markdown_preview_style(cx.theme().mono_font_size))
+                                .style(markdown_preview_style(font_size))
                                 .code_block_actions(|code_block, _window, _cx| {
                                     Clipboard::new("copy-code").value(code_block.code().clone())
                                 })
                                 .p_6()
-                                .text_size(cx.theme().mono_font_size)
+                                .text_size(font_size)
                                 .scrollable(false)
                                 .selectable(true),
                         ),
