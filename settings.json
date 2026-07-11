@@ -1,16 +1,18 @@
 {
-  "theme_name": "Sick",
+  "theme_name": "Catppuccin Mocha",
   "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
-  "show_sidebar": false,
+  "show_sidebar": true,
   "scrollbar_show": "scrolling",
   "editor_font_family": "IBM Plex Mono",
-  "markdown_font_size": 16.0,
-  "markdown_preview_font_size": 16.0,
+  "markdown_font_size": 15.0,
+  "markdown_preview_font_size": 12.0,
   "markdown_editor_mode": "source",
   "markdown_line_numbers": false,
   "markdown_soft_wrap": true,
+  "close_to_tray": true,
+  "tray_shortcut": "Ctrl+Alt+Space",
   "tab_session": {
     "tabs": [
       {
