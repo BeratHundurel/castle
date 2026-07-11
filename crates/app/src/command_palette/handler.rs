@@ -124,6 +124,7 @@ impl AppShell {
                     .cloned()
                 {
                     self.apply_theme(&theme_name, cx);
+                    self.close_command_palette(window, cx);
                 }
             }
             CommandPaletteMode::Search => {

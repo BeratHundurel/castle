@@ -10,7 +10,7 @@ mod store;
 use dto::*;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, ThemeRegistry,
+    ActiveTheme, Theme, ThemeRegistry,
     input::{InputEvent, InputState},
     searchable_list::SearchableListDelegate,
     select::{SearchableVec, SelectEvent, SelectState},
@@ -76,6 +76,15 @@ impl SidebarView {
 
         let theme_select =
             cx.new(|cx| SelectState::new(delegate, selected_index, window, cx).searchable(true));
+
+        cx.observe_global_in::<Theme>(window, |this, window, cx| {
+            let theme_name = cx.theme().theme_name().clone();
+            this.theme_select.update(cx, |select, cx| {
+                select.set_selected_value(&theme_name, window, cx);
+            });
+            cx.notify();
+        })
+        .detach();
 
         cx.subscribe(
             &theme_select,

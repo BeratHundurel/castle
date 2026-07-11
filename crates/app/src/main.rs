@@ -136,6 +136,7 @@ fn init_themes(cx: &mut App) {
         include_str!("../../../themes/jellybeans.json"),
         include_str!("../../../themes/tokyonight.json"),
         include_str!("../../../themes/twilight.json"),
+        include_str!("../../../themes/spaceduck.json"),
         include_str!("../../../themes/sick.json"),
     ];
 

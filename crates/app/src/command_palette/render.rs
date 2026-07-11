@@ -1,5 +1,5 @@
 use gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
+    ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_component::{
@@ -317,8 +317,11 @@ impl AppShell {
                 theme.popover.opacity(0.)
             })
             .hover(|this| this.bg(theme.accent))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.apply_theme(&theme_name, cx);
+                if event.click_count() == 2 {
+                    this.close_command_palette(window, cx);
+                }
             }))
             .child(
                 div()
