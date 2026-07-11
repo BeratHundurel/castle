@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, ElementExt as _, Icon, IconName, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
@@ -23,29 +23,38 @@ impl Focusable for MarkdownEditorView {
 
 impl MarkdownEditorView {
     pub(crate) fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        const EDITOR_MAX_WIDTH: f32 = 920.;
+        const EDITOR_GUTTER: f32 = 20.;
+
+        let horizontal_padding = px(((self.source_width.as_f32() - EDITOR_MAX_WIDTH) / 2.
+            + EDITOR_GUTTER)
+            .max(EDITOR_GUTTER));
+        let view = cx.entity();
+
         div()
             .id("markdown-source")
             .size_full()
-            .flex()
-            .justify_center()
             .bg(cx.theme().background)
+            .on_prepaint(move |bounds, _, cx| {
+                view.update(cx, |this, cx| {
+                    if this.source_width != bounds.size.width {
+                        this.source_width = bounds.size.width;
+                        cx.notify();
+                    }
+                });
+            })
             .child(
-                div()
-                    .size_full()
-                    .max_w(px(920.))
-                    .min_w_0()
-                    .px_5()
-                    .py_4()
-                    .child(
-                        Input::new(&self.editor)
-                            .h_full()
-                            .w_full()
-                            .p_0()
-                            .border_0()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_size(cx.theme().mono_font_size)
-                            .focus_bordered(false),
-                    ),
+                div().size_full().min_w_0().py_4().child(
+                    Input::new(&self.editor)
+                        .h_full()
+                        .w_full()
+                        .p_0()
+                        .px(horizontal_padding)
+                        .border_0()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(cx.theme().mono_font_size)
+                        .focus_bordered(false),
+                ),
             )
     }
 
@@ -330,6 +339,7 @@ fn status_metric(icon: IconName, label: String) -> impl IntoElement {
 fn markdown_preview_style(font_size: Pixels) -> TextViewStyle {
     TextViewStyle {
         heading_base_font_size: font_size,
+        code_block: StyleRefinement::default().text_size(font_size),
         ..Default::default()
     }
 }

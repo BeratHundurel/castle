@@ -47,6 +47,7 @@ pub(crate) struct MarkdownEditorView {
     emmet_input: Entity<InputState>,
     show_emmet_input: bool,
     emmet_replacement_range: Option<Range<usize>>,
+    source_width: gpui::Pixels,
 }
 
 impl MarkdownEditorView {
@@ -127,6 +128,7 @@ impl MarkdownEditorView {
             emmet_input,
             show_emmet_input: false,
             emmet_replacement_range: None,
+            source_width: gpui::px(0.),
         }
     }
 

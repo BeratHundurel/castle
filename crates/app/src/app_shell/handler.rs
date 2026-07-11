@@ -1,4 +1,4 @@
-use gpui::{Context, Window};
+use gpui::{Context, Pixels, Window, px};
 
 use crate::app_settings::AppSettings;
 
@@ -14,6 +14,19 @@ impl AppShell {
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_collapsed(!visible, cx));
         AppSettings::set_show_sidebar(visible, cx);
+        cx.notify();
+    }
+
+    pub(super) fn sync_sidebar_with_window_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        let window_is_narrow = width <= px(super::SIDEBAR_AUTO_COLLAPSE_WIDTH);
+        if window_is_narrow == self.window_is_narrow {
+            return;
+        }
+
+        self.window_is_narrow = window_is_narrow;
+        let visible = !window_is_narrow && AppSettings::show_sidebar(cx);
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_collapsed(!visible, cx));
         cx.notify();
     }
 }

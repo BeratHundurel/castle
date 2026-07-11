@@ -62,9 +62,7 @@ impl AppShell {
             .id("title-bar-settings")
             .h_full()
             .items_center()
-            .px_2()
-            .border_l_1()
-            .border_color(cx.theme().border.opacity(0.72))
+            .px_3()
             .flex_shrink_0()
             .child(
                 Button::new("title-open-settings")
@@ -100,10 +98,8 @@ impl AppShell {
             .id("title-bar-note-actions")
             .h_full()
             .items_center()
-            .gap_1()
-            .px_2()
-            .border_l_1()
-            .border_color(cx.theme().border.opacity(0.72))
+            .gap_2()
+            .px_3()
             .flex_shrink_0()
             .child(
                 Button::new("title-save-note")

@@ -316,38 +316,46 @@ impl Render for SidebarView {
                             .items_center()
                             .gap_2()
                             .child(
-                                SidebarHeader::new()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(theme.radius)
-                                            .bg(theme.primary)
-                                            .text_color(theme.primary_foreground)
-                                            .size_8()
-                                            .flex_shrink_0()
-                                            .child(IconName::GalleryVerticalEnd),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .id("header-title")
-                                            .gap_0()
-                                            .text_sm()
-                                            .flex_1()
-                                            .line_height(relative(1.25))
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .child("Castle")
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.sidebar_foreground)
-                                            .child(
-                                                div()
-                                                    .child("Your private note taking app")
-                                                    .text_color(theme.muted_foreground)
-                                                    .text_xs(),
-                                            ),
-                                    ),
+                                SidebarHeader::new().child(
+                                    v_flex()
+                                        .id("header-title")
+                                        .w_full()
+                                        .gap_1()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .child(
+                                            h_flex()
+                                                .gap(px(3.))
+                                                .items_end()
+                                                .child(
+                                                    div()
+                                                        .font_family("Georgia")
+                                                        .text_size(px(25.))
+                                                        .line_height(relative(1.))
+                                                        .font_weight(FontWeight::BOLD)
+                                                        .text_color(theme.sidebar_foreground)
+                                                        .child("Castle"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(10.))
+                                                        .h(px(22.))
+                                                        .mb(px(1.))
+                                                        .rounded(px(1.))
+                                                        .bg(theme.primary),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .font_family(cx.theme().mono_font_family.clone())
+                                                .text_size(px(11.))
+                                                .line_height(relative(1.2))
+                                                .whitespace_nowrap()
+                                                .child("notes  for  thoughtful  work")
+                                                .text_color(theme.muted_foreground)
+                                                .opacity(0.82),
+                                        ),
+                                ),
                             )
                             .child(
                                 Input::new(&self.search_input)

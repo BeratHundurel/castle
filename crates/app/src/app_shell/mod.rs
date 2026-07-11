@@ -38,6 +38,8 @@ use crate::markdown_editor::{
 };
 use crate::sidebar::{SidebarEvent, SidebarView};
 
+const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
+
 struct OpenTab {
     id: u64,
     title: SharedString,
@@ -94,6 +96,7 @@ pub struct AppShell {
     pub(crate) active_project_id: Option<u32>,
     suppress_title_event: bool,
     settings_dialog_open: bool,
+    window_is_narrow: bool,
 }
 
 impl AppShell {
@@ -327,12 +330,18 @@ impl AppShell {
             active_project_id: tab_session.active_project_id,
             suppress_title_event: false,
             settings_dialog_open: false,
+            window_is_narrow: false,
         };
 
         let show_sidebar = AppSettings::show_sidebar(cx);
         this.sidebar.update(cx, |sidebar, cx| {
             sidebar.set_collapsed(!show_sidebar, cx);
         });
+        this.sync_sidebar_with_window_width(window.bounds().size.width, cx);
+        cx.observe_window_bounds(window, |this, window, cx| {
+            this.sync_sidebar_with_window_width(window.bounds().size.width, cx);
+        })
+        .detach();
         this.refresh_workspace(cx);
         this.sidebar
             .update(cx, |_, cx| SidebarView::list_projects(cx));
