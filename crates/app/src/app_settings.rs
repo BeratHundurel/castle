@@ -29,6 +29,7 @@ pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum StoredTab {
     Chooser,
+    Trash,
     Board {
         board_id: u32,
         project_id: Option<u32>,

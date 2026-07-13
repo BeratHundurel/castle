@@ -3,6 +3,7 @@ use entity::{
     board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
 };
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectRow {
@@ -16,6 +17,8 @@ pub(crate) struct BoardRow {
     pub(crate) id: u32,
     pub(crate) title: String,
     pub(crate) project_id: Option<u32>,
+    pub(crate) is_pinned: bool,
+    pub(crate) last_opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +26,8 @@ pub(crate) struct NoteRow {
     pub(crate) id: u32,
     pub(crate) title: String,
     pub(crate) project_id: Option<u32>,
+    pub(crate) is_pinned: bool,
+    pub(crate) last_opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,8 +38,9 @@ pub(crate) struct WorkspaceRows {
 }
 
 pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRows> {
-    let projects = Project::find()
+    let projects: Vec<ProjectRow> = Project::find()
         .filter(project::Column::Archived.eq(false))
+        .filter(project::Column::DeletedAt.is_null())
         .order_by_asc(project::Column::Position)
         .order_by_asc(project::Column::Id)
         .select_only()
@@ -52,38 +58,63 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
         })
         .collect();
 
+    let active_project_ids = projects
+        .iter()
+        .map(|project| project.id)
+        .collect::<HashSet<_>>();
+
     let boards = Board::find()
+        .filter(board::Column::DeletedAt.is_null())
         .order_by_asc(board::Column::Id)
         .select_only()
         .column(board::Column::Id)
         .column(board::Column::Title)
         .column(board::Column::ProjectId)
-        .into_tuple::<(i64, String, Option<i64>)>()
+        .column(board::Column::IsPinned)
+        .column(board::Column::LastOpenedAt)
+        .into_tuple::<(i64, String, Option<i64>, bool, Option<i64>)>()
         .all(db)
         .await?
         .into_iter()
-        .map(|(id, title, project_id)| BoardRow {
-            id: id as u32,
-            title,
-            project_id: project_id.map(|id| id as u32),
+        .filter(|(_, _, project_id, _, _)| {
+            project_id.is_none_or(|id| active_project_ids.contains(&(id as u32)))
         })
+        .map(
+            |(id, title, project_id, is_pinned, last_opened_at)| BoardRow {
+                id: id as u32,
+                title,
+                project_id: project_id.map(|id| id as u32),
+                is_pinned,
+                last_opened_at,
+            },
+        )
         .collect();
 
     let notes = Note::find()
+        .filter(note::Column::DeletedAt.is_null())
         .order_by_asc(note::Column::Id)
         .select_only()
         .column(note::Column::Id)
         .column(note::Column::Title)
         .column(note::Column::ProjectId)
-        .into_tuple::<(i64, String, Option<i64>)>()
+        .column(note::Column::IsPinned)
+        .column(note::Column::LastOpenedAt)
+        .into_tuple::<(i64, String, Option<i64>, bool, Option<i64>)>()
         .all(db)
         .await?
         .into_iter()
-        .map(|(id, title, project_id)| NoteRow {
-            id: id as u32,
-            title,
-            project_id: project_id.map(|id| id as u32),
+        .filter(|(_, _, project_id, _, _)| {
+            project_id.is_none_or(|id| active_project_ids.contains(&(id as u32)))
         })
+        .map(
+            |(id, title, project_id, is_pinned, last_opened_at)| NoteRow {
+                id: id as u32,
+                title,
+                project_id: project_id.map(|id| id as u32),
+                is_pinned,
+                last_opened_at,
+            },
+        )
         .collect();
 
     Ok(WorkspaceRows {

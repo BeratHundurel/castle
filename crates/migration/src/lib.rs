@@ -10,6 +10,7 @@ mod m20260607_180117_full_text;
 mod m20260709_000008_board_labels;
 mod m20260710_000009_entry_due_date;
 mod m20260710_000010_entry_checklist_items;
+mod m20260712_000011_home_and_trash;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260709_000008_board_labels::Migration),
             Box::new(m20260710_000009_entry_due_date::Migration),
             Box::new(m20260710_000010_entry_checklist_items::Migration),
+            Box::new(m20260712_000011_home_and_trash::Migration),
         ]
     }
 }

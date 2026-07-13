@@ -39,6 +39,8 @@ pub(crate) struct SidebarView {
     renaming_board: Option<u32>,
     renaming_note: Option<u32>,
     renaming_project: Option<u32>,
+    projects_refreshing: bool,
+    projects_refresh_pending: bool,
 }
 
 impl SidebarView {
@@ -212,6 +214,8 @@ impl SidebarView {
             renaming_board: None,
             renaming_note: None,
             renaming_project: None,
+            projects_refreshing: false,
+            projects_refresh_pending: false,
         }
     }
 
@@ -248,5 +252,14 @@ impl SidebarView {
 
         self.collapsed = collapsed;
         cx.notify();
+    }
+
+    pub(crate) fn refresh_projects(&mut self, cx: &mut Context<Self>) {
+        self.list_projects(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_project_named(&self, name: &str) -> bool {
+        self.projects.iter().any(|project| project.name == name)
     }
 }

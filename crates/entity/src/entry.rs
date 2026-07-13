@@ -13,6 +13,7 @@ pub struct Model {
     pub card_id: i64,
     pub position: i32,
     pub due_on: Option<String>,
+    pub deleted_at: Option<i64>,
     #[sea_orm(
         belongs_to,
         from = "card_id",

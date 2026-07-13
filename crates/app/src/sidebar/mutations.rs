@@ -1,16 +1,99 @@
 use anyhow::Result;
-use entity::{
-    board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
-};
+use entity::{board, note, project};
 use gpui::{Context, SharedString, Window};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
-use std::{fs::remove_file, io::ErrorKind};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 use crate::DB;
 
 use super::{SidebarView, action::*, dto::*, event::SidebarEvent};
 
 impl SidebarView {
+    pub(super) fn restore_trashed(
+        &mut self,
+        kind: crate::trash::TrashItemKind,
+        id: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| -> Result<()> {
+            runtime
+                .spawn(async move {
+                    crate::trash::restore_item(
+                        db.as_ref(),
+                        crate::trash::RestoreTrashItem(crate::trash::MoveToTrash { kind, id }),
+                    )
+                    .await
+                })
+                .await??;
+            this.update(cx, |this, cx| {
+                this.list_projects(cx);
+                cx.emit(SidebarEvent::WorkspaceChanged);
+            })
+            .ok();
+            Ok(())
+        })
+        .detach();
+    }
+
+    pub(super) fn set_board_pinned(&mut self, board_id: u32, pinned: bool, cx: &mut Context<Self>) {
+        for board in self
+            .projects
+            .iter_mut()
+            .flat_map(|project| project.boards.iter_mut())
+            .chain(self.standalone_boards.iter_mut())
+        {
+            if board.id == board_id {
+                board.is_pinned = pinned;
+                break;
+            }
+        }
+        cx.notify();
+        cx.emit(SidebarEvent::WorkspaceChanged);
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |this, cx| -> Result<()> {
+            crate::home::set_pinned(
+                db.as_ref(),
+                crate::home::WorkspaceItemKind::Board,
+                board_id,
+                pinned,
+            )
+            .await?;
+            this.update(cx, |this, cx| this.list_projects(cx)).ok();
+            Ok(())
+        })
+        .detach();
+    }
+
+    pub(super) fn set_note_pinned(&mut self, note_id: u32, pinned: bool, cx: &mut Context<Self>) {
+        for note in self
+            .projects
+            .iter_mut()
+            .flat_map(|project| project.notes.iter_mut())
+            .chain(self.standalone_notes.iter_mut())
+        {
+            if note.id == note_id {
+                note.is_pinned = pinned;
+                break;
+            }
+        }
+        cx.notify();
+        cx.emit(SidebarEvent::WorkspaceChanged);
+        let db = cx.global::<DB>().conn.clone();
+        cx.spawn(async move |this, cx| -> Result<()> {
+            crate::home::set_pinned(
+                db.as_ref(),
+                crate::home::WorkspaceItemKind::Note,
+                note_id,
+                pinned,
+            )
+            .await?;
+            this.update(cx, |this, cx| this.list_projects(cx)).ok();
+            Ok(())
+        })
+        .detach();
+    }
+
     pub(super) fn select_board(
         &mut self,
         board_id: u32,
@@ -44,18 +127,33 @@ impl SidebarView {
     }
 
     pub(super) fn delete_board(&mut self, cx: &mut Context<Self>, board_id: u32) {
-        self.standalone_boards.retain(|board| board.id != board_id);
-        for project in &mut self.projects {
-            project.boards.retain(|board| board.id != board_id);
-        }
-        self.renaming_board = None;
-
-        cx.notify();
-        cx.emit(SidebarEvent::BoardDeleted { board_id });
-
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            Board::delete_by_id(board_id as i64).exec(&*db).await?;
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| -> Result<()> {
+            runtime
+                .spawn(async move {
+                    crate::trash::move_to_trash(
+                        db.as_ref(),
+                        crate::trash::MoveToTrash {
+                            kind: crate::trash::TrashItemKind::Board,
+                            id: board_id,
+                        },
+                        crate::markdown_editor::now_ts(),
+                    )
+                    .await
+                })
+                .await??;
+            this.update(cx, |this, cx| {
+                this.standalone_boards.retain(|board| board.id != board_id);
+                for project in &mut this.projects {
+                    project.boards.retain(|board| board.id != board_id);
+                }
+                this.renaming_board = None;
+                cx.emit(SidebarEvent::BoardDeleted { board_id });
+                cx.emit(SidebarEvent::WorkspaceChanged);
+                cx.notify();
+            })
+            .ok();
             Ok(())
         })
         .detach();
@@ -94,37 +192,57 @@ impl SidebarView {
         .detach();
     }
 
-    pub(super) fn delete_note(&mut self, cx: &mut Context<Self>, note_id: u32) {
-        self.standalone_notes.retain(|note| note.id != note_id);
-        for project in &mut self.projects {
-            project.notes.retain(|note| note.id != note_id);
-        }
-        self.renaming_note = None;
-        cx.notify();
-        cx.emit(SidebarEvent::NoteDeleted { note_id });
-
+    pub(super) fn delete_note(
+        &mut self,
+        note_id: u32,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let db = cx.global::<DB>().conn.clone();
-        let background_executor = cx.background_executor().clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            if let Some(note) = Note::find_by_id(note_id as i64).one(&*db).await? {
-                Note::delete_by_id(note_id as i64).exec(&*db).await?;
-
-                if note.file_managed_by_app
-                    && let Some(path) = note.file_path
-                {
-                    background_executor
-                        .spawn(async move {
-                            match remove_file(path) {
-                                Ok(()) => Ok(()),
-                                Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-                                Err(err) => Err(err),
-                            }
-                        })
-                        .await?;
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn_in(window, async move |this, cx| {
+            let request = crate::trash::MoveToTrash {
+                kind: crate::trash::TrashItemKind::Note,
+                id: note_id,
+            };
+            let result = match runtime
+                .spawn(async move {
+                    crate::trash::move_to_trash(
+                        db.as_ref(),
+                        request,
+                        crate::markdown_editor::now_ts(),
+                    )
+                    .await
+                })
+                .await
+            {
+                Ok(result) => result,
+                Err(err) => Err(anyhow::anyhow!(err)),
+            };
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(()) => {
+                    this.standalone_notes.retain(|note| note.id != note_id);
+                    for project in &mut this.projects {
+                        project.notes.retain(|note| note.id != note_id);
+                    }
+                    this.renaming_note = None;
+                    cx.emit(SidebarEvent::NoteDeleted { note_id });
+                    cx.emit(SidebarEvent::WorkspaceChanged);
+                    this.push_trash_undo(
+                        crate::trash::TrashItemKind::Note,
+                        note_id,
+                        title.clone(),
+                        window,
+                        cx,
+                    );
+                    cx.notify();
                 }
-            }
-
-            Ok(())
+                Err(err) => {
+                    eprintln!("Failed to move note to Trash: {err}");
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -217,7 +335,7 @@ impl SidebarView {
             .update(&*db)
             .await?;
 
-            this.update(cx, |_, cx| Self::list_projects(cx)).ok();
+            this.update(cx, |this, cx| this.list_projects(cx)).ok();
             Ok(())
         })
         .detach();
@@ -239,7 +357,7 @@ impl SidebarView {
             .update(&*db)
             .await?;
 
-            this.update(cx, |_, cx| Self::list_projects(cx)).ok();
+            this.update(cx, |this, cx| this.list_projects(cx)).ok();
             Ok(())
         })
         .detach();
@@ -298,45 +416,35 @@ impl SidebarView {
     }
 
     pub(super) fn delete_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
-        self.projects.retain(|project| project.id != project_id);
-        self.renaming_project = None;
-        if self.active_project_id == Some(project_id) {
-            self.active_project_id = None;
-            self.active_item = None;
-        }
-
-        cx.notify();
-        cx.emit(SidebarEvent::ProjectDeleted { project_id });
-
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| -> Result<()> {
-            Project::delete_by_id(project_id as i64).exec(&*db).await?;
-            this.update(cx, |_, cx| Self::list_projects(cx)).ok();
-            Ok(())
-        })
-        .detach();
-    }
-
-    pub(super) fn archive_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
-        self.projects.retain(|project| project.id != project_id);
-        self.renaming_project = None;
-        if self.active_project_id == Some(project_id) {
-            self.active_project_id = None;
-            self.active_item = None;
-        }
-
-        cx.notify();
-        cx.emit(SidebarEvent::ProjectArchived { project_id });
-
-        let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            project::ActiveModel {
-                id: Set(project_id as i64),
-                archived: Set(true),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
+            runtime
+                .spawn(async move {
+                    crate::trash::move_to_trash(
+                        db.as_ref(),
+                        crate::trash::MoveToTrash {
+                            kind: crate::trash::TrashItemKind::Project,
+                            id: project_id,
+                        },
+                        crate::markdown_editor::now_ts(),
+                    )
+                    .await
+                })
+                .await??;
+            this.update(cx, |this, cx| {
+                this.projects.retain(|project| project.id != project_id);
+                this.renaming_project = None;
+                if this.active_project_id == Some(project_id) {
+                    this.active_project_id = None;
+                    this.active_item = None;
+                }
+                this.list_projects(cx);
+                cx.emit(SidebarEvent::ProjectDeleted { project_id });
+                cx.emit(SidebarEvent::WorkspaceChanged);
+                cx.notify();
+            })
+            .ok();
             Ok(())
         })
         .detach();

@@ -2,10 +2,12 @@ pub mod app_settings;
 pub mod app_shell;
 pub mod board;
 pub(crate) mod command_palette;
+pub(crate) mod home;
 pub mod keymap;
 pub mod markdown_editor;
 pub mod search;
 pub mod sidebar;
+pub(crate) mod trash;
 pub mod tray;
 pub(crate) mod workspace_data;
 

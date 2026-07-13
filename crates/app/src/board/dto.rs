@@ -47,8 +47,12 @@ impl From<card::ModelEx> for CardDTO {
             title: SharedString::from(c.title),
             position: c.position,
             entries: {
-                let mut entries: Vec<EntryDTO> =
-                    c.entries.into_iter().map(EntryDTO::from).collect();
+                let mut entries: Vec<EntryDTO> = c
+                    .entries
+                    .into_iter()
+                    .filter(|entry| entry.deleted_at.is_none())
+                    .map(EntryDTO::from)
+                    .collect();
                 entries.sort_by_key(|entry| (entry.position, entry.id));
                 entries
             },

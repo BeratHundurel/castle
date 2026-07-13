@@ -11,11 +11,45 @@ use crate::workspace_data::load_workspace_rows;
 use super::{SidebarView, dto::*};
 
 impl SidebarView {
-    pub(crate) fn list_projects(cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
+    pub(crate) fn list_projects(&mut self, cx: &mut Context<Self>) {
+        if self.projects_refreshing {
+            self.projects_refresh_pending = true;
+            return;
+        }
 
-        cx.spawn(async move |this, cx| -> Result<()> {
-            let rows = load_workspace_rows(db.as_ref()).await?;
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        self.projects_refreshing = true;
+
+        cx.spawn(async move |this, cx| {
+            let rows = match runtime
+                .spawn(async move { load_workspace_rows(db.as_ref()).await })
+                .await
+            {
+                Ok(Ok(rows)) => rows,
+                Ok(Err(err)) => {
+                    eprintln!("Failed to load sidebar projects: {err}");
+                    this.update(cx, |this, cx| {
+                        this.projects_refreshing = false;
+                        if std::mem::take(&mut this.projects_refresh_pending) {
+                            this.list_projects(cx);
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+                Err(err) => {
+                    eprintln!("Failed to load sidebar projects: {err}");
+                    this.update(cx, |this, cx| {
+                        this.projects_refreshing = false;
+                        if std::mem::take(&mut this.projects_refresh_pending) {
+                            this.list_projects(cx);
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
             let mut projects: Vec<ProjectDTO> = rows
                 .projects
                 .into_iter()
@@ -47,6 +81,8 @@ impl SidebarView {
                     id: board.id,
                     title: SharedString::from(board.title),
                     project_id: board.project_id,
+                    is_pinned: board.is_pinned,
+                    last_opened_at: board.last_opened_at,
                 };
 
                 if let Some(project_index) = dto
@@ -65,6 +101,8 @@ impl SidebarView {
                     id: note.id,
                     title: SharedString::from(note.title),
                     project_id: note.project_id,
+                    is_pinned: note.is_pinned,
+                    last_opened_at: note.last_opened_at,
                 };
 
                 if let Some(project_index) = dto
@@ -78,6 +116,7 @@ impl SidebarView {
             }
 
             this.update(cx, |this, cx| {
+                this.projects_refreshing = false;
                 if let Some(first) = projects.first_mut() {
                     first.is_expanded = true;
                 }
@@ -85,11 +124,12 @@ impl SidebarView {
                 this.projects = projects;
                 this.standalone_boards = standalone_boards;
                 this.standalone_notes = standalone_notes;
+                if std::mem::take(&mut this.projects_refresh_pending) {
+                    this.list_projects(cx);
+                }
                 cx.notify();
             })
             .ok();
-
-            Ok(())
         })
         .detach();
     }

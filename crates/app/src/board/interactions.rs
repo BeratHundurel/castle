@@ -86,9 +86,9 @@ impl BoardView {
                 .await?;
             }
             txn.commit().await?;
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(board_id) = board_id {
-                    BoardView::enrich_board_async(cx, board_id);
+                    this.enrich_board_async(cx, board_id);
                 }
             })
             .ok();
@@ -155,9 +155,9 @@ impl BoardView {
                 }
             }
             txn.commit().await?;
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(board_id) = board_id {
-                    BoardView::enrich_board_async(cx, board_id);
+                    this.enrich_board_async(cx, board_id);
                 }
             })
             .ok();
@@ -967,7 +967,15 @@ impl BoardView {
         let db = cx.global::<DB>().conn.clone();
 
         cx.spawn(async move |_, _| -> Result<()> {
-            Entry::delete_by_id(entry_id as i64).exec(&*db).await?;
+            crate::trash::move_to_trash(
+                db.as_ref(),
+                crate::trash::MoveToTrash {
+                    kind: crate::trash::TrashItemKind::Entry,
+                    id: entry_id,
+                },
+                crate::markdown_editor::now_ts(),
+            )
+            .await?;
             Ok(())
         })
         .detach();
@@ -1057,7 +1065,15 @@ impl BoardView {
         let db = cx.global::<DB>().conn.clone();
 
         cx.spawn(async move |_, _| -> Result<()> {
-            Card::delete_by_id(card_id as i64).exec(&*db).await?;
+            crate::trash::move_to_trash(
+                db.as_ref(),
+                crate::trash::MoveToTrash {
+                    kind: crate::trash::TrashItemKind::List,
+                    id: card_id,
+                },
+                crate::markdown_editor::now_ts(),
+            )
+            .await?;
             Ok(())
         })
         .detach();

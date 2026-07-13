@@ -124,7 +124,7 @@ impl BoardView {
         cx.notify();
     }
 
-    pub(super) fn open_entry_dialog(
+    pub(crate) fn open_entry_dialog(
         &mut self,
         entry_id: u32,
         window: &mut Window,
@@ -201,14 +201,14 @@ impl BoardView {
         window.open_alert_dialog(cx, move |alert, _, cx| {
             alert
                 .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
-                .title(format!("Delete list ‘{title}’"))
+                .title(format!("Move list ‘{title}’ to Trash"))
                 .description(format!(
-                    "This permanently deletes this list and its {card_count} card(s). This cannot be undone."
+                    "This hides the list and its {card_count} card(s) until you restore it from Trash."
                 ))
                 .button_props(
                     DialogButtonProps::default()
                         .ok_variant(ButtonVariant::Danger)
-                        .ok_text("Delete list")
+                        .ok_text("Move to Trash")
                         .cancel_text("Cancel")
                         .show_cancel(true),
                 )
@@ -274,12 +274,14 @@ impl BoardView {
         window.open_alert_dialog(cx, move |alert, _, cx| {
             alert
                 .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
-                .title(format!("Delete card ‘{title}’"))
-                .description("This permanently deletes this card and its checklist items. This cannot be undone.")
+                .title(format!("Move card ‘{title}’ to Trash"))
+                .description(
+                    "This hides the card and its checklist until you restore it from Trash.",
+                )
                 .button_props(
                     DialogButtonProps::default()
                         .ok_variant(ButtonVariant::Danger)
-                        .ok_text("Delete card")
+                        .ok_text("Move to Trash")
                         .cancel_text("Cancel")
                         .show_cancel(true),
                 )

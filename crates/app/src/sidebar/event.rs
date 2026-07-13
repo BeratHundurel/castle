@@ -2,6 +2,9 @@ use gpui::SharedString;
 
 #[derive(Clone)]
 pub(crate) enum SidebarEvent {
+    OpenHome,
+    OpenTrash,
+    WorkspaceChanged,
     OpenBoard {
         board_id: u32,
         project_id: Option<u32>,
@@ -34,9 +37,6 @@ pub(crate) enum SidebarEvent {
         name: SharedString,
     },
     ProjectDeleted {
-        project_id: u32,
-    },
-    ProjectArchived {
         project_id: u32,
     },
     ProjectsReordered,

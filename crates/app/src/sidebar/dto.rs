@@ -21,6 +21,8 @@ pub(crate) struct BoardDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,
     pub(crate) project_id: Option<u32>,
+    pub(crate) is_pinned: bool,
+    pub(crate) last_opened_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub(crate) struct NoteDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,
     pub(crate) project_id: Option<u32>,
+    pub(crate) is_pinned: bool,
+    pub(crate) last_opened_at: Option<i64>,
 }
 
 impl From<project::ModelEx> for ProjectDTO {
@@ -49,6 +53,8 @@ impl From<board::Model> for BoardDTO {
             id: board.id as u32,
             title: SharedString::from(board.title),
             project_id: board.project_id.map(|id| id as u32),
+            is_pinned: board.is_pinned,
+            last_opened_at: board.last_opened_at,
         }
     }
 }
@@ -59,6 +65,8 @@ impl From<board::ModelEx> for BoardDTO {
             id: board.id as u32,
             title: SharedString::from(board.title),
             project_id: board.project_id.map(|id| id as u32),
+            is_pinned: board.is_pinned,
+            last_opened_at: board.last_opened_at,
         }
     }
 }
@@ -69,6 +77,8 @@ impl From<note::Model> for NoteDTO {
             id: note.id as u32,
             title: SharedString::from(note.title),
             project_id: note.project_id.map(|id| id as u32),
+            is_pinned: note.is_pinned,
+            last_opened_at: note.last_opened_at,
         }
     }
 }
@@ -79,6 +89,8 @@ impl From<note::ModelEx> for NoteDTO {
             id: note.id as u32,
             title: SharedString::from(note.title),
             project_id: note.project_id.map(|id| id as u32),
+            is_pinned: note.is_pinned,
+            last_opened_at: note.last_opened_at,
         }
     }
 }

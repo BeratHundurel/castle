@@ -9,11 +9,13 @@ pub(super) enum SidebarContentItem {
         id: u32,
         title: SharedString,
         project_id: Option<u32>,
+        is_pinned: bool,
     },
     Note {
         id: u32,
         title: SharedString,
         project_id: Option<u32>,
+        is_pinned: bool,
     },
 }
 
@@ -23,6 +25,7 @@ impl From<&BoardDTO> for SidebarContentItem {
             id: board.id,
             title: board.title.clone(),
             project_id: board.project_id,
+            is_pinned: board.is_pinned,
         }
     }
 }
@@ -33,6 +36,7 @@ impl From<&NoteDTO> for SidebarContentItem {
             id: note.id,
             title: note.title.clone(),
             project_id: note.project_id,
+            is_pinned: note.is_pinned,
         }
     }
 }
@@ -54,6 +58,25 @@ impl SidebarContentItem {
         match self {
             Self::Board { .. } => IconName::LayoutDashboard,
             Self::Note { .. } => IconName::BookOpen,
+        }
+    }
+
+    pub(super) fn is_pinned(&self) -> bool {
+        match self {
+            Self::Board { is_pinned, .. } | Self::Note { is_pinned, .. } => *is_pinned,
+        }
+    }
+
+    pub(super) fn pin_action(&self) -> Box<dyn Action> {
+        match self {
+            Self::Board { id, is_pinned, .. } => Box::new(ToggleBoardPinnedAction {
+                board_id: *id,
+                pinned: !*is_pinned,
+            }),
+            Self::Note { id, is_pinned, .. } => Box::new(ToggleNotePinnedAction {
+                note_id: *id,
+                pinned: !*is_pinned,
+            }),
         }
     }
 
@@ -111,11 +134,13 @@ impl SidebarContentItem {
                 id,
                 title,
                 project_id,
+                ..
             } => sidebar.select_board(*id, *project_id, title.clone(), cx),
             Self::Note {
                 id,
                 title,
                 project_id,
+                ..
             } => sidebar.select_note(*id, *project_id, title.clone(), cx),
         }
     }

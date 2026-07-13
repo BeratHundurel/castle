@@ -6,10 +6,44 @@ use crate::workspace_data::load_workspace_rows;
 
 impl AppShell {
     pub(crate) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
+        if self.workspace_refreshing {
+            self.workspace_refresh_pending = true;
+            return;
+        }
 
-        cx.spawn(async move |this, cx| -> Result<()> {
-            let rows = load_workspace_rows(db.as_ref()).await?;
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        self.workspace_refreshing = true;
+
+        cx.spawn(async move |this, cx| {
+            let rows = match runtime
+                .spawn(async move { load_workspace_rows(db.as_ref()).await })
+                .await
+            {
+                Ok(Ok(rows)) => rows,
+                Ok(Err(err)) => {
+                    eprintln!("Failed to refresh workspace: {err}");
+                    this.update(cx, |this, cx| {
+                        this.workspace_refreshing = false;
+                        if std::mem::take(&mut this.workspace_refresh_pending) {
+                            this.refresh_workspace(cx);
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+                Err(err) => {
+                    eprintln!("Failed to refresh workspace: {err}");
+                    this.update(cx, |this, cx| {
+                        this.workspace_refreshing = false;
+                        if std::mem::take(&mut this.workspace_refresh_pending) {
+                            this.refresh_workspace(cx);
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
 
             let project_choices: Vec<ProjectChoice> = rows
                 .projects
@@ -52,15 +86,17 @@ impl AppShell {
                 .collect();
 
             this.update(cx, |this, cx| {
+                this.workspace_refreshing = false;
                 this.projects = project_choices;
                 this.boards = board_choices;
                 this.notes = note_choices;
                 this.rebuild_command_palette_workspace_commands();
+                if std::mem::take(&mut this.workspace_refresh_pending) {
+                    this.refresh_workspace(cx);
+                }
                 cx.notify();
             })
             .ok();
-
-            Ok(())
         })
         .detach();
     }
@@ -130,7 +166,7 @@ impl AppShell {
                             cx,
                         );
                         this.sidebar
-                            .update(cx, |_, cx| SidebarView::list_projects(cx));
+                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })
@@ -225,7 +261,7 @@ impl AppShell {
                             cx,
                         );
                         this.sidebar
-                            .update(cx, |_, cx| SidebarView::list_projects(cx));
+                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })
@@ -280,7 +316,7 @@ impl AppShell {
                             cx,
                         );
                         this.sidebar
-                            .update(cx, |_, cx| SidebarView::list_projects(cx));
+                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })

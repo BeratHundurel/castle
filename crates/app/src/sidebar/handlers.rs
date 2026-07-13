@@ -1,11 +1,34 @@
 use gpui::{Context, Styled, Window};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, dialog::DialogButtonProps,
+    ActiveTheme, Icon, IconName, WindowExt,
+    button::{Button, ButtonVariant, ButtonVariants as _},
+    dialog::DialogButtonProps,
+    notification::Notification,
 };
 
 use super::{SidebarView, action::*};
 
+struct TrashUndoNotification;
+
 impl SidebarView {
+    pub(super) fn on_toggle_board_pinned_action(
+        &mut self,
+        action: &ToggleBoardPinnedAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_board_pinned(action.board_id, action.pinned, cx);
+    }
+
+    pub(super) fn on_toggle_note_pinned_action(
+        &mut self,
+        action: &ToggleNotePinnedAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_note_pinned(action.note_id, action.pinned, cx);
+    }
+
     pub(super) fn on_delete_board_action(
         &mut self,
         action: &DeleteBoardAction,
@@ -26,9 +49,9 @@ impl SidebarView {
         window.open_alert_dialog(cx, move |alert, _, cx| {
             alert
                 .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
-                .title(format!("Delete board ‘{title}’"))
-                .description("This permanently deletes the board, every list, and every card it contains. This cannot be undone.")
-                .button_props(DialogButtonProps::default().ok_variant(ButtonVariant::Danger).ok_text("Delete board").cancel_text("Cancel").show_cancel(true))
+                .title(format!("Move board ‘{title}’ to Trash"))
+                .description("The board and everything inside it will be hidden until you restore it from Trash.")
+                .button_props(DialogButtonProps::default().ok_variant(ButtonVariant::Danger).ok_text("Move to Trash").cancel_text("Cancel").show_cancel(true))
                 .on_ok({
                     let view = view.clone();
                     move |_, _, cx| {
@@ -69,10 +92,18 @@ impl SidebarView {
     pub(super) fn on_delete_note_action(
         &mut self,
         action: &DeleteNoteAction,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_note(cx, action.0);
+        let title = self
+            .projects
+            .iter()
+            .flat_map(|project| project.notes.iter())
+            .chain(self.standalone_notes.iter())
+            .find(|note| note.id == action.0)
+            .map(|note| note.title.clone())
+            .unwrap_or_else(|| "Note".into());
+        self.delete_note(action.0, title, window, cx);
     }
 
     pub(super) fn on_edit_note_action(
@@ -96,19 +127,65 @@ impl SidebarView {
     pub(super) fn on_delete_project_action(
         &mut self,
         action: &DeleteProjectAction,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_project(cx, action.0);
+        let Some(project) = self.projects.iter().find(|project| project.id == action.0) else {
+            return;
+        };
+        let title = project.name.clone();
+        let child_count = project.boards.len() + project.notes.len();
+        let view = cx.entity();
+        let project_id = action.0;
+        window.open_alert_dialog(cx, move |alert, _, cx| {
+            alert
+                .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
+                .title(format!("Move project ‘{title}’ to Trash"))
+                .description(format!(
+                    "This hides the project and its {child_count} item(s) until you restore it."
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
+                        .ok_text("Move to Trash")
+                        .cancel_text("Cancel")
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| this.delete_project(cx, project_id));
+                        true
+                    }
+                })
+        });
     }
 
-    pub(super) fn on_archive_project_action(
-        &mut self,
-        action: &ArchiveProjectAction,
-        _: &mut Window,
+    pub(super) fn push_trash_undo(
+        &self,
+        kind: crate::trash::TrashItemKind,
+        id: u32,
+        title: gpui::SharedString,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.archive_project(cx, action.0);
+        let sidebar = cx.entity();
+        window.push_notification(
+            Notification::info(format!("Moved {title} to Trash"))
+                .id::<TrashUndoNotification>()
+                .action(move |_, _, cx| {
+                    let sidebar = sidebar.clone();
+                    Button::new("undo-move-to-trash")
+                        .label("Undo")
+                        .primary()
+                        .on_click(cx.listener(move |notification, _, window, cx| {
+                            sidebar.update(cx, |this, cx| this.restore_trashed(kind, id, cx));
+                            notification.dismiss(window, cx);
+                        }))
+                })
+                .autohide(true),
+            cx,
+        );
     }
 
     pub(super) fn on_move_project_up_action(

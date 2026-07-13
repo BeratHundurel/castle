@@ -41,7 +41,17 @@ pub(crate) struct DeleteProjectAction(pub(crate) u32);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = sidebar, no_json)]
-pub(crate) struct ArchiveProjectAction(pub(crate) u32);
+pub(crate) struct ToggleBoardPinnedAction {
+    pub(crate) board_id: u32,
+    pub(crate) pinned: bool,
+}
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = sidebar, no_json)]
+pub(crate) struct ToggleNotePinnedAction {
+    pub(crate) note_id: u32,
+    pub(crate) pinned: bool,
+}
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = sidebar, no_json)]

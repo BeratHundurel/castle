@@ -1,5 +1,6 @@
 mod action;
 mod handler;
+mod home;
 mod render;
 mod settings;
 mod tabs;
@@ -28,15 +29,18 @@ use gpui_component::{
 };
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
+use std::collections::HashMap;
 
 use crate::DB;
 use crate::app_settings::{AppSettings, StoredTab};
 use crate::board::BoardView;
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
+use crate::home::WorkspaceHomeState;
 use crate::markdown_editor::{
     DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts, unique_note_path,
 };
 use crate::sidebar::{SidebarEvent, SidebarView};
+use crate::trash::{TrashItem, TrashItemKind};
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
 
@@ -48,6 +52,7 @@ struct OpenTab {
 
 enum OpenTabKind {
     Chooser,
+    Trash,
     Board {
         board_id: u32,
         project_id: Option<u32>,
@@ -88,6 +93,8 @@ pub struct AppShell {
     title_input: Entity<InputState>,
     pub(crate) command_palette: CommandPalette,
     open_tabs: Vec<OpenTab>,
+    board_views: HashMap<u32, Entity<BoardView>>,
+    note_views: HashMap<u32, Entity<MarkdownEditorView>>,
     active_tab_index: usize,
     next_tab_id: u64,
     pub(crate) projects: Vec<ProjectChoice>,
@@ -97,6 +104,23 @@ pub struct AppShell {
     suppress_title_event: bool,
     settings_dialog_open: bool,
     window_is_narrow: bool,
+    home_state: WorkspaceHomeState,
+    home_loaded: bool,
+    home_refreshing: bool,
+    home_refresh_pending: bool,
+    home_error: Option<SharedString>,
+    trash_items: Vec<TrashItem>,
+    trash_loaded: bool,
+    trash_refreshing: bool,
+    trash_refresh_pending: bool,
+    trash_error: Option<SharedString>,
+    trash_search_input: Entity<InputState>,
+    trash_query: String,
+    trash_kind_filter: Option<TrashItemKind>,
+    workspace_refreshing: bool,
+    workspace_refresh_pending: bool,
+    record_opened_generation: u64,
+    tab_session_save_generation: u64,
 }
 
 impl AppShell {
@@ -108,10 +132,13 @@ impl AppShell {
         let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
         let mut open_tabs = Vec::with_capacity(tab_session.tabs.len().max(1));
+        let mut board_views = HashMap::new();
+        let mut note_views = HashMap::new();
         let mut next_tab_id = 1_u64;
         for stored_tab in tab_session.tabs {
             let (title, kind) = match stored_tab {
-                StoredTab::Chooser => (SharedString::from("New tab"), OpenTabKind::Chooser),
+                StoredTab::Chooser => (SharedString::from("Home"), OpenTabKind::Chooser),
+                StoredTab::Trash => (SharedString::from("Trash"), OpenTabKind::Trash),
                 StoredTab::Board {
                     board_id,
                     project_id,
@@ -119,6 +146,7 @@ impl AppShell {
                 } => {
                     let view = BoardView::view(window, cx);
                     view.update(cx, |board, cx| board.load_board(board_id, cx));
+                    board_views.insert(board_id, view.clone());
                     (
                         SharedString::from(title),
                         OpenTabKind::Board {
@@ -132,14 +160,18 @@ impl AppShell {
                     note_id,
                     project_id,
                     title,
-                } => (
-                    SharedString::from(title),
-                    OpenTabKind::Note {
-                        note_id,
-                        project_id,
-                        view: MarkdownEditorView::view(note_id, window, cx),
-                    },
-                ),
+                } => {
+                    let view = MarkdownEditorView::view(note_id, window, cx);
+                    note_views.insert(note_id, view.clone());
+                    (
+                        SharedString::from(title),
+                        OpenTabKind::Note {
+                            note_id,
+                            project_id,
+                            view,
+                        },
+                    )
+                }
             };
             open_tabs.push(OpenTab {
                 id: next_tab_id,
@@ -151,7 +183,7 @@ impl AppShell {
         if open_tabs.is_empty() {
             open_tabs.push(OpenTab {
                 id: next_tab_id,
-                title: "New tab".into(),
+                title: "Home".into(),
                 kind: OpenTabKind::Chooser,
             });
             next_tab_id = next_tab_id.saturating_add(1);
@@ -160,11 +192,13 @@ impl AppShell {
         let active_title = open_tabs[active_tab_index].title.to_string();
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("New tab")
+                .placeholder("Home")
                 .default_value(active_title)
         });
 
         let command_palette = CommandPalette::new(window, cx);
+        let trash_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search Trash..."));
 
         cx.subscribe(&title_input, |this, input, event: &InputEvent, cx| {
             if !matches!(event, InputEvent::Change) || this.suppress_title_event {
@@ -202,10 +236,28 @@ impl AppShell {
         )
         .detach();
 
+        cx.subscribe(
+            &trash_search_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.trash_query = input.read(cx).text().to_string();
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
         cx.subscribe_in(
             &sidebar,
             window,
             |this, _, event: &SidebarEvent, window, cx| match event {
+                SidebarEvent::OpenHome => this.open_home(window, cx),
+                SidebarEvent::OpenTrash => this.open_trash(window, cx),
+                SidebarEvent::WorkspaceChanged => {
+                    this.load_home(cx);
+                    this.load_trash(cx);
+                    this.refresh_workspace(cx);
+                }
                 SidebarEvent::OpenBoard {
                     board_id,
                     project_id,
@@ -301,8 +353,8 @@ impl AppShell {
                     this.rebuild_command_palette_workspace_commands();
                     cx.notify();
                 }
-                SidebarEvent::ProjectDeleted { project_id }
-                | SidebarEvent::ProjectArchived { project_id } => {
+                SidebarEvent::ProjectDeleted { project_id } => {
+                    this.close_project_tabs(*project_id, window, cx);
                     if this.active_project_id == Some(*project_id) {
                         this.active_project_id = None;
                     }
@@ -322,6 +374,8 @@ impl AppShell {
             title_input,
             command_palette,
             open_tabs,
+            board_views,
+            note_views,
             active_tab_index,
             next_tab_id,
             projects: vec![],
@@ -331,6 +385,23 @@ impl AppShell {
             suppress_title_event: false,
             settings_dialog_open: false,
             window_is_narrow: false,
+            home_state: WorkspaceHomeState::default(),
+            home_loaded: false,
+            home_refreshing: false,
+            home_refresh_pending: false,
+            home_error: None,
+            trash_items: Vec::new(),
+            trash_loaded: false,
+            trash_refreshing: false,
+            trash_refresh_pending: false,
+            trash_error: None,
+            trash_search_input,
+            trash_query: String::new(),
+            trash_kind_filter: None,
+            workspace_refreshing: false,
+            workspace_refresh_pending: false,
+            record_opened_generation: 0,
+            tab_session_save_generation: 0,
         };
 
         let show_sidebar = AppSettings::show_sidebar(cx);
@@ -344,8 +415,10 @@ impl AppShell {
         .detach();
         this.refresh_workspace(cx);
         this.sidebar
-            .update(cx, |_, cx| SidebarView::list_projects(cx));
+            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
         this.sync_sidebar_active(cx);
+        this.load_home(cx);
+        this.load_trash(cx);
         this
     }
 }

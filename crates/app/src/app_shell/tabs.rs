@@ -2,12 +2,15 @@ use super::*;
 use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
-    pub(super) fn persist_tab_session(&self, cx: &mut Context<Self>) {
+    pub(super) fn persist_tab_session(&mut self, cx: &mut Context<Self>) {
+        self.tab_session_save_generation = self.tab_session_save_generation.saturating_add(1);
+        let generation = self.tab_session_save_generation;
         let tabs = self
             .open_tabs
             .iter()
             .map(|tab| match &tab.kind {
                 OpenTabKind::Chooser => StoredTab::Chooser,
+                OpenTabKind::Trash => StoredTab::Trash,
                 OpenTabKind::Board {
                     board_id,
                     project_id,
@@ -28,14 +31,23 @@ impl AppShell {
                 },
             })
             .collect();
-        AppSettings::set_tab_session(
-            TabSession {
-                tabs,
-                active_tab_index: self.active_tab_index,
-                active_project_id: self.active_project_id,
-            },
-            cx,
-        );
+        let session = TabSession {
+            tabs,
+            active_tab_index: self.active_tab_index,
+            active_project_id: self.active_project_id,
+        };
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.tab_session_save_generation == generation {
+                    AppSettings::set_tab_session(session, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -44,7 +56,7 @@ impl AppShell {
         self.next_tab_id = self.next_tab_id.saturating_add(1);
         self.open_tabs.push(OpenTab {
             id,
-            title: "New tab".into(),
+            title: "Home".into(),
             kind: OpenTabKind::Chooser,
         });
         self.activate_tab(index, window, cx);
@@ -76,6 +88,12 @@ impl AppShell {
                     });
                 }
                 OpenTabKind::Chooser => {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.active_item = None;
+                        cx.notify();
+                    });
+                }
+                OpenTabKind::Trash => {
                     self.sidebar.update(cx, |sidebar, cx| {
                         sidebar.active_item = None;
                         cx.notify();
@@ -113,7 +131,7 @@ impl AppShell {
             } => {
                 self.active_project_id = *project_id;
             }
-            OpenTabKind::Chooser => {}
+            OpenTabKind::Chooser | OpenTabKind::Trash => {}
         }
 
         self.sync_sidebar_active(cx);
@@ -157,7 +175,7 @@ impl AppShell {
         self.next_tab_id = self.next_tab_id.saturating_add(1);
         self.open_tabs.push(OpenTab {
             id,
-            title: "New tab".into(),
+            title: "Home".into(),
             kind: OpenTabKind::Chooser,
         });
         self.activate_tab(index, window, cx);
@@ -173,7 +191,7 @@ impl AppShell {
         if self.open_tabs.is_empty() {
             self.open_tabs.push(OpenTab {
                 id: self.next_tab_id,
-                title: "New tab".into(),
+                title: "Home".into(),
                 kind: OpenTabKind::Chooser,
             });
             self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -199,6 +217,34 @@ impl AppShell {
         }
     }
 
+    pub(super) fn close_project_tabs(
+        &mut self,
+        project_id: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_indexes = self
+            .open_tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| match &tab.kind {
+                OpenTabKind::Board {
+                    project_id: Some(tab_project_id),
+                    ..
+                }
+                | OpenTabKind::Note {
+                    project_id: Some(tab_project_id),
+                    ..
+                } if *tab_project_id == project_id => Some(index),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for index in tab_indexes.into_iter().rev() {
+            self.close_tab(index, window, cx);
+        }
+    }
+
     pub(super) fn close_other_tabs(
         &mut self,
         id: u64,
@@ -209,7 +255,7 @@ impl AppShell {
         if self.open_tabs.is_empty() {
             self.open_tabs.push(OpenTab {
                 id: self.next_tab_id,
-                title: "New tab".into(),
+                title: "Home".into(),
                 kind: OpenTabKind::Chooser,
             });
             self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -226,7 +272,7 @@ impl AppShell {
         self.open_tabs.clear();
         self.open_tabs.push(OpenTab {
             id: self.next_tab_id,
-            title: "New tab".into(),
+            title: "Home".into(),
             kind: OpenTabKind::Chooser,
         });
         self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -263,7 +309,7 @@ impl AppShell {
             .open_tabs
             .get(self.active_tab_index)
             .map(|tab| tab.title.to_string())
-            .unwrap_or_else(|| "New tab".to_string());
+            .unwrap_or_else(|| "Home".to_string());
 
         self.suppress_title_event = true;
         self.title_input.update(cx, |input, cx| {
@@ -287,7 +333,7 @@ impl AppShell {
             OpenTabKind::Note { view, .. } => {
                 view.update(cx, |note, cx| note.set_title(title.to_string(), cx));
                 self.sidebar
-                    .update(cx, |_, cx| SidebarView::list_projects(cx));
+                    .update(cx, |sidebar, cx| sidebar.list_projects(cx));
             }
             OpenTabKind::Board { board_id, .. } => {
                 let db = cx.global::<DB>().conn.clone();
@@ -305,10 +351,10 @@ impl AppShell {
                 })
                 .detach();
                 self.sidebar
-                    .update(cx, |_, cx| SidebarView::list_projects(cx));
+                    .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                 self.refresh_workspace(cx);
             }
-            OpenTabKind::Chooser => {}
+            OpenTabKind::Chooser | OpenTabKind::Trash => {}
         }
 
         self.persist_tab_session(cx);
@@ -323,6 +369,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.record_item_opened(crate::home::WorkspaceItemKind::Board, board_id, cx);
         if let Some(index) = self.open_tabs.iter().position(
             |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == board_id),
         ) {
@@ -330,8 +377,12 @@ impl AppShell {
             return;
         }
 
-        let view = BoardView::view(window, cx);
-        view.update(cx, |board, cx| board.load_board(board_id, cx));
+        let view = self
+            .board_views
+            .entry(board_id)
+            .or_insert_with(|| BoardView::view(window, cx))
+            .clone();
+        view.update(cx, |board, cx| board.reload_board(board_id, cx));
         self.replace_or_push_active(
             OpenTabKind::Board {
                 board_id,
@@ -352,6 +403,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.record_item_opened(crate::home::WorkspaceItemKind::Note, note_id, cx);
         if let Some(index) = self.open_tabs.iter().position(
             |tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == note_id),
         ) {
@@ -359,7 +411,11 @@ impl AppShell {
             return;
         }
 
-        let view = MarkdownEditorView::view(note_id, window, cx);
+        let view = self
+            .note_views
+            .entry(note_id)
+            .or_insert_with(|| MarkdownEditorView::view(note_id, window, cx))
+            .clone();
         self.replace_or_push_active(
             OpenTabKind::Note {
                 note_id,
@@ -372,7 +428,7 @@ impl AppShell {
         );
     }
 
-    fn replace_or_push_active(
+    pub(super) fn replace_or_push_active(
         &mut self,
         kind: OpenTabKind,
         title: SharedString,

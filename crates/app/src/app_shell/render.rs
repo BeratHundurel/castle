@@ -187,132 +187,14 @@ impl AppShell {
 
         match &tab.kind {
             OpenTabKind::Chooser => self.render_chooser(cx).into_any_element(),
+            OpenTabKind::Trash => self.render_trash(cx).into_any_element(),
             OpenTabKind::Board { view, .. } => view.clone().into_any_element(),
             OpenTabKind::Note { view, .. } => view.clone().into_any_element(),
         }
     }
 
     fn render_chooser(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_project = self
-            .active_project_id
-            .and_then(|id| self.projects.iter().find(|project| project.id == id));
-
-        let active_project_id = active_project.map(|project| project.id);
-
-        v_flex()
-            .id("new-tab-chooser")
-            .size_full()
-            .items_center()
-            .justify_center()
-            .p_6()
-            .pb(px(120.))
-            .bg(cx.theme().background)
-            .child(
-                v_flex()
-                    .w_full()
-                    .max_w(px(640.))
-                    .items_center()
-                    .gap_4()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_2xl()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("New tab"),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Create or open something to work on."),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .justify_center()
-                            .gap_2()
-                            .child(
-                                Button::new("new-note-active")
-                                    .label(match active_project {
-                                        Some(project) => format!("New note in {}", project.name),
-                                        None => "New note".to_string(),
-                                    })
-                                    .primary()
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.create_note(active_project_id, window, cx);
-                                    })),
-                            )
-                            .when(active_project.is_some(), |this| {
-                                this.child(
-                                    Button::new("new-note-standalone")
-                                        .label("Standalone note")
-                                        .outline()
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.create_note(None, window, cx);
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("open-note-file")
-                                    .label("Open note file")
-                                    .outline()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_note_file(window, cx);
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .justify_center()
-                            .gap_2()
-                            .child(
-                                Button::new("new-board-active")
-                                    .label(match active_project {
-                                        Some(project) => format!("New board in {}", project.name),
-                                        None => "New board".to_string(),
-                                    })
-                                    .outline()
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.create_board(active_project_id, window, cx);
-                                    })),
-                            )
-                            .when(active_project.is_some(), |this| {
-                                this.child(
-                                    Button::new("new-board-standalone")
-                                        .label("Standalone board")
-                                        .outline()
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.create_board(None, window, cx);
-                                        })),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_4()
-                            .items_center()
-                            .flex_wrap()
-                            .justify_center()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(shortcut_hint("Command palette", platform_shortcut("P"), cx))
-                            .child(shortcut_hint(
-                                "Workspace search",
-                                platform_shortcut("Shift+F"),
-                                cx,
-                            ))
-                            .child(shortcut_hint("Switch tabs", "Ctrl+Tab", cx)),
-                    ),
-            )
+        self.render_home(cx)
     }
 }
 
@@ -435,6 +317,7 @@ fn tab_label(tab: &OpenTab, cx: &mut Context<AppShell>) -> SharedString {
                 tab.title.clone()
             }
         }
+        OpenTabKind::Trash => tab.title.clone(),
         _ => tab.title.clone(),
     }
 }
@@ -480,21 +363,4 @@ fn settings_shortcut() -> &'static str {
     } else {
         "Ctrl+,"
     }
-}
-
-fn shortcut_hint(
-    label: &'static str,
-    shortcut: impl Into<SharedString>,
-    cx: &mut Context<AppShell>,
-) -> impl IntoElement {
-    h_flex()
-        .gap_1()
-        .items_center()
-        .child(div().child(label))
-        .child(
-            div()
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_color(cx.theme().muted_foreground.opacity(0.8))
-                .child(shortcut.into()),
-        )
 }

@@ -16,6 +16,9 @@ pub struct Model {
     pub file_missing_since: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub is_pinned: bool,
+    pub last_opened_at: Option<i64>,
+    pub deleted_at: Option<i64>,
     #[sea_orm(
         belongs_to,
         from = "project_id",

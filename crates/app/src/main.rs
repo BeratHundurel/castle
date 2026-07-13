@@ -5,7 +5,7 @@ use dotenvy::dotenv;
 use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::Database;
+use sea_orm::{ConnectOptions, Database};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,7 +29,9 @@ async fn main() -> Result<()> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let connection = Database::connect(&database_url).await?;
+    let mut options = ConnectOptions::new(database_url);
+    options.max_connections(4).min_connections(1);
+    let connection = Database::connect(options).await?;
     Migrator::up(&connection, None).await?;
 
     let db = DB {

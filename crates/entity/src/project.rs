@@ -11,6 +11,7 @@ pub struct Model {
     pub name: String,
     pub archived: bool,
     pub position: i32,
+    pub deleted_at: Option<i64>,
     #[sea_orm(has_many)]
     pub boards: HasMany<super::board::Entity>,
     #[sea_orm(has_many)]

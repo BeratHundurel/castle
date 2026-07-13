@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use entity::{
     board, board::Entity as Board, card, card::Entity as Card, entry, entry::Entity as Entry, note,
-    note::Entity as Note,
+    note::Entity as Note, project, project::Entity as Project,
 };
 use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, QuerySelect, Statement,
-    TransactionTrait, Value,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, QueryFilter,
+    QuerySelect, Statement, TransactionTrait, Value,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +31,18 @@ pub(crate) struct SearchResult {
 }
 
 pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let active_project_ids = Project::find()
+        .filter(project::Column::DeletedAt.is_null())
+        .select_only()
+        .column(project::Column::Id)
+        .into_tuple::<i64>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect::<HashSet<_>>();
+
     let notes = Note::find()
+        .filter(note::Column::DeletedAt.is_null())
         .select_only()
         .column(note::Column::Id)
         .column(note::Column::ProjectId)
@@ -39,16 +50,27 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(note::Column::CachedContent)
         .into_tuple::<(i64, Option<i64>, String, String)>()
         .all(db)
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|(_, project_id, _, _)| {
+            project_id.is_none_or(|id| active_project_ids.contains(&id))
+        })
+        .collect::<Vec<_>>();
 
     let boards = Board::find()
+        .filter(board::Column::DeletedAt.is_null())
         .select_only()
         .column(board::Column::Id)
         .column(board::Column::ProjectId)
         .column(board::Column::Title)
         .into_tuple::<(i64, Option<i64>, String)>()
         .all(db)
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|(_, project_id, _)| project_id.is_none_or(|id| active_project_ids.contains(&id)))
+        .collect::<Vec<_>>();
+
+    let active_board_ids = boards.iter().map(|(id, _, _)| *id).collect::<HashSet<_>>();
 
     let board_projects = boards
         .iter()
@@ -56,6 +78,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .collect::<HashMap<_, _>>();
 
     let cards = Card::find()
+        .filter(card::Column::DeletedAt.is_null())
         .select_only()
         .column(card::Column::Id)
         .column(card::Column::BoardId)
@@ -63,7 +86,15 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(card::Column::Position)
         .into_tuple::<(i64, i64, String, i32)>()
         .all(db)
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|(_, board_id, _, _)| active_board_ids.contains(board_id))
+        .collect::<Vec<_>>();
+
+    let active_card_ids = cards
+        .iter()
+        .map(|(id, _, _, _)| *id)
+        .collect::<HashSet<_>>();
 
     let card_boards = cards
         .iter()
@@ -87,6 +118,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
     }
 
     let entries = Entry::find()
+        .filter(entry::Column::DeletedAt.is_null())
         .select_only()
         .column(entry::Column::Id)
         .column(entry::Column::CardId)
@@ -95,7 +127,10 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(entry::Column::Position)
         .into_tuple::<(i64, i64, String, String, i32)>()
         .all(db)
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|(_, card_id, _, _, _)| active_card_ids.contains(card_id))
+        .collect::<Vec<_>>();
 
     let mut entries_by_card: HashMap<i64, Vec<EntrySearchSource>> = HashMap::new();
     for (id, card_id, title, description, position) in entries {

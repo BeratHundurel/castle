@@ -50,6 +50,7 @@ pub(crate) struct BoardView {
     next_checklist_item_position: i32,
     next_due_date_update_revision: u64,
     persisted_due_date_revisions: Arc<tokio::sync::Mutex<HashMap<u32, u64>>>,
+    load_generation: u64,
 }
 
 impl BoardView {
@@ -272,6 +273,7 @@ impl BoardView {
             next_checklist_item_position: 0,
             next_due_date_update_revision: 0,
             persisted_due_date_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            load_generation: 0,
         }
     }
 }
