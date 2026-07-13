@@ -22,6 +22,15 @@ pub(crate) struct EmmetSubmitWrap;
 #[action(namespace = markdown_editor, no_json)]
 pub(crate) struct EmmetCancelWrap;
 
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = markdown_editor, no_json)]
+pub(crate) struct ToggleDocumentOutline;
+
+gpui::actions!(
+    markdown_outline,
+    [OutlinePrevious, OutlineNext, OutlineOpen, OutlineClose]
+);
+
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
 pub(crate) enum MarkdownFormat {
     HeadingOne,

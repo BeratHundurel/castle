@@ -1,5 +1,5 @@
 use entity::{note, note::Entity as Note};
-use gpui::{Context, SharedString, Window};
+use gpui::{Context, SharedString, Task, Window};
 use gpui_component::highlighter::Language;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use std::{
@@ -10,42 +10,48 @@ use std::{
 
 use crate::DB;
 
+use super::outline::MarkdownOutline;
 use super::types::{DocumentStats, SaveState};
 use super::util::{now_ts, suggested_file_name, unique_note_path};
 use super::{AUTO_SAVE_IDLE_DELAY, MarkdownEditorView};
 
 impl MarkdownEditorView {
-    pub(super) fn load_note_async(note_id: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn load_note_async(
+        note_id: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let db = cx.global::<DB>().conn.clone();
-        let view = cx.entity();
+        let runtime = tokio::runtime::Handle::current();
         let background_executor = cx.background_executor().clone();
 
-        cx.spawn_in(window, async move |_, window| {
-            let model = match Note::find_by_id(note_id as i64).one(&*db).await {
-                Ok(Some(model)) => model,
-                Ok(None) => {
+        cx.spawn_in(window, async move |this, window| {
+            let query_db = db.clone();
+            let model = match runtime
+                .spawn(async move { Note::find_by_id(note_id as i64).one(&*query_db).await })
+                .await
+            {
+                Ok(Ok(Some(model))) => model,
+                Ok(Ok(None)) => {
                     let message = format!("Note {note_id} was not found.");
                     eprintln!("{message}");
-                    window
-                        .update(|_, cx| {
-                            view.update(cx, |this, cx| {
-                                this.fail_load(message, cx);
-                            });
-                        })
-                        .ok()?;
-                    return Some(());
+                    this.update_in(window, |this, _, cx| this.fail_load(message, cx))
+                        .ok();
+                    return;
+                }
+                Ok(Err(err)) => {
+                    let message = format!("Failed to load note {note_id}: {err}");
+                    eprintln!("{message}");
+                    this.update_in(window, |this, _, cx| this.fail_load(message, cx))
+                        .ok();
+                    return;
                 }
                 Err(err) => {
                     let message = format!("Failed to load note {note_id}: {err}");
                     eprintln!("{message}");
-                    window
-                        .update(|_, cx| {
-                            view.update(cx, |this, cx| {
-                                this.fail_load(message, cx);
-                            });
-                        })
-                        .ok()?;
-                    return Some(());
+                    this.update_in(window, |this, _, cx| this.fail_load(message, cx))
+                        .ok();
+                    return;
                 }
             };
 
@@ -53,27 +59,24 @@ impl MarkdownEditorView {
             let cached_content = model.cached_content.clone();
 
             let cached_epoch = if path.is_none() || !cached_content.is_empty() {
-                window
-                    .update(|window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.load_model(
-                                model.clone(),
-                                cached_content.clone(),
-                                false,
-                                false,
-                                window,
-                                cx,
-                            );
-                            this.auto_save_epoch
-                        })
-                    })
-                    .ok()
+                this.update_in(window, |this, window, cx| {
+                    this.load_model(
+                        model.clone(),
+                        cached_content.clone(),
+                        false,
+                        false,
+                        window,
+                        cx,
+                    );
+                    this.auto_save_epoch
+                })
+                .ok()
             } else {
                 None
             };
 
             let Some(path) = path else {
-                return Some(());
+                return;
             };
 
             match background_executor
@@ -82,72 +85,74 @@ impl MarkdownEditorView {
             {
                 Ok(content) => {
                     if model.cached_content != content || model.file_missing_since.is_some() {
-                        let _ = note::ActiveModel {
-                            id: Set(note_id as i64),
-                            cached_content: Set(content.clone()),
-                            file_missing_since: Set(None),
-                            updated_at: Set(now_ts()),
-                            ..Default::default()
-                        }
-                        .update(&*db)
-                        .await;
+                        let update_db = db.clone();
+                        let update_content = content.clone();
+                        let _ = runtime
+                            .spawn(async move {
+                                note::ActiveModel {
+                                    id: Set(note_id as i64),
+                                    cached_content: Set(update_content),
+                                    file_missing_since: Set(None),
+                                    updated_at: Set(now_ts()),
+                                    ..Default::default()
+                                }
+                                .update(&*update_db)
+                                .await
+                            })
+                            .await;
                     }
 
                     if cached_epoch.is_some()
                         && model.cached_content == content
                         && model.file_missing_since.is_none()
                     {
-                        return Some(());
+                        return;
                     }
 
-                    window
-                        .update(|window, cx| {
-                            view.update(cx, |this, cx| {
-                                if let Some(expected_epoch) = cached_epoch
-                                    && this.auto_save_epoch != expected_epoch
-                                {
-                                    return;
-                                }
+                    this.update_in(window, |this, window, cx| {
+                        if let Some(expected_epoch) = cached_epoch
+                            && this.auto_save_epoch != expected_epoch
+                        {
+                            return;
+                        }
 
-                                this.load_model(model, content, false, false, window, cx);
-                            })
-                        })
-                        .ok()?;
+                        this.load_model(model, content, false, false, window, cx);
+                    })
+                    .ok();
                 }
                 Err(_) => {
                     if model.file_missing_since.is_none() {
-                        let _ = note::ActiveModel {
-                            id: Set(note_id as i64),
-                            file_missing_since: Set(Some(now_ts())),
-                            ..Default::default()
-                        }
-                        .update(&*db)
-                        .await;
+                        let update_db = db.clone();
+                        let _ = runtime
+                            .spawn(async move {
+                                note::ActiveModel {
+                                    id: Set(note_id as i64),
+                                    file_missing_since: Set(Some(now_ts())),
+                                    ..Default::default()
+                                }
+                                .update(&*update_db)
+                                .await
+                            })
+                            .await;
                     }
 
-                    window
-                        .update(|window, cx| {
-                            view.update(cx, |this, cx| {
-                                if let Some(expected_epoch) = cached_epoch
-                                    && this.auto_save_epoch != expected_epoch
-                                {
-                                    return;
-                                }
+                    this.update_in(window, |this, window, cx| {
+                        if let Some(expected_epoch) = cached_epoch
+                            && this.auto_save_epoch != expected_epoch
+                        {
+                            return;
+                        }
 
-                                if cached_epoch.is_some() {
-                                    this.mark_file_missing(cx);
-                                } else {
-                                    this.load_model(model, cached_content, true, false, window, cx);
-                                }
-                            })
-                        })
-                        .ok()?;
+                        if cached_epoch.is_some() {
+                            this.mark_file_missing(cx);
+                        } else {
+                            this.load_model(model, cached_content, true, false, window, cx);
+                        }
+                    })
+                    .ok();
                 }
             }
-
-            Some(())
         })
-        .detach();
     }
 
     pub(super) fn load_model(
@@ -173,6 +178,8 @@ impl MarkdownEditorView {
         };
 
         self.stats = DocumentStats::from_text(&content);
+        self.outline = MarkdownOutline::parse(&content);
+        self.outline_selected = self.outline.active_index_for_line(0);
 
         self.suppress_editor_events = true;
         self.editor.update(cx, |editor, cx| {
@@ -216,6 +223,9 @@ impl MarkdownEditorView {
         });
 
         self.stats = DocumentStats::from_text(value.as_ref());
+        self.outline = MarkdownOutline::parse(value.as_ref());
+        let cursor_line = self.editor.read(cx).cursor_position().line as usize;
+        self.outline_selected = self.outline.active_index_for_line(cursor_line);
 
         let old_save_state = self.save_state.clone();
         if !matches!(self.save_state, SaveState::Missing) {

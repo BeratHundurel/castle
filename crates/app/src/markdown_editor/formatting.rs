@@ -4,6 +4,7 @@ use std::ops::Range;
 
 use super::MarkdownEditorView;
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
+use super::types::EditorMode;
 
 impl MarkdownEditorView {
     pub(super) fn apply_format(
@@ -12,6 +13,10 @@ impl MarkdownEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.mode == EditorMode::Preview {
+            return;
+        }
+
         let selected = self.editor.read(cx).selected_value().to_string();
         let replacement = match action.0 {
             MarkdownFormat::HeadingOne => Self::prefix_block(&selected, "# ", "Heading"),

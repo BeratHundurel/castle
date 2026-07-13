@@ -21,6 +21,7 @@ const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE: f64 = 16.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
 const DEFAULT_MARKDOWN_LINE_NUMBERS: bool = false;
 const DEFAULT_MARKDOWN_SOFT_WRAP: bool = true;
+const DEFAULT_MARKDOWN_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 
@@ -68,6 +69,7 @@ struct StoredSettings {
     markdown_editor_mode: String,
     markdown_line_numbers: bool,
     markdown_soft_wrap: bool,
+    markdown_outline_visible: bool,
     close_to_tray: bool,
     tray_shortcut: String,
     tab_session: TabSession,
@@ -88,6 +90,7 @@ impl Default for StoredSettings {
             markdown_editor_mode: DEFAULT_MARKDOWN_EDITOR_MODE.to_string(),
             markdown_line_numbers: DEFAULT_MARKDOWN_LINE_NUMBERS,
             markdown_soft_wrap: DEFAULT_MARKDOWN_SOFT_WRAP,
+            markdown_outline_visible: DEFAULT_MARKDOWN_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
             tab_session: TabSession::default(),
@@ -261,6 +264,16 @@ impl AppSettings {
     pub(crate) fn set_markdown_soft_wrap(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_soft_wrap = enabled;
+        });
+    }
+
+    pub(crate) fn markdown_outline_visible(cx: &App) -> bool {
+        cx.global::<Self>().values.markdown_outline_visible
+    }
+
+    pub(crate) fn set_markdown_outline_visible(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.markdown_outline_visible = enabled;
         });
     }
 

@@ -6,6 +6,66 @@ use super::action::*;
 use super::emmet::parse_emmet_abbreviation;
 
 impl MarkdownEditorView {
+    pub(super) fn on_action_toggle_outline(
+        &mut self,
+        _: &ToggleDocumentOutline,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_outline(cx);
+    }
+
+    pub(super) fn on_action_outline_previous(
+        &mut self,
+        _: &OutlinePrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.outline.items.is_empty() {
+            return;
+        }
+        self.outline_selected = Some(self.outline_selected.unwrap_or(0).saturating_sub(1));
+        cx.notify();
+    }
+
+    pub(super) fn on_action_outline_next(
+        &mut self,
+        _: &OutlineNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.outline.items.is_empty() {
+            return;
+        }
+        let next = self
+            .outline_selected
+            .unwrap_or(0)
+            .saturating_add(1)
+            .min(self.outline.items.len().saturating_sub(1));
+        self.outline_selected = Some(next);
+        cx.notify();
+    }
+
+    pub(super) fn on_action_outline_open(
+        &mut self,
+        _: &OutlineOpen,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = self.outline_selected {
+            self.select_outline_item(index, window, cx);
+        }
+    }
+
+    pub(super) fn on_action_outline_close(
+        &mut self,
+        _: &OutlineClose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_active_mode(window, cx);
+    }
+
     pub(super) fn on_action_save(
         &mut self,
         _: &SaveMarkdownFile,

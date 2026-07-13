@@ -7,7 +7,8 @@ use crate::command_palette::{
 };
 use crate::markdown_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
-    SaveMarkdownFile, SaveMarkdownFileAs, ToggleEditorMode,
+    OutlineClose, OutlineNext, OutlineOpen, OutlinePrevious, SaveMarkdownFile, SaveMarkdownFileAs,
+    ToggleDocumentOutline, ToggleEditorMode,
 };
 
 #[derive(Clone)]
@@ -47,140 +48,140 @@ pub fn init(cx: &mut App) {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", ToggleSidebarAction, Some("AppShell")),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-alt-e", ExpandEmmet, Some("MarkdownEditor")),
+        KeyBinding::new("cmd-alt-e", ExpandEmmet, Some("MarkdownSource")),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-alt-e", ExpandEmmet, Some("MarkdownEditor")),
+        KeyBinding::new("ctrl-alt-e", ExpandEmmet, Some("MarkdownSource")),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-b",
             ApplyMarkdownFormat(MarkdownFormat::Bold),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-b",
             ApplyMarkdownFormat(MarkdownFormat::Bold),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-i",
             ApplyMarkdownFormat(MarkdownFormat::Italic),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-i",
             ApplyMarkdownFormat(MarkdownFormat::Italic),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-k",
             ApplyMarkdownFormat(MarkdownFormat::Link),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-k",
             ApplyMarkdownFormat(MarkdownFormat::Link),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-e",
             ApplyMarkdownFormat(MarkdownFormat::InlineCode),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-e",
             ApplyMarkdownFormat(MarkdownFormat::InlineCode),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-alt-1",
             ApplyMarkdownFormat(MarkdownFormat::HeadingOne),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-alt-1",
             ApplyMarkdownFormat(MarkdownFormat::HeadingOne),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-alt-2",
             ApplyMarkdownFormat(MarkdownFormat::HeadingTwo),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-alt-2",
             ApplyMarkdownFormat(MarkdownFormat::HeadingTwo),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-alt-3",
             ApplyMarkdownFormat(MarkdownFormat::HeadingThree),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-alt-3",
             ApplyMarkdownFormat(MarkdownFormat::HeadingThree),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-shift-7",
             ApplyMarkdownFormat(MarkdownFormat::OrderedList),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-shift-7",
             ApplyMarkdownFormat(MarkdownFormat::OrderedList),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-shift-8",
             ApplyMarkdownFormat(MarkdownFormat::BulletList),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-shift-8",
             ApplyMarkdownFormat(MarkdownFormat::BulletList),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-shift-.",
             ApplyMarkdownFormat(MarkdownFormat::Quote),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-shift-.",
             ApplyMarkdownFormat(MarkdownFormat::Quote),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "cmd-alt-c",
             ApplyMarkdownFormat(MarkdownFormat::CodeBlock),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new(
             "ctrl-alt-c",
             ApplyMarkdownFormat(MarkdownFormat::CodeBlock),
-            Some("MarkdownEditor"),
+            Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", SaveMarkdownFile, Some("MarkdownEditor")),
@@ -200,6 +201,15 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-v", ToggleEditorMode, Some("TextView")),
         KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
         KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
+        KeyBinding::new(
+            "ctrl-shift-o",
+            ToggleDocumentOutline,
+            Some("MarkdownEditor"),
+        ),
+        KeyBinding::new("up", OutlinePrevious, Some("MarkdownOutline")),
+        KeyBinding::new("down", OutlineNext, Some("MarkdownOutline")),
+        KeyBinding::new("enter", OutlineOpen, Some("MarkdownOutline")),
+        KeyBinding::new("escape", OutlineClose, Some("MarkdownOutline")),
     ];
 
     let shortcuts = bindings
