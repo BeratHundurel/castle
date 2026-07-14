@@ -1,12 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use entity::{
     board, board::Entity as Board, card, card::Entity as Card, entry, entry::Entity as Entry, note,
     note::Entity as Note, project, project::Entity as Project,
 };
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, QueryFilter,
-    QuerySelect, Statement, TransactionTrait, Value,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
+    QueryFilter, QuerySelect, Statement, TransactionTrait, Value,
+    sea_query::{Query, SelectStatement},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,19 +31,44 @@ pub(crate) struct SearchResult {
     pub(crate) preview: String,
 }
 
-pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let active_project_ids = Project::find()
-        .filter(project::Column::DeletedAt.is_null())
-        .select_only()
+fn active_project_ids_query() -> SelectStatement {
+    Query::select()
         .column(project::Column::Id)
-        .into_tuple::<i64>()
-        .all(db)
-        .await?
-        .into_iter()
-        .collect::<HashSet<_>>();
+        .from(Project)
+        .and_where(project::Column::DeletedAt.is_null())
+        .to_owned()
+}
 
+fn active_board_ids_query() -> SelectStatement {
+    Query::select()
+        .column(board::Column::Id)
+        .from(Board)
+        .and_where(board::Column::DeletedAt.is_null())
+        .cond_where(
+            Condition::any()
+                .add(board::Column::ProjectId.is_null())
+                .add(board::Column::ProjectId.in_subquery(active_project_ids_query())),
+        )
+        .to_owned()
+}
+
+fn active_card_ids_query() -> SelectStatement {
+    Query::select()
+        .column(card::Column::Id)
+        .from(Card)
+        .and_where(card::Column::DeletedAt.is_null())
+        .and_where(card::Column::BoardId.in_subquery(active_board_ids_query()))
+        .to_owned()
+}
+
+pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
     let notes = Note::find()
         .filter(note::Column::DeletedAt.is_null())
+        .filter(
+            Condition::any()
+                .add(note::Column::ProjectId.is_null())
+                .add(note::Column::ProjectId.in_subquery(active_project_ids_query())),
+        )
         .select_only()
         .column(note::Column::Id)
         .column(note::Column::ProjectId)
@@ -50,27 +76,22 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(note::Column::CachedContent)
         .into_tuple::<(i64, Option<i64>, String, String)>()
         .all(db)
-        .await?
-        .into_iter()
-        .filter(|(_, project_id, _, _)| {
-            project_id.is_none_or(|id| active_project_ids.contains(&id))
-        })
-        .collect::<Vec<_>>();
+        .await?;
 
     let boards = Board::find()
         .filter(board::Column::DeletedAt.is_null())
+        .filter(
+            Condition::any()
+                .add(board::Column::ProjectId.is_null())
+                .add(board::Column::ProjectId.in_subquery(active_project_ids_query())),
+        )
         .select_only()
         .column(board::Column::Id)
         .column(board::Column::ProjectId)
         .column(board::Column::Title)
         .into_tuple::<(i64, Option<i64>, String)>()
         .all(db)
-        .await?
-        .into_iter()
-        .filter(|(_, project_id, _)| project_id.is_none_or(|id| active_project_ids.contains(&id)))
-        .collect::<Vec<_>>();
-
-    let active_board_ids = boards.iter().map(|(id, _, _)| *id).collect::<HashSet<_>>();
+        .await?;
 
     let board_projects = boards
         .iter()
@@ -79,6 +100,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
 
     let cards = Card::find()
         .filter(card::Column::DeletedAt.is_null())
+        .filter(card::Column::BoardId.in_subquery(active_board_ids_query()))
         .select_only()
         .column(card::Column::Id)
         .column(card::Column::BoardId)
@@ -86,15 +108,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(card::Column::Position)
         .into_tuple::<(i64, i64, String, i32)>()
         .all(db)
-        .await?
-        .into_iter()
-        .filter(|(_, board_id, _, _)| active_board_ids.contains(board_id))
-        .collect::<Vec<_>>();
-
-    let active_card_ids = cards
-        .iter()
-        .map(|(id, _, _, _)| *id)
-        .collect::<HashSet<_>>();
+        .await?;
 
     let card_boards = cards
         .iter()
@@ -119,6 +133,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
 
     let entries = Entry::find()
         .filter(entry::Column::DeletedAt.is_null())
+        .filter(entry::Column::CardId.in_subquery(active_card_ids_query()))
         .select_only()
         .column(entry::Column::Id)
         .column(entry::Column::CardId)
@@ -127,10 +142,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         .column(entry::Column::Position)
         .into_tuple::<(i64, i64, String, String, i32)>()
         .all(db)
-        .await?
-        .into_iter()
-        .filter(|(_, card_id, _, _, _)| active_card_ids.contains(card_id))
-        .collect::<Vec<_>>();
+        .await?;
 
     let mut entries_by_card: HashMap<i64, Vec<EntrySearchSource>> = HashMap::new();
     for (id, card_id, title, description, position) in entries {
@@ -149,65 +161,6 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
         entries.sort_by_key(|entry| (entry.position, entry.id));
     }
 
-    let entry_count = entries_by_card.values().map(Vec::len).sum::<usize>();
-    let mut documents = Vec::with_capacity(notes.len() + boards.len() + cards.len() + entry_count);
-
-    for (id, project_id, title, content) in notes {
-        documents.push(SearchDocument {
-            item_type: "note",
-            item_id: id,
-            parent_id: Some(id),
-            project_id,
-            title,
-            body: content,
-        });
-    }
-
-    for (id, project_id, title) in boards {
-        documents.push(SearchDocument {
-            item_type: "board",
-            item_id: id,
-            parent_id: Some(id),
-            project_id,
-            title,
-            body: search_board_body(
-                &cards,
-                cards_by_board.get(&id).map(Vec::as_slice),
-                &entries_by_card,
-            ),
-        });
-    }
-
-    for (id, board_id, title, _) in cards {
-        let body = search_card_body(&title, entries_by_card.get(&id).map(Vec::as_slice));
-
-        documents.push(SearchDocument {
-            item_type: "card",
-            item_id: id,
-            parent_id: Some(board_id),
-            project_id: board_projects.get(&board_id).copied().flatten(),
-            title,
-            body,
-        });
-    }
-
-    for (card_id, entries) in entries_by_card {
-        let Some(board_id) = card_boards.get(&card_id).copied() else {
-            continue;
-        };
-
-        for entry in entries {
-            documents.push(SearchDocument {
-                item_type: "entry",
-                item_id: entry.id,
-                parent_id: Some(board_id),
-                project_id: board_projects.get(&board_id).copied().flatten(),
-                title: entry.title,
-                body: entry.description,
-            });
-        }
-    }
-
     let txn = db.begin().await?;
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -216,7 +169,80 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
     ))
     .await?;
 
-    insert_search_documents(&txn, documents).await?;
+    insert_search_documents(
+        &txn,
+        notes
+            .into_iter()
+            .map(|(id, project_id, title, content)| SearchDocument {
+                item_type: "note",
+                item_id: id,
+                parent_id: Some(id),
+                project_id,
+                title,
+                body: content,
+            }),
+    )
+    .await?;
+
+    insert_search_documents(
+        &txn,
+        boards
+            .into_iter()
+            .map(|(id, project_id, title)| SearchDocument {
+                item_type: "board",
+                item_id: id,
+                parent_id: Some(id),
+                project_id,
+                title,
+                body: search_board_body(
+                    &cards,
+                    cards_by_board.get(&id).map(Vec::as_slice),
+                    &entries_by_card,
+                ),
+            }),
+    )
+    .await?;
+
+    insert_search_documents(
+        &txn,
+        cards.into_iter().map(|(id, board_id, title, _)| {
+            let body = search_card_body(&title, entries_by_card.get(&id).map(Vec::as_slice));
+
+            SearchDocument {
+                item_type: "card",
+                item_id: id,
+                parent_id: Some(board_id),
+                project_id: board_projects.get(&board_id).copied().flatten(),
+                title,
+                body,
+            }
+        }),
+    )
+    .await?;
+
+    insert_search_documents(
+        &txn,
+        entries_by_card.into_iter().flat_map(|(card_id, entries)| {
+            let parent = card_boards
+                .get(&card_id)
+                .copied()
+                .map(|board_id| (board_id, board_projects.get(&board_id).copied().flatten()));
+
+            entries.into_iter().filter_map(move |entry| {
+                let (board_id, project_id) = parent?;
+                Some(SearchDocument {
+                    item_type: "entry",
+                    item_id: entry.id,
+                    parent_id: Some(board_id),
+                    project_id,
+                    title: entry.title,
+                    body: entry.description,
+                })
+            })
+        }),
+    )
+    .await?;
+
     txn.commit().await?;
 
     Ok(())
@@ -516,7 +542,7 @@ async fn load_board_titles(
 
 async fn insert_search_documents(
     db: &impl ConnectionTrait,
-    documents: Vec<SearchDocument>,
+    documents: impl IntoIterator<Item = SearchDocument>,
 ) -> Result<(), DbErr> {
     let mut chunk = Vec::with_capacity(100);
 
@@ -587,7 +613,348 @@ pub(crate) async fn delete_search_item(
 
 #[cfg(test)]
 mod tests {
-    use super::fts_query;
+    use super::{fts_query, rebuild_search_index};
+    use crate::test_alloc;
+    use anyhow::Result;
+    use entity::{board, card, entry, note, project};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database};
+
+    #[tokio::test]
+    async fn streamed_rebuild_preserves_search_documents() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let project = project::ActiveModel {
+            name: Set("Search proof".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        note::ActiveModel {
+            id: Set(1),
+            title: Set("Note title".to_string()),
+            project_id: Set(Some(project.id)),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("Note body".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        board::ActiveModel {
+            id: Set(1),
+            title: Set("Board title".to_string()),
+            project_id: Set(Some(project.id)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        card::ActiveModel {
+            id: Set(1),
+            title: Set("List title".to_string()),
+            board_id: Set(1),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        entry::ActiveModel {
+            id: Set(1),
+            title: Set("Entry title".to_string()),
+            description: Set("Entry description".to_string()),
+            card_id: Set(1),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let deleted_project = project::ActiveModel {
+            name: Set("Deleted search hierarchy".to_string()),
+            archived: Set(false),
+            position: Set(1),
+            deleted_at: Set(Some(1)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        note::ActiveModel {
+            id: Set(2),
+            title: Set("Excluded note".to_string()),
+            project_id: Set(Some(deleted_project.id)),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("Excluded body".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(2),
+            updated_at: Set(2),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        board::ActiveModel {
+            id: Set(2),
+            title: Set("Excluded board".to_string()),
+            project_id: Set(Some(deleted_project.id)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        card::ActiveModel {
+            id: Set(2),
+            title: Set("Excluded list".to_string()),
+            board_id: Set(2),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        entry::ActiveModel {
+            id: Set(2),
+            title: Set("Excluded entry".to_string()),
+            description: Set("Excluded description".to_string()),
+            card_id: Set(2),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        rebuild_search_index(&db).await?;
+
+        let rows = db
+            .query_all_raw(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT item_type, title, body FROM search_index ORDER BY rowid",
+            ))
+            .await?;
+        let documents = rows
+            .into_iter()
+            .map(|row| {
+                Ok::<_, sea_orm::DbErr>((
+                    row.try_get::<String>("", "item_type")?,
+                    row.try_get::<String>("", "title")?,
+                    row.try_get::<String>("", "body")?,
+                ))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        assert_eq!(
+            documents,
+            vec![
+                (
+                    "note".to_string(),
+                    "Note title".to_string(),
+                    "Note body".to_string(),
+                ),
+                (
+                    "board".to_string(),
+                    "Board title".to_string(),
+                    "## List title\n- Entry title: Entry description".to_string(),
+                ),
+                (
+                    "card".to_string(),
+                    "List title".to_string(),
+                    "## List title\n- Entry title: Entry description".to_string(),
+                ),
+                (
+                    "entry".to_string(),
+                    "Entry title".to_string(),
+                    "Entry description".to_string(),
+                ),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    async fn rebuild_search_index_heap_benchmark() -> Result<()> {
+        const BOARD_COUNT: usize = 120;
+        const CARDS_PER_BOARD: usize = 2;
+        const ENTRIES_PER_CARD: usize = 2;
+        const DESCRIPTION_BYTES: usize = 64 * 1024;
+
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let project = project::ActiveModel {
+            name: Set("Search benchmark".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let description = "x".repeat(DESCRIPTION_BYTES);
+        let mut card_id = 1_i64;
+        let mut entry_id = 1_i64;
+
+        for board_index in 0..BOARD_COUNT {
+            let board_id = board_index as i64 + 1;
+            board::ActiveModel {
+                id: Set(board_id),
+                title: Set(format!("Board {board_index}")),
+                project_id: Set(Some(project.id)),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+
+            for card_index in 0..CARDS_PER_BOARD {
+                let current_card_id = card_id;
+                card_id += 1;
+
+                card::ActiveModel {
+                    id: Set(current_card_id),
+                    title: Set(format!("Card {board_index}-{card_index}")),
+                    board_id: Set(board_id),
+                    position: Set(card_index as i32),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+
+                for entry_index in 0..ENTRIES_PER_CARD {
+                    entry::ActiveModel {
+                        id: Set(entry_id),
+                        title: Set(format!("Entry {board_index}-{card_index}-{entry_index}")),
+                        description: Set(description.clone()),
+                        card_id: Set(current_card_id),
+                        position: Set(entry_index as i32),
+                        ..Default::default()
+                    }
+                    .insert(&db)
+                    .await?;
+                    entry_id += 1;
+                }
+            }
+        }
+
+        drop(description);
+        let allocation = test_alloc::start_measurement();
+        rebuild_search_index(&db).await?;
+        let allocation = allocation.finish();
+
+        let expected_documents = BOARD_COUNT
+            + BOARD_COUNT * CARDS_PER_BOARD
+            + BOARD_COUNT * CARDS_PER_BOARD * ENTRIES_PER_CARD;
+        let indexed_documents = db
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM search_index",
+            ))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("search index count query returned no row"))?
+            .try_get::<i64>("", "count")? as usize;
+
+        assert_eq!(indexed_documents, expected_documents);
+        println!(
+            "documents={expected_documents} source_description_bytes={} peak_heap_growth_bytes={} total_allocated_bytes={}",
+            BOARD_COUNT * CARDS_PER_BOARD * ENTRIES_PER_CARD * DESCRIPTION_BYTES,
+            allocation.peak_growth_bytes,
+            allocation.allocated_bytes,
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    async fn deleted_hierarchy_filter_heap_benchmark() -> Result<()> {
+        const EXCLUDED_NOTE_COUNT: usize = 64;
+        const BODY_BYTES: usize = 1024 * 1024;
+
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let active_project = project::ActiveModel {
+            name: Set("Active".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let deleted_project = project::ActiveModel {
+            name: Set("Deleted".to_string()),
+            archived: Set(false),
+            position: Set(1),
+            deleted_at: Set(Some(1)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        note::ActiveModel {
+            id: Set(1),
+            title: Set("Indexed note".to_string()),
+            project_id: Set(Some(active_project.id)),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("active".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(0),
+            updated_at: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let body = "x".repeat(BODY_BYTES);
+        for index in 0..EXCLUDED_NOTE_COUNT {
+            note::ActiveModel {
+                id: Set(index as i64 + 2),
+                title: Set(format!("Excluded note {index}")),
+                project_id: Set(Some(deleted_project.id)),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(body.clone()),
+                file_missing_since: Set(None),
+                created_at: Set(index as i64 + 1),
+                updated_at: Set(index as i64 + 1),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+
+        drop(body);
+        let allocation = test_alloc::start_measurement();
+        rebuild_search_index(&db).await?;
+        let allocation = allocation.finish();
+
+        let indexed_documents = db
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM search_index",
+            ))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("search index count query returned no row"))?
+            .try_get::<i64>("", "count")?;
+
+        assert_eq!(indexed_documents, 1);
+        println!(
+            "excluded_note_body_bytes={} peak_heap_growth_bytes={} total_allocated_bytes={}",
+            EXCLUDED_NOTE_COUNT * BODY_BYTES,
+            allocation.peak_growth_bytes,
+            allocation.allocated_bytes,
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn fts_query_splits_hyphenated_terms() {

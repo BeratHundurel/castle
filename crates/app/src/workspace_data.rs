@@ -2,8 +2,16 @@ use anyhow::Result;
 use entity::{
     board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
 };
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
-use std::collections::HashSet;
+use sea_orm::{
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Query, SelectStatement},
+};
+
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+static WORKSPACE_LOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectRow {
@@ -37,7 +45,19 @@ pub(crate) struct WorkspaceRows {
     pub(crate) notes: Vec<NoteRow>,
 }
 
+fn visible_project_ids_query() -> SelectStatement {
+    Query::select()
+        .column(project::Column::Id)
+        .from(Project)
+        .and_where(project::Column::Archived.eq(false))
+        .and_where(project::Column::DeletedAt.is_null())
+        .to_owned()
+}
+
 pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRows> {
+    #[cfg(test)]
+    WORKSPACE_LOAD_COUNT.fetch_add(1, Ordering::Relaxed);
+
     let projects: Vec<ProjectRow> = Project::find()
         .filter(project::Column::Archived.eq(false))
         .filter(project::Column::DeletedAt.is_null())
@@ -58,13 +78,13 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
         })
         .collect();
 
-    let active_project_ids = projects
-        .iter()
-        .map(|project| project.id)
-        .collect::<HashSet<_>>();
-
     let boards = Board::find()
         .filter(board::Column::DeletedAt.is_null())
+        .filter(
+            Condition::any()
+                .add(board::Column::ProjectId.is_null())
+                .add(board::Column::ProjectId.in_subquery(visible_project_ids_query())),
+        )
         .order_by_asc(board::Column::Id)
         .select_only()
         .column(board::Column::Id)
@@ -76,9 +96,6 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
         .all(db)
         .await?
         .into_iter()
-        .filter(|(_, _, project_id, _, _)| {
-            project_id.is_none_or(|id| active_project_ids.contains(&(id as u32)))
-        })
         .map(
             |(id, title, project_id, is_pinned, last_opened_at)| BoardRow {
                 id: id as u32,
@@ -92,6 +109,11 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
 
     let notes = Note::find()
         .filter(note::Column::DeletedAt.is_null())
+        .filter(
+            Condition::any()
+                .add(note::Column::ProjectId.is_null())
+                .add(note::Column::ProjectId.in_subquery(visible_project_ids_query())),
+        )
         .order_by_asc(note::Column::Id)
         .select_only()
         .column(note::Column::Id)
@@ -103,9 +125,6 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
         .all(db)
         .await?
         .into_iter()
-        .filter(|(_, _, project_id, _, _)| {
-            project_id.is_none_or(|id| active_project_ids.contains(&(id as u32)))
-        })
         .map(
             |(id, title, project_id, is_pinned, last_opened_at)| NoteRow {
                 id: id as u32,
@@ -125,9 +144,20 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
 }
 
 #[cfg(test)]
+pub(crate) fn reset_workspace_load_count() {
+    WORKSPACE_LOAD_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn workspace_load_count() -> usize {
+    WORKSPACE_LOAD_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use entity::{note, project};
+    use crate::test_alloc;
+    use entity::{board, note, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
 
@@ -189,6 +219,173 @@ mod tests {
 
         println!(
             "legacy_note_body_bytes={full_body_bytes} projected_note_body_bytes=0 projected_title_bytes={projected_title_bytes}",
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn workspace_rows_keep_standalone_items_and_exclude_inactive_projects() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let active_project = project::ActiveModel {
+            name: Set("Active".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let archived_project = project::ActiveModel {
+            name: Set("Archived".to_string()),
+            archived: Set(true),
+            position: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let deleted_project = project::ActiveModel {
+            name: Set("Deleted".to_string()),
+            archived: Set(false),
+            position: Set(2),
+            deleted_at: Set(Some(1)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        for (id, title, project_id) in [
+            (1, "Active board", Some(active_project.id)),
+            (2, "Archived board", Some(archived_project.id)),
+            (3, "Deleted board", Some(deleted_project.id)),
+            (4, "Standalone board", None),
+        ] {
+            board::ActiveModel {
+                id: Set(id),
+                title: Set(title.to_string()),
+                project_id: Set(project_id),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+
+        for (id, title, project_id) in [
+            (1, "Active note", Some(active_project.id)),
+            (2, "Archived note", Some(archived_project.id)),
+            (3, "Deleted note", Some(deleted_project.id)),
+            (4, "Standalone note", None),
+        ] {
+            note::ActiveModel {
+                id: Set(id),
+                title: Set(title.to_string()),
+                project_id: Set(project_id),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(String::new()),
+                file_missing_since: Set(None),
+                created_at: Set(id),
+                updated_at: Set(id),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+
+        let rows = load_workspace_rows(&db).await?;
+
+        assert_eq!(
+            rows.projects
+                .iter()
+                .map(|project| project.id)
+                .collect::<Vec<_>>(),
+            vec![active_project.id as u32]
+        );
+        assert_eq!(
+            rows.boards.iter().map(|board| board.id).collect::<Vec<_>>(),
+            vec![1, 4]
+        );
+        assert_eq!(
+            rows.notes.iter().map(|note| note.id).collect::<Vec<_>>(),
+            vec![1, 4]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    async fn inactive_project_children_heap_benchmark() -> Result<()> {
+        const EXCLUDED_NOTE_COUNT: usize = 64;
+        const TITLE_BYTES: usize = 1024 * 1024;
+
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let active_project = project::ActiveModel {
+            name: Set("Active".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let archived_project = project::ActiveModel {
+            name: Set("Archived".to_string()),
+            archived: Set(true),
+            position: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        note::ActiveModel {
+            id: Set(1),
+            title: Set("Visible note".to_string()),
+            project_id: Set(Some(active_project.id)),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(String::new()),
+            file_missing_since: Set(None),
+            created_at: Set(0),
+            updated_at: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let title = "x".repeat(TITLE_BYTES);
+        for index in 0..EXCLUDED_NOTE_COUNT {
+            note::ActiveModel {
+                id: Set(index as i64 + 2),
+                title: Set(title.clone()),
+                project_id: Set(Some(archived_project.id)),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(String::new()),
+                file_missing_since: Set(None),
+                created_at: Set(index as i64 + 1),
+                updated_at: Set(index as i64 + 1),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+
+        drop(title);
+        let allocation = test_alloc::start_measurement();
+        let rows = load_workspace_rows(&db).await?;
+        let allocation = allocation.finish();
+
+        assert_eq!(rows.projects.len(), 1);
+        assert_eq!(rows.notes.len(), 1);
+        assert_eq!(rows.notes[0].title, "Visible note");
+        println!(
+            "excluded_note_title_bytes={} peak_heap_growth_bytes={} total_allocated_bytes={}",
+            EXCLUDED_NOTE_COUNT * TITLE_BYTES,
+            allocation.peak_growth_bytes,
+            allocation.allocated_bytes,
         );
 
         Ok(())

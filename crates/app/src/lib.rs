@@ -11,6 +11,9 @@ pub(crate) mod trash;
 pub mod tray;
 pub(crate) mod workspace_data;
 
+#[cfg(test)]
+mod test_alloc;
+
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::Global;
