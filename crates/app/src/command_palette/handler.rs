@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use gpui::{Context, SharedString, Window};
+use gpui_component::ActiveTheme as _;
 
 use crate::DB;
 use crate::app_settings::AppSettings;
@@ -67,6 +68,31 @@ impl AppShell {
         });
         self.command_palette.suppress_input_event = false;
         self.rebuild_workspace_search_index(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn open_theme_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette.open = true;
+        self.command_palette.mode = CommandPaletteMode::Themes;
+        self.command_palette.query.clear();
+        self.command_palette.search_generation =
+            self.command_palette.search_generation.saturating_add(1);
+        self.command_palette.search_debounce_task = None;
+        self.command_palette.selected_index = self
+            .filtered_theme_names(cx)
+            .iter()
+            .position(|name| name == cx.theme().theme_name())
+            .unwrap_or(0);
+        self.command_palette
+            .scroll_handle
+            .scroll_to_item(self.command_palette.selected_index);
+        self.command_palette.suppress_input_event = true;
+        self.command_palette.input.update(cx, |input, cx| {
+            input.set_placeholder("Search themes", window, cx);
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        self.command_palette.suppress_input_event = false;
         cx.notify();
     }
 
@@ -192,20 +218,7 @@ impl AppShell {
                 self.open_settings(window, cx);
             }
             PaletteCommandKind::SwitchTheme => {
-                self.command_palette.mode = CommandPaletteMode::Themes;
-                self.command_palette.query.clear();
-                self.command_palette.search_generation =
-                    self.command_palette.search_generation.saturating_add(1);
-                self.command_palette.search_debounce_task = None;
-                self.command_palette.selected_index = 0;
-                self.command_palette.scroll_handle.scroll_to_item(0);
-                self.command_palette.suppress_input_event = true;
-                self.command_palette.input.update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                    input.focus(window, cx);
-                });
-                self.command_palette.suppress_input_event = false;
-                cx.notify();
+                self.open_theme_switcher(window, cx);
             }
             PaletteCommandKind::SearchWorkspace => {
                 self.open_workspace_search(window, cx);
@@ -234,12 +247,17 @@ impl AppShell {
         self.command_palette.search_error = None;
 
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
         self.command_palette.search_debounce_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(WORKSPACE_SEARCH_DEBOUNCE)
                 .await;
 
-            let result = crate::search::search_workspace(db.as_ref(), &query, 20).await;
+            let result = runtime
+                .spawn(
+                    async move { crate::search::search_workspace(db.as_ref(), &query, 20).await },
+                )
+                .await;
 
             this.update(cx, |this, cx| {
                 if this.command_palette.mode != CommandPaletteMode::Search
@@ -251,14 +269,20 @@ impl AppShell {
                 this.command_palette.search_debounce_task = None;
                 this.command_palette.search_loading = false;
                 match result {
-                    Ok(results) => {
+                    Ok(Ok(results)) => {
                         this.command_palette.search_results = results;
                         this.command_palette.search_error = None;
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         this.command_palette.search_results.clear();
                         this.command_palette.search_error =
                             Some(SharedString::from(format!("Search failed: {err}")));
+                    }
+                    Err(err) => {
+                        this.command_palette.search_results.clear();
+                        this.command_palette.search_error = Some(SharedString::from(format!(
+                            "Workspace search task failed: {err}"
+                        )));
                     }
                 }
 
@@ -270,9 +294,12 @@ impl AppShell {
 
     fn rebuild_workspace_search_index(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
 
         cx.spawn(async move |this, cx| {
-            let result = crate::search::rebuild_search_index(db.as_ref()).await;
+            let result = runtime
+                .spawn(async move { crate::search::rebuild_search_index(db.as_ref()).await })
+                .await;
 
             this.update(cx, |this, cx| {
                 if this.command_palette.mode != CommandPaletteMode::Search {
@@ -280,15 +307,23 @@ impl AppShell {
                 }
 
                 match result {
-                    Ok(()) => {
+                    Ok(Ok(())) => {
                         this.command_palette.search_error = None;
                         this.run_workspace_search(cx);
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         this.command_palette.search_loading = false;
                         this.command_palette.search_results.clear();
                         this.command_palette.search_error =
                             Some(SharedString::from(format!("Search index failed: {err}")));
+                        cx.notify();
+                    }
+                    Err(err) => {
+                        this.command_palette.search_loading = false;
+                        this.command_palette.search_results.clear();
+                        this.command_palette.search_error = Some(SharedString::from(format!(
+                            "Search index task failed: {err}"
+                        )));
                         cx.notify();
                     }
                 }

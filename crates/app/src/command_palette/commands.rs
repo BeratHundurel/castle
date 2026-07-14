@@ -131,7 +131,10 @@ impl AppShell {
             },
             PaletteCommand {
                 label: "Switch theme".into(),
-                subtitle: "Preview available themes".into(),
+                subtitle: SharedString::from(format!(
+                    "Preview available themes ({})",
+                    theme_switcher_shortcut()
+                )),
                 icon: IconName::Palette,
                 kind: PaletteCommandKind::SwitchTheme,
             },
@@ -211,6 +214,14 @@ fn settings_shortcut() -> &'static str {
         "Cmd+,"
     } else {
         "Ctrl+,"
+    }
+}
+
+fn theme_switcher_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Alt+T"
+    } else {
+        "Ctrl+Alt+T"
     }
 }
 

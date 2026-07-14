@@ -44,48 +44,53 @@ impl BoardView {
     fn duplicate_entry(&mut self, source: EntryDTO, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
         let board_id = self.board_id;
+        let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| -> Result<()> {
-            let txn = db.begin().await?;
-            Entry::update_many()
-                .col_expr(
-                    entry::Column::Position,
-                    Expr::col(entry::Column::Position).add(1),
-                )
-                .filter(entry::Column::CardId.eq(source.card_id as i64))
-                .filter(entry::Column::Position.gte(source.position + 1))
-                .exec(&txn)
-                .await?;
-            let inserted = entry::ActiveModel {
-                title: Set(format!("Copy of {}", source.title)),
-                description: Set(source.description.to_string()),
-                card_id: Set(source.card_id as i64),
-                position: Set(source.position + 1),
-                due_on: Set(source.due_on.map(|value| value.to_string())),
-                ..Default::default()
-            }
-            .insert(&txn)
-            .await?;
-            for label in source.labels {
-                entry_label::ActiveModel {
-                    entry_id: Set(inserted.id),
-                    board_label_id: Set(label.id as i64),
-                    ..Default::default()
-                }
-                .insert(&txn)
-                .await?;
-            }
-            for item in source.checklist_items {
-                entry_checklist_item::ActiveModel {
-                    entry_id: Set(inserted.id),
-                    title: Set(item.title.to_string()),
-                    checked: Set(item.checked),
-                    position: Set(item.position),
-                    ..Default::default()
-                }
-                .insert(&txn)
-                .await?;
-            }
-            txn.commit().await?;
+            runtime
+                .spawn(async move {
+                    let txn = db.begin().await?;
+                    Entry::update_many()
+                        .col_expr(
+                            entry::Column::Position,
+                            Expr::col(entry::Column::Position).add(1),
+                        )
+                        .filter(entry::Column::CardId.eq(source.card_id as i64))
+                        .filter(entry::Column::Position.gte(source.position + 1))
+                        .exec(&txn)
+                        .await?;
+                    let inserted = entry::ActiveModel {
+                        title: Set(format!("Copy of {}", source.title)),
+                        description: Set(source.description.to_string()),
+                        card_id: Set(source.card_id as i64),
+                        position: Set(source.position + 1),
+                        due_on: Set(source.due_on.map(|value| value.to_string())),
+                        ..Default::default()
+                    }
+                    .insert(&txn)
+                    .await?;
+                    for label in source.labels {
+                        entry_label::ActiveModel {
+                            entry_id: Set(inserted.id),
+                            board_label_id: Set(label.id as i64),
+                            ..Default::default()
+                        }
+                        .insert(&txn)
+                        .await?;
+                    }
+                    for item in source.checklist_items {
+                        entry_checklist_item::ActiveModel {
+                            entry_id: Set(inserted.id),
+                            title: Set(item.title.to_string()),
+                            checked: Set(item.checked),
+                            position: Set(item.position),
+                            ..Default::default()
+                        }
+                        .insert(&txn)
+                        .await?;
+                    }
+                    txn.commit().await
+                })
+                .await??;
             this.update(cx, |this, cx| {
                 if let Some(board_id) = board_id {
                     this.enrich_board_async(cx, board_id);
@@ -103,58 +108,63 @@ impl BoardView {
         };
         let db = cx.global::<DB>().conn.clone();
         let board_id = self.board_id;
+        let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| -> Result<()> {
-            let txn = db.begin().await?;
-            Card::update_many()
-                .col_expr(
-                    card::Column::Position,
-                    Expr::col(card::Column::Position).add(1),
-                )
-                .filter(card::Column::BoardId.eq(source.board_id as i64))
-                .filter(card::Column::Position.gte(source.position + 1))
-                .exec(&txn)
-                .await?;
-            let inserted_list = card::ActiveModel {
-                title: Set(format!("Copy of {}", source.title)),
-                board_id: Set(source.board_id as i64),
-                position: Set(source.position + 1),
-                ..Default::default()
-            }
-            .insert(&txn)
-            .await?;
-            for entry in source.entries {
-                let inserted = entry::ActiveModel {
-                    title: Set(entry.title.to_string()),
-                    description: Set(entry.description.to_string()),
-                    card_id: Set(inserted_list.id),
-                    position: Set(entry.position),
-                    due_on: Set(entry.due_on.map(|value| value.to_string())),
-                    ..Default::default()
-                }
-                .insert(&txn)
-                .await?;
-                for label in entry.labels {
-                    entry_label::ActiveModel {
-                        entry_id: Set(inserted.id),
-                        board_label_id: Set(label.id as i64),
+            runtime
+                .spawn(async move {
+                    let txn = db.begin().await?;
+                    Card::update_many()
+                        .col_expr(
+                            card::Column::Position,
+                            Expr::col(card::Column::Position).add(1),
+                        )
+                        .filter(card::Column::BoardId.eq(source.board_id as i64))
+                        .filter(card::Column::Position.gte(source.position + 1))
+                        .exec(&txn)
+                        .await?;
+                    let inserted_list = card::ActiveModel {
+                        title: Set(format!("Copy of {}", source.title)),
+                        board_id: Set(source.board_id as i64),
+                        position: Set(source.position + 1),
                         ..Default::default()
                     }
                     .insert(&txn)
                     .await?;
-                }
-                for item in entry.checklist_items {
-                    entry_checklist_item::ActiveModel {
-                        entry_id: Set(inserted.id),
-                        title: Set(item.title.to_string()),
-                        checked: Set(item.checked),
-                        position: Set(item.position),
-                        ..Default::default()
+                    for entry in source.entries {
+                        let inserted = entry::ActiveModel {
+                            title: Set(entry.title.to_string()),
+                            description: Set(entry.description.to_string()),
+                            card_id: Set(inserted_list.id),
+                            position: Set(entry.position),
+                            due_on: Set(entry.due_on.map(|value| value.to_string())),
+                            ..Default::default()
+                        }
+                        .insert(&txn)
+                        .await?;
+                        for label in entry.labels {
+                            entry_label::ActiveModel {
+                                entry_id: Set(inserted.id),
+                                board_label_id: Set(label.id as i64),
+                                ..Default::default()
+                            }
+                            .insert(&txn)
+                            .await?;
+                        }
+                        for item in entry.checklist_items {
+                            entry_checklist_item::ActiveModel {
+                                entry_id: Set(inserted.id),
+                                title: Set(item.title.to_string()),
+                                checked: Set(item.checked),
+                                position: Set(item.position),
+                                ..Default::default()
+                            }
+                            .insert(&txn)
+                            .await?;
+                        }
                     }
-                    .insert(&txn)
-                    .await?;
-                }
-            }
-            txn.commit().await?;
+                    txn.commit().await
+                })
+                .await??;
             this.update(cx, |this, cx| {
                 if let Some(board_id) = board_id {
                     this.enrich_board_async(cx, board_id);
@@ -194,6 +204,8 @@ impl BoardView {
 
     pub(super) fn add_entry(&mut self, cx: &mut Context<Self>, entry: EntryDTO, temp_id: u32) {
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let card_id = entry.card_id;
 
         if let Some(card) = self.cards.iter_mut().find(|card| card.id == entry.card_id) {
             card.entries.push(entry.clone());
@@ -201,22 +213,27 @@ impl BoardView {
         }
 
         cx.spawn(async move |this, cx| -> Result<()> {
-            let model = entry::ActiveModel {
-                title: Set(entry.title.to_string()),
-                description: Set(entry.description.to_string()),
-                card_id: Set(entry.card_id as i64),
-                position: Set(entry.position),
-                due_on: Set(None),
-                ..Default::default()
-            };
-            let inserted = model.insert(&*db).await?;
+            let inserted = runtime
+                .spawn(async move {
+                    entry::ActiveModel {
+                        title: Set(entry.title.to_string()),
+                        description: Set(entry.description.to_string()),
+                        card_id: Set(entry.card_id as i64),
+                        position: Set(entry.position),
+                        due_on: Set(None),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await??;
             let real_id = inserted.id as u32;
 
             this.update(cx, |this, _cx| {
                 if let Some(entry) = this
                     .cards
                     .iter_mut()
-                    .find(|card| card.id == entry.card_id)
+                    .find(|card| card.id == card_id)
                     .and_then(|card| card.entries.iter_mut().find(|entry| entry.id == temp_id))
                 {
                     entry.id = real_id;
@@ -231,23 +248,29 @@ impl BoardView {
 
     pub(super) fn add_card(&mut self, cx: &mut Context<Self>, card: CardDTO, temp_id: u32) {
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let board_id = card.board_id;
 
         self.cards.push(card.clone());
         cx.notify();
 
         cx.spawn(async move |this, cx| -> Result<()> {
-            let model = card::ActiveModel {
-                title: Set(card.title.to_string()),
-                board_id: Set(card.board_id as i64),
-                position: Set(card.position),
-                ..Default::default()
-            };
-
-            let inserted = model.insert(&*db).await?;
+            let inserted = runtime
+                .spawn(async move {
+                    card::ActiveModel {
+                        title: Set(card.title.to_string()),
+                        board_id: Set(card.board_id as i64),
+                        position: Set(card.position),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await??;
             let real_id = inserted.id as u32;
 
             this.update(cx, |this, _cx| {
-                if this.board_id == Some(card.board_id)
+                if this.board_id == Some(board_id)
                     && let Some(card) = this.cards.iter_mut().find(|card| card.id == temp_id)
                 {
                     card.id = real_id;
@@ -276,16 +299,15 @@ impl BoardView {
         self.renaming_card_id = None;
         cx.notify();
 
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             let model = card::ActiveModel {
                 id: Set(card_id as i64),
                 title: Set(title),
                 ..Default::default()
             };
             model.update(&*db).await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -502,7 +524,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             for (entry_id, card_id, position) in positions {
                 entry::ActiveModel {
                     id: Set(entry_id as i64),
@@ -514,9 +536,8 @@ impl BoardView {
                 .await?;
             }
 
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn update_selected_entry(&mut self, cx: &mut Context<Self>) {
@@ -550,7 +571,7 @@ impl BoardView {
         let title = trimmed_title.to_string();
         let description = description.to_string();
 
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             let model = entry::ActiveModel {
                 id: Set(entry_id as i64),
                 title: Set(title),
@@ -559,9 +580,8 @@ impl BoardView {
             };
 
             model.update(&*db).await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn update_selected_entry_due_on(
@@ -588,13 +608,13 @@ impl BoardView {
         let revision = self.next_due_date_update_revision;
         let persisted_revisions = self.persisted_due_date_revisions.clone();
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             let mut persisted_revisions = persisted_revisions.lock().await;
             if persisted_revisions
                 .get(&entry_id)
                 .is_some_and(|persisted_revision| *persisted_revision >= revision)
             {
-                return Ok(());
+                return Ok::<(), sea_orm::DbErr>(());
             }
             entry::ActiveModel {
                 id: Set(entry_id as i64),
@@ -604,9 +624,8 @@ impl BoardView {
             .update(&*db)
             .await?;
             persisted_revisions.insert(entry_id, revision);
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn create_checklist_item(&mut self, title: String, cx: &mut Context<Self>) {
@@ -635,16 +654,21 @@ impl BoardView {
         self.next_checklist_item_position = position.saturating_add(1);
 
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| -> Result<()> {
-            let inserted = entry_checklist_item::ActiveModel {
-                entry_id: Set(entry_id as i64),
-                title: Set(title),
-                checked: Set(false),
-                position: Set(position),
-                ..Default::default()
-            }
-            .insert(&*db)
-            .await?;
+            let inserted = runtime
+                .spawn(async move {
+                    entry_checklist_item::ActiveModel {
+                        entry_id: Set(entry_id as i64),
+                        title: Set(title),
+                        checked: Set(false),
+                        position: Set(position),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await??;
             this.update(cx, |this, cx| {
                 if let Some(entry) = this
                     .cards
@@ -681,7 +705,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),
                 checked: Set(checked),
@@ -689,9 +713,8 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn delete_checklist_item(&mut self, item_id: u32, cx: &mut Context<Self>) {
@@ -705,13 +728,12 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             EntryChecklistItem::delete_by_id(item_id as i64)
                 .exec(&*db)
                 .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn move_checklist_item(
@@ -754,7 +776,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             for (item_id, position) in positions {
                 entry_checklist_item::ActiveModel {
                     id: Set(item_id as i64),
@@ -764,9 +786,8 @@ impl BoardView {
                 .update(&*db)
                 .await?;
             }
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn rename_checklist_item(&mut self, title: String, cx: &mut Context<Self>) {
@@ -786,7 +807,7 @@ impl BoardView {
         self.renaming_checklist_item_id = None;
         cx.notify();
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),
                 title: Set(title),
@@ -794,9 +815,8 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn create_board_label(&mut self, name: String, cx: &mut Context<Self>) {
@@ -806,16 +826,21 @@ impl BoardView {
 
         let color = self.selected_label_color.to_string();
         let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
 
         cx.spawn(async move |this, cx| -> Result<()> {
-            let inserted = board_label::ActiveModel {
-                board_id: Set(board_id as i64),
-                name: Set(name),
-                color: Set(color),
-                ..Default::default()
-            }
-            .insert(&*db)
-            .await?;
+            let inserted = runtime
+                .spawn(async move {
+                    board_label::ActiveModel {
+                        board_id: Set(board_id as i64),
+                        name: Set(name),
+                        color: Set(color),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await??;
 
             this.update(cx, |this, cx| {
                 if this.board_id == Some(board_id) {
@@ -855,7 +880,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             board_label::ActiveModel {
                 id: Set(label_id as i64),
                 name: Set(name),
@@ -863,9 +888,8 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn set_entry_label_assignment(
@@ -909,7 +933,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             if assigned {
                 entry_label::ActiveModel {
                     entry_id: Set(entry_id as i64),
@@ -926,9 +950,8 @@ impl BoardView {
                     .await?;
             }
 
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn delete_board_label(&mut self, label_id: u32, cx: &mut Context<Self>) {
@@ -942,11 +965,10 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             BoardLabel::delete_by_id(label_id as i64).exec(&*db).await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
@@ -966,7 +988,7 @@ impl BoardView {
 
         let db = cx.global::<DB>().conn.clone();
 
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             crate::trash::move_to_trash(
                 db.as_ref(),
                 crate::trash::MoveToTrash {
@@ -976,9 +998,8 @@ impl BoardView {
                 crate::markdown_editor::now_ts(),
             )
             .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), anyhow::Error>(())
+        });
     }
 
     pub(super) fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
@@ -995,7 +1016,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             for (card_id, position) in positions {
                 let model = card::ActiveModel {
                     id: Set(card_id as i64),
@@ -1005,9 +1026,8 @@ impl BoardView {
                 model.update(&*db).await?;
             }
 
-            Ok(())
-        })
-        .detach();
+            Ok::<(), sea_orm::DbErr>(())
+        });
     }
 
     pub(super) fn move_card(
@@ -1064,7 +1084,7 @@ impl BoardView {
 
         let db = cx.global::<DB>().conn.clone();
 
-        cx.spawn(async move |_, _| -> Result<()> {
+        let _task = tokio::runtime::Handle::current().spawn(async move {
             crate::trash::move_to_trash(
                 db.as_ref(),
                 crate::trash::MoveToTrash {
@@ -1074,8 +1094,7 @@ impl BoardView {
                 crate::markdown_editor::now_ts(),
             )
             .await?;
-            Ok(())
-        })
-        .detach();
+            Ok::<(), anyhow::Error>(())
+        });
     }
 }

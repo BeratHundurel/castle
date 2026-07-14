@@ -7,7 +7,6 @@ mod tabs;
 mod workspace;
 
 pub(crate) use action::*;
-use anyhow::Result;
 use entity::{board, note, note::Entity as Note};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -29,7 +28,7 @@ use gpui_component::{
 };
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::DB;
 use crate::app_settings::{AppSettings, StoredTab};
@@ -63,6 +62,17 @@ enum OpenTabKind {
         project_id: Option<u32>,
         view: Entity<MarkdownEditorView>,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum WorkspaceTitleTarget {
+    Board(u32),
+    Note(u32),
+}
+
+struct PendingWorkspaceTitleSave {
+    generation: u64,
+    title: String,
 }
 
 #[derive(Clone)]
@@ -119,6 +129,8 @@ pub struct AppShell {
     trash_kind_filter: Option<TrashItemKind>,
     workspace_refreshing: bool,
     workspace_refresh_pending: bool,
+    pending_workspace_title_saves: HashMap<WorkspaceTitleTarget, PendingWorkspaceTitleSave>,
+    workspace_title_save_lock: Arc<tokio::sync::Mutex<()>>,
     record_opened_generation: u64,
     tab_session_save_generation: u64,
 }
@@ -253,6 +265,7 @@ impl AppShell {
             |this, _, event: &SidebarEvent, window, cx| match event {
                 SidebarEvent::OpenHome => this.open_home(window, cx),
                 SidebarEvent::OpenTrash => this.open_trash(window, cx),
+                SidebarEvent::OpenThemeSwitcher => this.open_theme_switcher(window, cx),
                 SidebarEvent::WorkspaceChanged => {
                     this.load_home(cx);
                     this.load_trash(cx);
@@ -291,6 +304,10 @@ impl AppShell {
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
+                    if let Some(board) = this.boards.iter_mut().find(|board| board.id == *board_id) {
+                        board.title = title.clone();
+                    }
+                    this.rebuild_command_palette_workspace_commands();
                     this.persist_tab_session(cx);
                     cx.notify();
                 }
@@ -304,7 +321,7 @@ impl AppShell {
                             renamed_active = i == this.active_tab_index;
                             let view = view.clone();
                             view.update(cx, |note, cx| {
-                                note.set_title(title.to_string(), cx);
+                                note.apply_title(title, cx);
                             });
                             break;
                         }
@@ -312,6 +329,10 @@ impl AppShell {
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
+                    if let Some(note) = this.notes.iter_mut().find(|note| note.id == *note_id) {
+                        note.title = title.clone();
+                    }
+                    this.rebuild_command_palette_workspace_commands();
                     this.persist_tab_session(cx);
                     cx.notify();
                 }
@@ -359,7 +380,6 @@ impl AppShell {
                         this.active_project_id = None;
                     }
                     this.persist_tab_session(cx);
-                    this.refresh_workspace(cx);
                 }
                 SidebarEvent::ProjectsReordered => {
                     this.refresh_workspace(cx);
@@ -400,6 +420,8 @@ impl AppShell {
             trash_kind_filter: None,
             workspace_refreshing: false,
             workspace_refresh_pending: false,
+            pending_workspace_title_saves: HashMap::new(),
+            workspace_title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
             record_opened_generation: 0,
             tab_session_save_generation: 0,
         };
@@ -413,9 +435,9 @@ impl AppShell {
             this.sync_sidebar_with_window_width(window.bounds().size.width, cx);
         })
         .detach();
+        cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx))
+            .detach();
         this.refresh_workspace(cx);
-        this.sidebar
-            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
         this.sync_sidebar_active(cx);
         this.load_home(cx);
         this.load_trash(cx);

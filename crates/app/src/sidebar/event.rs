@@ -4,6 +4,7 @@ use gpui::SharedString;
 pub(crate) enum SidebarEvent {
     OpenHome,
     OpenTrash,
+    OpenThemeSwitcher,
     WorkspaceChanged,
     OpenBoard {
         board_id: u32,

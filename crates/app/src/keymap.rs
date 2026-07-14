@@ -3,7 +3,7 @@ use gpui::{App, AsKeystroke as _, Global, KeyBinding, Keystroke, SharedString};
 use crate::app_shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 use crate::command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
-    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem,
+    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
 use crate::markdown_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
@@ -27,7 +27,30 @@ pub(crate) fn shortcuts(cx: &App) -> &[ShortcutReference] {
 }
 
 pub fn init(cx: &mut App) {
-    let bindings = vec![
+    let bindings = default_bindings();
+
+    let shortcuts = bindings
+        .iter()
+        .map(|binding| ShortcutReference {
+            action: shortcut_action_name(binding),
+            context: binding
+                .predicate()
+                .map(|predicate| predicate.to_string().into())
+                .unwrap_or_else(|| "Global".into()),
+            keystrokes: binding
+                .keystrokes()
+                .iter()
+                .map(|stroke| stroke.as_keystroke().clone())
+                .collect(),
+        })
+        .collect();
+
+    cx.set_global(ShortcutRegistry(shortcuts));
+    cx.bind_keys(bindings);
+}
+
+fn default_bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
@@ -39,6 +62,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-f", OpenWorkspaceSearchAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-f", OpenWorkspaceSearchAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-t", SwitchThemeAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-t", SwitchThemeAction, Some("AppShell")),
         KeyBinding::new("escape", CloseCommandPaletteAction, Some("AppShell")),
         KeyBinding::new("escape", CloseCommandPaletteAction, Some("CommandPalette")),
         KeyBinding::new("up", SelectPrevCommandPaletteItem, Some("CommandPalette")),
@@ -210,26 +237,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", OutlineNext, Some("MarkdownOutline")),
         KeyBinding::new("enter", OutlineOpen, Some("MarkdownOutline")),
         KeyBinding::new("escape", OutlineClose, Some("MarkdownOutline")),
-    ];
-
-    let shortcuts = bindings
-        .iter()
-        .map(|binding| ShortcutReference {
-            action: shortcut_action_name(binding),
-            context: binding
-                .predicate()
-                .map(|predicate| predicate.to_string().into())
-                .unwrap_or_else(|| "Global".into()),
-            keystrokes: binding
-                .keystrokes()
-                .iter()
-                .map(|stroke| stroke.as_keystroke().clone())
-                .collect(),
-        })
-        .collect();
-
-    cx.set_global(ShortcutRegistry(shortcuts));
-    cx.bind_keys(bindings);
+    ]
 }
 
 fn shortcut_action_name(binding: &KeyBinding) -> SharedString {
@@ -293,4 +301,30 @@ pub(crate) fn humanize_identifier(value: &str) -> SharedString {
     }
 
     label.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_shortcut_does_not_shadow_markdown_link() {
+        let bindings = default_bindings();
+        let theme = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<SwitchThemeAction>())
+            .expect("theme binding should be registered");
+        let link = bindings
+            .iter()
+            .find(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<ApplyMarkdownFormat>()
+                    .is_some_and(|action| action.0 == MarkdownFormat::Link)
+            })
+            .expect("markdown link binding should be registered");
+
+        assert!(!theme.keystrokes().starts_with(link.keystrokes()));
+    }
 }

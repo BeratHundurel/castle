@@ -1,5 +1,6 @@
 mod action;
 mod content_item;
+mod drag;
 mod dto;
 mod event;
 mod handlers;
@@ -9,24 +10,16 @@ mod store;
 
 use dto::*;
 use gpui::*;
-use gpui_component::{
-    ActiveTheme, Theme, ThemeRegistry,
-    input::{InputEvent, InputState},
-    searchable_list::SearchableListDelegate,
-    select::{SearchableVec, SelectEvent, SelectState},
-};
+use gpui_component::input::{InputEvent, InputState};
 
 pub(crate) use dto::ActiveItem;
 pub(crate) use event::SidebarEvent;
-
-use crate::app_settings::AppSettings;
 
 pub(crate) struct SidebarView {
     pub(crate) active_project_id: Option<u32>,
     pub(crate) active_item: Option<ActiveItem>,
     focus_handle: FocusHandle,
     search_input: Entity<InputState>,
-    theme_select: Entity<SelectState<SearchableVec<SharedString>>>,
     projects: Vec<ProjectDTO>,
     standalone_boards: Vec<BoardDTO>,
     standalone_notes: Vec<NoteDTO>,
@@ -39,8 +32,6 @@ pub(crate) struct SidebarView {
     renaming_board: Option<u32>,
     renaming_note: Option<u32>,
     renaming_project: Option<u32>,
-    projects_refreshing: bool,
-    projects_refresh_pending: bool,
 }
 
 impl SidebarView {
@@ -62,42 +53,6 @@ impl SidebarView {
 
         let rename_project_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Project name..."));
-
-        let registry = ThemeRegistry::global(cx);
-        let themes: Vec<SharedString> = registry
-            .sorted_themes()
-            .iter()
-            .map(|theme| theme.name.clone())
-            .collect();
-
-        let current_theme = cx.theme().theme_name();
-        let delegate = SearchableVec::new(themes);
-        let selected_index = delegate
-            .position(current_theme)
-            .or_else(|| delegate.position(&SharedString::from("Alduin")));
-
-        let theme_select =
-            cx.new(|cx| SelectState::new(delegate, selected_index, window, cx).searchable(true));
-
-        cx.observe_global_in::<Theme>(window, |this, window, cx| {
-            let theme_name = cx.theme().theme_name().clone();
-            this.theme_select.update(cx, |select, cx| {
-                select.set_selected_value(&theme_name, window, cx);
-            });
-            cx.notify();
-        })
-        .detach();
-
-        cx.subscribe(
-            &theme_select,
-            |_, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
-                let SelectEvent::Confirm(theme_name) = event;
-                if let Some(theme_name) = theme_name {
-                    AppSettings::set_theme_name(theme_name.clone(), cx);
-                }
-            },
-        )
-        .detach();
 
         cx.subscribe(
             &new_project_input,
@@ -201,7 +156,6 @@ impl SidebarView {
             active_item: None,
             focus_handle: cx.focus_handle(),
             search_input,
-            theme_select,
             projects: vec![],
             standalone_boards: vec![],
             standalone_notes: vec![],
@@ -214,8 +168,6 @@ impl SidebarView {
             renaming_board: None,
             renaming_note: None,
             renaming_project: None,
-            projects_refreshing: false,
-            projects_refresh_pending: false,
         }
     }
 
@@ -254,12 +206,17 @@ impl SidebarView {
         cx.notify();
     }
 
-    pub(crate) fn refresh_projects(&mut self, cx: &mut Context<Self>) {
-        self.list_projects(cx);
-    }
-
     #[cfg(test)]
     pub(crate) fn contains_project_named(&self, name: &str) -> bool {
         self.projects.iter().any(|project| project.name == name)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_note_named(&self, title: &str) -> bool {
+        self.projects
+            .iter()
+            .flat_map(|project| project.notes.iter())
+            .chain(self.standalone_notes.iter())
+            .any(|note| note.title == title)
     }
 }

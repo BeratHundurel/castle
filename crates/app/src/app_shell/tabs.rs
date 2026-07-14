@@ -329,36 +329,127 @@ impl AppShell {
         };
 
         tab.title = SharedString::from(title);
-        match &tab.kind {
-            OpenTabKind::Note { view, .. } => {
-                view.update(cx, |note, cx| note.set_title(title.to_string(), cx));
-                self.sidebar
-                    .update(cx, |sidebar, cx| sidebar.list_projects(cx));
+        let target = match &tab.kind {
+            OpenTabKind::Note { note_id, view, .. } => {
+                view.update(cx, |note, cx| note.apply_title(title, cx));
+                Some(WorkspaceTitleTarget::Note(*note_id))
             }
-            OpenTabKind::Board { board_id, .. } => {
-                let db = cx.global::<DB>().conn.clone();
-                let board_id = *board_id;
-                let title = title.to_string();
-                cx.spawn(async move |_, _| -> Result<()> {
-                    board::ActiveModel {
-                        id: Set(board_id as i64),
-                        title: Set(title),
-                        ..Default::default()
-                    }
-                    .update(&*db)
-                    .await?;
-                    Ok(())
-                })
-                .detach();
-                self.sidebar
-                    .update(cx, |sidebar, cx| sidebar.list_projects(cx));
-                self.refresh_workspace(cx);
-            }
-            OpenTabKind::Chooser | OpenTabKind::Trash => {}
+            OpenTabKind::Board { board_id, .. } => Some(WorkspaceTitleTarget::Board(*board_id)),
+            OpenTabKind::Chooser | OpenTabKind::Trash => None,
+        };
+
+        if let Some(target) = target {
+            self.schedule_workspace_title_save(target, title.to_string(), cx);
         }
 
         self.persist_tab_session(cx);
         cx.notify();
+    }
+
+    fn schedule_workspace_title_save(
+        &mut self,
+        target: WorkspaceTitleTarget,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self
+            .pending_workspace_title_saves
+            .entry(target)
+            .and_modify(|pending| {
+                pending.generation = pending.generation.saturating_add(1);
+                pending.title.clone_from(&title);
+            })
+            .or_insert_with(|| PendingWorkspaceTitleSave {
+                generation: 1,
+                title: title.clone(),
+            })
+            .generation;
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let save_lock = self.workspace_title_save_lock.clone();
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
+            let is_current = this
+                .read_with(cx, |this, _| {
+                    this.pending_workspace_title_saves
+                        .get(&target)
+                        .is_some_and(|pending| pending.generation == generation)
+                })
+                .unwrap_or(false);
+            if !is_current {
+                return;
+            }
+
+            let result = runtime
+                .spawn(async move {
+                    let _guard = save_lock.lock().await;
+                    persist_workspace_title(db.as_ref(), target, title).await
+                })
+                .await;
+
+            this.update(cx, |this, cx| {
+                if this
+                    .pending_workspace_title_saves
+                    .get(&target)
+                    .is_none_or(|pending| pending.generation != generation)
+                {
+                    return;
+                }
+                this.pending_workspace_title_saves.remove(&target);
+
+                match result {
+                    Ok(Ok(())) => this.refresh_workspace(cx),
+                    Ok(Err(err)) => {
+                        eprintln!("Failed to save workspace title: {err}");
+                        this.refresh_workspace(cx);
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to join workspace title task: {err}");
+                        this.refresh_workspace(cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn flush_pending_workspace_title_saves(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let pending = std::mem::take(&mut self.pending_workspace_title_saves)
+            .into_iter()
+            .map(|(target, pending)| (target, pending.title))
+            .collect::<Vec<_>>();
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let save_lock = self.workspace_title_save_lock.clone();
+
+        async move {
+            if pending.is_empty() {
+                return;
+            }
+
+            let result = runtime
+                .spawn(async move {
+                    let _guard = save_lock.lock().await;
+                    for (target, title) in pending {
+                        persist_workspace_title(db.as_ref(), target, title).await?;
+                    }
+                    Ok::<(), sea_orm::DbErr>(())
+                })
+                .await;
+
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => eprintln!("Failed to flush workspace titles: {err}"),
+                Err(err) => eprintln!("Failed to join workspace title flush task: {err}"),
+            }
+        }
     }
 
     pub(crate) fn open_board_tab(
@@ -453,4 +544,34 @@ impl AppShell {
         self.open_tabs.push(OpenTab { id, title, kind });
         self.activate_tab(index, window, cx);
     }
+}
+
+async fn persist_workspace_title(
+    db: &sea_orm::DatabaseConnection,
+    target: WorkspaceTitleTarget,
+    title: String,
+) -> Result<(), sea_orm::DbErr> {
+    match target {
+        WorkspaceTitleTarget::Board(board_id) => {
+            board::ActiveModel {
+                id: Set(board_id as i64),
+                title: Set(title),
+                ..Default::default()
+            }
+            .update(db)
+            .await?;
+        }
+        WorkspaceTitleTarget::Note(note_id) => {
+            note::ActiveModel {
+                id: Set(note_id as i64),
+                title: Set(title),
+                updated_at: Set(now_ts()),
+                ..Default::default()
+            }
+            .update(db)
+            .await?;
+        }
+    }
+
+    Ok(())
 }

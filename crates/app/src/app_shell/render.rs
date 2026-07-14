@@ -3,7 +3,7 @@ use gpui_component::Icon;
 
 use crate::command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
-    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem,
+    SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
 
 use super::*;
@@ -246,6 +246,9 @@ impl Render for AppShell {
                     this.open_workspace_search(window, cx);
                 }),
             )
+            .on_action(cx.listener(|this, _: &SwitchThemeAction, window, cx| {
+                this.open_theme_switcher(window, cx);
+            }))
             .on_action(
                 cx.listener(|this, _: &CloseCommandPaletteAction, window, cx| {
                     this.on_close_command_palette_action(window, cx);

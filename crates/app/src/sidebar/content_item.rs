@@ -54,10 +54,33 @@ impl SidebarContentItem {
         }
     }
 
+    pub(super) fn can_move_to(&self, project_id: Option<u32>) -> bool {
+        self.project_id() != project_id
+    }
+
     pub(super) fn icon(&self) -> IconName {
         match self {
             Self::Board { .. } => IconName::LayoutDashboard,
             Self::Note { .. } => IconName::BookOpen,
+        }
+    }
+
+    pub(super) fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Board { .. } => "Board",
+            Self::Note { .. } => "Note",
+        }
+    }
+
+    pub(super) fn move_to(
+        &self,
+        sidebar: &mut SidebarView,
+        project_id: Option<u32>,
+        cx: &mut Context<SidebarView>,
+    ) {
+        match self {
+            Self::Board { id, .. } => sidebar.move_board(cx, *id, project_id),
+            Self::Note { id, .. } => sidebar.move_note(cx, *id, project_id),
         }
     }
 
@@ -143,5 +166,32 @@ impl SidebarContentItem {
                 ..
             } => sidebar.select_note(*id, *project_id, title.clone(), cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SidebarContentItem;
+
+    #[test]
+    fn move_targets_exclude_the_current_location() {
+        let standalone_note = SidebarContentItem::Note {
+            id: 1,
+            title: "Standalone note".into(),
+            project_id: None,
+            is_pinned: false,
+        };
+        let project_board = SidebarContentItem::Board {
+            id: 2,
+            title: "Project board".into(),
+            project_id: Some(10),
+            is_pinned: false,
+        };
+
+        assert!(!standalone_note.can_move_to(None));
+        assert!(standalone_note.can_move_to(Some(10)));
+        assert!(project_board.can_move_to(None));
+        assert!(!project_board.can_move_to(Some(10)));
+        assert!(project_board.can_move_to(Some(11)));
     }
 }

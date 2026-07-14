@@ -8,8 +8,6 @@ mod render;
 pub mod types;
 mod util;
 
-use anyhow::Result;
-use entity::note;
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, Pixels, SharedString, Task, Window,
     point, px,
@@ -19,10 +17,8 @@ use gpui_component::{
     input::{InputEvent, InputState, TabSize},
     text::TextViewState,
 };
-use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use std::{ops::Range, path::PathBuf, time::Duration};
 
-use crate::DB;
 use crate::app_settings::AppSettings;
 use outline::MarkdownOutline;
 use types::*;
@@ -166,7 +162,7 @@ impl MarkdownEditorView {
         (!self.is_loading).then(|| self.editor.read(cx).value().to_string())
     }
 
-    pub(crate) fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
+    pub(crate) fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
         let title = title.trim();
         if title.is_empty() || self.title.as_ref() == title {
             return;
@@ -174,24 +170,6 @@ impl MarkdownEditorView {
 
         self.title = SharedString::from(title);
         cx.notify();
-
-        let now = now_ts();
-        let note_id = self.note_id;
-        let db = cx.global::<DB>().conn.clone();
-        let title = title.to_string();
-
-        cx.spawn(async move |_, _| -> Result<()> {
-            note::ActiveModel {
-                id: Set(note_id as i64),
-                title: Set(title),
-                updated_at: Set(now),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok(())
-        })
-        .detach();
     }
 
     fn set_mode(&mut self, mode: EditorMode, window: &mut Window, cx: &mut Context<Self>) {

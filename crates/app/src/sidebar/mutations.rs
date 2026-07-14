@@ -27,8 +27,7 @@ impl SidebarView {
                 })
                 .await??;
             this.update(cx, |this, cx| {
-                this.list_projects(cx);
-                cx.emit(SidebarEvent::WorkspaceChanged);
+                this.request_workspace_refresh(cx);
             })
             .ok();
             Ok(())
@@ -49,18 +48,29 @@ impl SidebarView {
             }
         }
         cx.notify();
-        cx.emit(SidebarEvent::WorkspaceChanged);
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            crate::home::set_pinned(
-                db.as_ref(),
-                crate::home::WorkspaceItemKind::Board,
-                board_id,
-                pinned,
-            )
-            .await?;
-            this.update(cx, |this, cx| this.list_projects(cx)).ok();
-            Ok(())
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    crate::home::set_pinned(
+                        db.as_ref(),
+                        crate::home::WorkspaceItemKind::Board,
+                        board_id,
+                        pinned,
+                    )
+                    .await
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => eprintln!("Failed to update pinned board: {err}"),
+                    Err(err) => eprintln!("Failed to join pinned board task: {err}"),
+                }
+                this.request_workspace_refresh(cx);
+            })
+            .ok();
         })
         .detach();
     }
@@ -78,18 +88,29 @@ impl SidebarView {
             }
         }
         cx.notify();
-        cx.emit(SidebarEvent::WorkspaceChanged);
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            crate::home::set_pinned(
-                db.as_ref(),
-                crate::home::WorkspaceItemKind::Note,
-                note_id,
-                pinned,
-            )
-            .await?;
-            this.update(cx, |this, cx| this.list_projects(cx)).ok();
-            Ok(())
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    crate::home::set_pinned(
+                        db.as_ref(),
+                        crate::home::WorkspaceItemKind::Note,
+                        note_id,
+                        pinned,
+                    )
+                    .await
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => eprintln!("Failed to update pinned note: {err}"),
+                    Err(err) => eprintln!("Failed to join pinned note task: {err}"),
+                }
+                this.request_workspace_refresh(cx);
+            })
+            .ok();
         })
         .detach();
     }
@@ -179,15 +200,32 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            board::ActiveModel {
-                id: Set(board_id as i64),
-                title: Set(title),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok(())
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    board::ActiveModel {
+                        id: Set(board_id as i64),
+                        title: Set(title),
+                        ..Default::default()
+                    }
+                    .update(&*db)
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => {
+                    eprintln!("Failed to rename board: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join board rename task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -267,15 +305,32 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            note::ActiveModel {
-                id: Set(note_id as i64),
-                title: Set(title),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok(())
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    note::ActiveModel {
+                        id: Set(note_id as i64),
+                        title: Set(title),
+                        ..Default::default()
+                    }
+                    .update(&*db)
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => {
+                    eprintln!("Failed to rename note: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join note rename task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -325,18 +380,60 @@ impl SidebarView {
         board_id: u32,
         project_id: Option<u32>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            board::ActiveModel {
-                id: Set(board_id as i64),
-                project_id: Set(project_id.map(|id| id as i64)),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
+        if self.find_board(board_id).and_then(|board| board.project_id) == project_id {
+            return;
+        }
 
-            this.update(cx, |this, cx| this.list_projects(cx)).ok();
-            Ok(())
+        let Some(mut board) = self.take_board(board_id) else {
+            return;
+        };
+        board.project_id = project_id;
+        if let Some(project_id) = project_id {
+            let Some(project) = self
+                .projects
+                .iter_mut()
+                .find(|project| project.id == project_id)
+            else {
+                self.standalone_boards.push(board);
+                return;
+            };
+            project.boards.push(board);
+            project.is_expanded = true;
+        } else {
+            self.standalone_boards.push(board);
+        }
+        if self.active_item == Some(ActiveItem::Board(board_id)) {
+            self.active_project_id = project_id;
+        }
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    board::ActiveModel {
+                        id: Set(board_id as i64),
+                        project_id: Set(project_id.map(|id| id as i64)),
+                        ..Default::default()
+                    }
+                    .update(&*db)
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(_)) => cx.emit(SidebarEvent::WorkspaceChanged),
+                Ok(Err(err)) => {
+                    eprintln!("Failed to move board: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join board move task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -347,20 +444,98 @@ impl SidebarView {
         note_id: u32,
         project_id: Option<u32>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            note::ActiveModel {
-                id: Set(note_id as i64),
-                project_id: Set(project_id.map(|id| id as i64)),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
+        if self.find_note(note_id).and_then(|note| note.project_id) == project_id {
+            return;
+        }
 
-            this.update(cx, |this, cx| this.list_projects(cx)).ok();
-            Ok(())
+        let Some(mut note) = self.take_note(note_id) else {
+            return;
+        };
+        note.project_id = project_id;
+        if let Some(project_id) = project_id {
+            let Some(project) = self
+                .projects
+                .iter_mut()
+                .find(|project| project.id == project_id)
+            else {
+                self.standalone_notes.push(note);
+                return;
+            };
+            project.notes.push(note);
+            project.is_expanded = true;
+        } else {
+            self.standalone_notes.push(note);
+        }
+        if self.active_item == Some(ActiveItem::Note(note_id)) {
+            self.active_project_id = project_id;
+        }
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    note::ActiveModel {
+                        id: Set(note_id as i64),
+                        project_id: Set(project_id.map(|id| id as i64)),
+                        ..Default::default()
+                    }
+                    .update(&*db)
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(_)) => cx.emit(SidebarEvent::WorkspaceChanged),
+                Ok(Err(err)) => {
+                    eprintln!("Failed to move note: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join note move task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
+    }
+
+    fn take_board(&mut self, board_id: u32) -> Option<BoardDTO> {
+        if let Some(index) = self
+            .standalone_boards
+            .iter()
+            .position(|board| board.id == board_id)
+        {
+            return Some(self.standalone_boards.remove(index));
+        }
+
+        self.projects.iter_mut().find_map(|project| {
+            project
+                .boards
+                .iter()
+                .position(|board| board.id == board_id)
+                .map(|index| project.boards.remove(index))
+        })
+    }
+
+    fn take_note(&mut self, note_id: u32) -> Option<NoteDTO> {
+        if let Some(index) = self
+            .standalone_notes
+            .iter()
+            .position(|note| note.id == note_id)
+        {
+            return Some(self.standalone_notes.remove(index));
+        }
+
+        self.projects.iter_mut().find_map(|project| {
+            project
+                .notes
+                .iter()
+                .position(|note| note.id == note_id)
+                .map(|index| project.notes.remove(index))
+        })
     }
 
     pub(super) fn start_renaming_project(
@@ -402,15 +577,32 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            project::ActiveModel {
-                id: Set(project_id as i64),
-                name: Set(name),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok(())
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    project::ActiveModel {
+                        id: Set(project_id as i64),
+                        name: Set(name),
+                        ..Default::default()
+                    }
+                    .update(&*db)
+                    .await
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => {
+                    eprintln!("Failed to rename project: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join project rename task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -439,9 +631,8 @@ impl SidebarView {
                     this.active_project_id = None;
                     this.active_item = None;
                 }
-                this.list_projects(cx);
+                this.request_workspace_refresh(cx);
                 cx.emit(SidebarEvent::ProjectDeleted { project_id });
-                cx.emit(SidebarEvent::WorkspaceChanged);
                 cx.notify();
             })
             .ok();
@@ -484,6 +675,46 @@ impl SidebarView {
         self.persist_project_positions(cx);
     }
 
+    pub(super) fn reorder_project(
+        &mut self,
+        source_project_id: u32,
+        target_project_id: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source_index) = self
+            .projects
+            .iter()
+            .position(|project| project.id == source_project_id)
+        else {
+            return;
+        };
+        let Some(target_index) = self
+            .projects
+            .iter()
+            .position(|project| project.id == target_project_id)
+        else {
+            return;
+        };
+        if source_index == target_index {
+            return;
+        }
+
+        let moving_down = source_index < target_index;
+        let project = self.projects.remove(source_index);
+        let target_index = self
+            .projects
+            .iter()
+            .position(|project| project.id == target_project_id)
+            .unwrap_or(self.projects.len());
+        let insertion_index = if moving_down {
+            target_index + 1
+        } else {
+            target_index
+        };
+        self.projects.insert(insertion_index, project);
+        self.persist_project_positions(cx);
+    }
+
     fn persist_project_positions(&mut self, cx: &mut Context<Self>) {
         let positions: Vec<(u32, i32)> = self
             .projects
@@ -496,21 +727,38 @@ impl SidebarView {
             .collect();
 
         cx.notify();
-        cx.emit(SidebarEvent::ProjectsReordered);
 
         let db = cx.global::<DB>().conn.clone();
-        cx.spawn(async move |_, _| -> Result<()> {
-            for (project_id, position) in positions {
-                project::ActiveModel {
-                    id: Set(project_id as i64),
-                    position: Set(position),
-                    ..Default::default()
-                }
-                .update(&*db)
-                .await?;
-            }
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    for (project_id, position) in positions {
+                        project::ActiveModel {
+                            id: Set(project_id as i64),
+                            position: Set(position),
+                            ..Default::default()
+                        }
+                        .update(&*db)
+                        .await?;
+                    }
 
-            Ok(())
+                    Ok::<(), sea_orm::DbErr>(())
+                })
+                .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(())) => cx.emit(SidebarEvent::ProjectsReordered),
+                Ok(Err(err)) => {
+                    eprintln!("Failed to persist project positions: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+                Err(err) => {
+                    eprintln!("Failed to join project position task: {err}");
+                    this.request_workspace_refresh(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }

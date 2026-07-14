@@ -393,6 +393,7 @@ impl MarkdownEditorView {
         let note_id = self.note_id;
         let db = cx.global::<DB>().conn.clone();
         let background_executor = cx.background_executor().clone();
+        let runtime = tokio::runtime::Handle::current();
         let saved_path = path.clone();
         let path_string = path.display().to_string();
 
@@ -411,20 +412,29 @@ impl MarkdownEditorView {
                 .await;
 
             let result = match result {
-                Ok(()) => note::ActiveModel {
-                    id: Set(note_id as i64),
-                    file_path: Set(Some(path_string)),
-                    file_managed_by_app: Set(file_managed_by_app),
-                    cached_content: Set(content.to_string()),
-                    file_missing_since: Set(None),
-                    updated_at: Set(now_ts()),
-                    ..Default::default()
+                Ok(()) => {
+                    let persisted_content = content.clone();
+                    match runtime
+                        .spawn(async move {
+                            note::ActiveModel {
+                                id: Set(note_id as i64),
+                                file_path: Set(Some(path_string)),
+                                file_managed_by_app: Set(file_managed_by_app),
+                                cached_content: Set(persisted_content.to_string()),
+                                file_missing_since: Set(None),
+                                updated_at: Set(now_ts()),
+                                ..Default::default()
+                            }
+                            .update(&*db)
+                            .await
+                        })
+                        .await
+                    {
+                        Ok(Ok(_)) => Ok(()),
+                        Ok(Err(err)) => Err(err.to_string()),
+                        Err(err) => Err(format!("Failed to join note save task: {err}")),
+                    }
                 }
-                .update(&*db)
-                .await
-                .map(|_| ())
-                .map_err(|err| err.to_string()),
-
                 Err(err) => Err(err),
             };
 

@@ -45,6 +45,28 @@ impl AppShell {
                 }
             };
 
+            let Ok(should_apply) = this.update(cx, |this, cx| {
+                if std::mem::take(&mut this.workspace_refresh_pending) {
+                    this.workspace_refreshing = false;
+                    this.refresh_workspace(cx);
+                    false
+                } else {
+                    true
+                }
+            }) else {
+                return;
+            };
+            if !should_apply {
+                return;
+            }
+
+            let Ok(sidebar) = this.read_with(cx, |this, _| this.sidebar.clone()) else {
+                return;
+            };
+            sidebar.update(cx, |sidebar, cx| {
+                sidebar.apply_workspace_rows(&rows, cx);
+            });
+
             let project_choices: Vec<ProjectChoice> = rows
                 .projects
                 .iter()
@@ -123,6 +145,7 @@ impl AppShell {
         let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
         let path_string = path.display().to_string();
         let background_executor = cx.background_executor().clone();
+        let runtime = tokio::runtime::Handle::current();
 
         cx.spawn_in(window, async move |_, window| {
             let write_path = path.clone();
@@ -136,20 +159,25 @@ impl AppShell {
                 .await
                 .ok()?;
 
-            let inserted = note::ActiveModel {
-                title: Set(title),
-                project_id: Set(project_id.map(|id| id as i64)),
-                file_path: Set(Some(path_string)),
-                file_managed_by_app: Set(true),
-                cached_content: Set(DEFAULT_NOTE.to_string()),
-                file_missing_since: Set(None),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            }
-            .insert(&*db)
-            .await
-            .ok()?;
+            let inserted = runtime
+                .spawn(async move {
+                    note::ActiveModel {
+                        title: Set(title),
+                        project_id: Set(project_id.map(|id| id as i64)),
+                        file_path: Set(Some(path_string)),
+                        file_managed_by_app: Set(true),
+                        cached_content: Set(DEFAULT_NOTE.to_string()),
+                        file_missing_since: Set(None),
+                        created_at: Set(now),
+                        updated_at: Set(now),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await
+                .ok()?
+                .ok()?;
 
             window
                 .update(|window, cx| {
@@ -165,8 +193,6 @@ impl AppShell {
                             window,
                             cx,
                         );
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })
@@ -188,6 +214,7 @@ impl AppShell {
         let background_executor = cx.background_executor().clone();
         let db = cx.global::<DB>().conn.clone();
         let view = cx.entity().downgrade();
+        let runtime = tokio::runtime::Handle::current();
 
         cx.spawn_in(window, async move |_, window| {
             let paths = paths.await.ok()?.ok()??;
@@ -205,46 +232,48 @@ impl AppShell {
                 .unwrap_or("Untitled note")
                 .to_string();
 
-            let existing = Note::find()
-                .filter(note::Column::FilePath.eq(path_string.clone()))
-                .one(&*db)
-                .await
-                .ok()
-                .flatten();
+            let (note_id, note_title) = runtime
+                .spawn(async move {
+                    let existing = Note::find()
+                        .filter(note::Column::FilePath.eq(path_string.clone()))
+                        .one(&*db)
+                        .await?;
 
-            let (note_id, note_title) = if let Some(existing) = existing {
-                note::ActiveModel {
-                    id: Set(existing.id),
-                    file_path: Set(Some(path_string)),
-                    cached_content: Set(content),
-                    file_missing_since: Set(None),
-                    updated_at: Set(now_ts()),
-                    ..Default::default()
-                }
-                .update(&*db)
+                    if let Some(existing) = existing {
+                        note::ActiveModel {
+                            id: Set(existing.id),
+                            file_path: Set(Some(path_string)),
+                            cached_content: Set(content),
+                            file_missing_since: Set(None),
+                            updated_at: Set(now_ts()),
+                            ..Default::default()
+                        }
+                        .update(&*db)
+                        .await?;
+
+                        Ok::<_, sea_orm::DbErr>((existing.id as u32, existing.title))
+                    } else {
+                        let now = now_ts();
+                        let inserted = note::ActiveModel {
+                            title: Set(title),
+                            project_id: Set(None),
+                            file_path: Set(Some(path_string)),
+                            file_managed_by_app: Set(false),
+                            cached_content: Set(content),
+                            file_missing_since: Set(None),
+                            created_at: Set(now),
+                            updated_at: Set(now),
+                            ..Default::default()
+                        }
+                        .insert(&*db)
+                        .await?;
+
+                        Ok((inserted.id as u32, inserted.title))
+                    }
+                })
                 .await
+                .ok()?
                 .ok()?;
-
-                (existing.id as u32, existing.title)
-            } else {
-                let now = now_ts();
-                let inserted = note::ActiveModel {
-                    title: Set(title),
-                    project_id: Set(None),
-                    file_path: Set(Some(path_string)),
-                    file_managed_by_app: Set(false),
-                    cached_content: Set(content),
-                    file_missing_since: Set(None),
-                    created_at: Set(now),
-                    updated_at: Set(now),
-                    ..Default::default()
-                }
-                .insert(&*db)
-                .await
-                .ok()?;
-
-                (inserted.id as u32, inserted.title)
-            };
 
             window
                 .update(|window, cx| {
@@ -260,8 +289,6 @@ impl AppShell {
                             window,
                             cx,
                         );
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })
@@ -290,16 +317,22 @@ impl AppShell {
     ) {
         let db = cx.global::<DB>().conn.clone();
         let view = cx.entity().downgrade();
+        let runtime = tokio::runtime::Handle::current();
 
         cx.spawn_in(window, async move |_, window| {
-            let inserted = board::ActiveModel {
-                title: Set(title),
-                project_id: Set(project_id.map(|id| id as i64)),
-                ..Default::default()
-            }
-            .insert(&*db)
-            .await
-            .ok()?;
+            let inserted = runtime
+                .spawn(async move {
+                    board::ActiveModel {
+                        title: Set(title),
+                        project_id: Set(project_id.map(|id| id as i64)),
+                        ..Default::default()
+                    }
+                    .insert(&*db)
+                    .await
+                })
+                .await
+                .ok()?
+                .ok()?;
 
             window
                 .update(|window, cx| {
@@ -315,8 +348,6 @@ impl AppShell {
                             window,
                             cx,
                         );
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                         this.refresh_workspace(cx);
                     });
                 })
@@ -325,5 +356,206 @@ impl AppShell {
             Some(())
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    #[gpui::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    fn startup_workspace_load_count(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                entity::project::ActiveModel {
+                    name: Set("Shared snapshot".to_string()),
+                    archived: Set(false),
+                    position: Set(0),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("workspace load-count database should initialize");
+        let settings_dir = std::env::temp_dir().join(format!(
+            "castle-workspace-load-count-{}",
+            std::process::id()
+        ));
+        let app_db = crate::DB {
+            conn: Arc::new(db),
+            data_dir: PathBuf::new(),
+        };
+
+        crate::workspace_data::reset_workspace_load_count();
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("workspace load-count window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if crate::workspace_data::workspace_load_count() >= 1
+                && !shell.read_with(&cx, |shell, _| shell.workspace_refreshing)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(crate::workspace_data::workspace_load_count(), 1);
+        shell.read_with(&cx, |shell, cx| {
+            assert!(
+                shell
+                    .projects
+                    .iter()
+                    .any(|project| project.name == "Shared snapshot")
+            );
+            assert!(
+                shell
+                    .sidebar
+                    .read(cx)
+                    .contains_project_named("Shared snapshot")
+            );
+        });
+    }
+
+    #[gpui::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    fn rapid_title_edits_save_latest_value_with_one_workspace_load(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = entity::note::ActiveModel {
+                    title: Set("Original".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(None),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set(String::new()),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("title-save database should initialize");
+        let settings_dir =
+            std::env::temp_dir().join(format!("castle-title-save-{}", std::process::id()));
+        let app_db = crate::DB {
+            conn: Arc::new(db.clone()),
+            data_dir: PathBuf::new(),
+        };
+
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("title-save window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if !shell.read_with(&cx, |shell, _| shell.workspace_refreshing) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        crate::workspace_data::reset_workspace_load_count();
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.open_note_tab(note_id, None, "Original".into(), window, cx);
+                shell.rename_active_tab("First".to_string(), cx);
+                shell.rename_active_tab("Second".to_string(), cx);
+                shell.rename_active_tab("Final title".to_string(), cx);
+            });
+        });
+        assert_eq!(
+            shell.read_with(&cx, |shell, _| {
+                shell
+                    .pending_workspace_title_saves
+                    .get(&WorkspaceTitleTarget::Note(note_id))
+                    .map(|pending| pending.generation)
+            }),
+            Some(3)
+        );
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(300));
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if crate::workspace_data::workspace_load_count() == 1
+                && !shell.read_with(&cx, |shell, _| shell.workspace_refreshing)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let saved = runtime
+            .block_on(entity::note::Entity::find_by_id(note_id as i64).one(&db))
+            .expect("saved title query should succeed")
+            .expect("saved note should exist");
+        assert_eq!(saved.title, "Final title");
+        assert_eq!(crate::workspace_data::workspace_load_count(), 1);
+        shell.read_with(&cx, |shell, cx| {
+            assert!(shell.notes.iter().any(|note| note.title == "Final title"));
+            assert!(shell.sidebar.read(cx).contains_note_named("Final title"));
+        });
+
+        let flush = cx.update(|_, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.rename_active_tab("Shutdown title".to_string(), cx);
+                shell.flush_pending_workspace_title_saves(cx)
+            })
+        });
+        runtime.block_on(flush);
+
+        let saved = runtime
+            .block_on(entity::note::Entity::find_by_id(note_id as i64).one(&db))
+            .expect("shutdown title query should succeed")
+            .expect("saved note should exist");
+        assert_eq!(saved.title, "Shutdown title");
+        assert!(shell.read_with(&cx, |shell, _| {
+            shell.pending_workspace_title_saves.is_empty()
+        }));
     }
 }

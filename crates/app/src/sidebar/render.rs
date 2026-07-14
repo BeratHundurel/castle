@@ -2,20 +2,365 @@ use std::rc::Rc;
 
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable, h_flex,
+    ActiveTheme, Collapsible, Icon, IconName, Sizable,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     input::Input,
     menu::PopupMenu,
-    select::Select,
     sidebar::{
-        Sidebar, SidebarCollapsible, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu,
-        SidebarMenuItem,
+        Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarItem, SidebarMenuItem,
     },
     v_flex,
 };
 
 use super::content_item::SidebarContentItem;
+use super::drag::{SidebarDragInfo, SidebarDragKind};
 use super::event::SidebarEvent;
 use super::{SidebarView, action::*};
+
+#[derive(Clone)]
+struct DraggableContentItem {
+    menu_item: SidebarMenuItem,
+    drag_info: SidebarDragInfo,
+}
+
+#[derive(Clone)]
+struct DraggableProjectItem {
+    project_id: u32,
+    project_index: usize,
+    name: SharedString,
+    default_open: bool,
+    active: bool,
+    is_renaming: bool,
+    rename_input: Entity<gpui_component::input::InputState>,
+    is_first: bool,
+    is_last: bool,
+    children: Vec<DraggableContentItem>,
+    drag_info: SidebarDragInfo,
+    sidebar: Entity<SidebarView>,
+}
+
+#[derive(Clone)]
+enum SidebarDragMenuEntry {
+    Content(Box<DraggableContentItem>),
+    Project(Box<DraggableProjectItem>),
+}
+
+#[derive(Clone)]
+struct SidebarDragMenu {
+    entries: Vec<SidebarDragMenuEntry>,
+    collapsed: bool,
+    standalone_drop_target: bool,
+    sidebar: Entity<SidebarView>,
+}
+
+impl SidebarDragMenu {
+    fn new(entries: Vec<SidebarDragMenuEntry>, sidebar: Entity<SidebarView>) -> Self {
+        Self {
+            entries,
+            collapsed: false,
+            standalone_drop_target: false,
+            sidebar,
+        }
+    }
+
+    fn standalone_drop_target(mut self) -> Self {
+        self.standalone_drop_target = true;
+        self
+    }
+}
+
+impl Collapsible for SidebarDragMenu {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+}
+
+impl SidebarItem for SidebarDragMenu {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let id = id.into();
+        let is_empty = self.entries.is_empty();
+        let sidebar = self.sidebar.clone();
+
+        v_flex()
+            .id(id.clone())
+            .gap_1()
+            .when(is_empty && self.standalone_drop_target, |this| {
+                this.child(
+                    h_flex()
+                        .h_7()
+                        .px_2()
+                        .gap_2()
+                        .rounded(cx.theme().radius)
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .opacity(0.72)
+                        .child(Icon::new(IconName::Folder).xsmall())
+                        .child("Drop notes or boards here"),
+                )
+            })
+            .children(self.entries.into_iter().enumerate().map(|(index, entry)| {
+                entry.render(format!("{}-{index}", id), self.collapsed, window, cx)
+            }))
+            .when(self.standalone_drop_target, |this| {
+                this.can_drop(|value, _, _| {
+                    value
+                        .downcast_ref::<SidebarDragInfo>()
+                        .is_some_and(SidebarDragInfo::can_drop_on_standalone)
+                })
+                .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+                    this.rounded(cx.theme().radius).bg(cx.theme().drop_target)
+                })
+                .on_drop(move |info: &SidebarDragInfo, _, cx| {
+                    let SidebarDragKind::Content(item) = &info.kind else {
+                        return;
+                    };
+                    sidebar.update(cx, |this, cx| item.move_to(this, None, cx));
+                })
+            })
+            .into_any_element()
+    }
+}
+
+impl SidebarDragMenuEntry {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        collapsed: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        match self {
+            Self::Content(item) => item.render(id, collapsed, window, cx),
+            Self::Project(item) => item.render(id, collapsed, window, cx),
+        }
+    }
+}
+
+impl DraggableContentItem {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        collapsed: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let id = id.into();
+        let drag_info = self.drag_info.clone();
+
+        div()
+            .id(id.clone())
+            .cursor_move()
+            .on_drag(drag_info, |info, position, _, cx| {
+                cx.new(|_| info.clone().position(position))
+            })
+            .child(
+                self.menu_item
+                    .collapsed(collapsed)
+                    .render(format!("{}-row", id), window, cx),
+            )
+            .into_any_element()
+    }
+}
+
+impl DraggableProjectItem {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        collapsed: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let id = id.into();
+        let open_state = window.use_keyed_state(
+            format!("sidebar-project-open-{}", self.project_id),
+            cx,
+            |_, _| self.default_open,
+        );
+        let is_open = !collapsed && *open_state.read(cx);
+        let project_id = self.project_id;
+        let project_index = self.project_index;
+        let sidebar = self.sidebar.clone();
+        let click_sidebar = self.sidebar.clone();
+        let click_open_state = open_state.clone();
+        let caret_open_state = open_state.clone();
+        let drop_open_state = open_state.clone();
+        let rename_input = self.rename_input.clone();
+        let is_renaming = self.is_renaming;
+        let drag_info = self.drag_info.clone();
+        let row = SidebarMenuItem::new(self.name)
+            .icon(IconName::FolderOpen)
+            .active(self.active)
+            .suffix(move |_window, cx| {
+                let caret_open_state = caret_open_state.clone();
+                h_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .justify_end()
+                    .when(is_renaming, |this| {
+                        this.child(
+                            Input::new(&rename_input)
+                                .small()
+                                .bg(cx.theme().sidebar.opacity(0.))
+                                .rounded_none()
+                                .focus_bordered(false)
+                                .border_0()
+                                .text_xs()
+                                .w_full(),
+                        )
+                    })
+                    .child(
+                        Button::new(("sidebar-project-caret", project_id as usize))
+                            .xsmall()
+                            .ghost()
+                            .icon(
+                                Icon::new(IconName::ChevronRight)
+                                    .size_4()
+                                    .when(is_open, |this| this.rotate(percentage(90. / 360.))),
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                caret_open_state.update(cx, |open, cx| {
+                                    *open = !*open;
+                                    cx.notify();
+                                });
+                            }),
+                    )
+            })
+            .context_menu(move |menu, _, cx| {
+                let muted = cx.theme().muted_foreground;
+                menu.menu_element(
+                    Box::new(RenameProjectAction(project_id)),
+                    move |_window, _cx| {
+                        SidebarView::render_context_menu_row("Rename", IconName::Replace, muted)
+                    },
+                )
+                .when(!self.is_first, |menu| {
+                    menu.menu_element(
+                        Box::new(MoveProjectUpAction(project_id)),
+                        move |_window, _cx| {
+                            SidebarView::render_context_menu_row(
+                                "Move up",
+                                IconName::ArrowUp,
+                                muted,
+                            )
+                        },
+                    )
+                })
+                .when(!self.is_last, |menu| {
+                    menu.menu_element(
+                        Box::new(MoveProjectDownAction(project_id)),
+                        move |_window, _cx| {
+                            SidebarView::render_context_menu_row(
+                                "Move down",
+                                IconName::ArrowDown,
+                                muted,
+                            )
+                        },
+                    )
+                })
+                .menu_element(
+                    Box::new(DeleteProjectAction(project_id)),
+                    move |_window, _cx| {
+                        SidebarView::render_context_menu_row(
+                            "Move to Trash",
+                            IconName::Delete,
+                            muted,
+                        )
+                    },
+                )
+            })
+            .on_click(move |_, window, cx| {
+                click_open_state.update(cx, |open, cx| {
+                    *open = !*open;
+                    cx.notify();
+                });
+                click_sidebar.update(cx, |this, cx| {
+                    this.active_project_id = Some(project_id);
+                    cx.emit(SidebarEvent::ActivateProject { project_id });
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
+                });
+            });
+
+        v_flex()
+            .id(id.clone())
+            .gap_1()
+            .child(
+                div()
+                    .id(format!("{}-drop-row", id))
+                    .cursor_move()
+                    .can_drop(move |value, _, _| {
+                        value
+                            .downcast_ref::<SidebarDragInfo>()
+                            .is_some_and(|info| info.can_drop_on_project(project_id))
+                    })
+                    .drag_over::<SidebarDragInfo>(move |this, info, _, cx| match &info.kind {
+                        SidebarDragKind::Project { source_index, .. } => {
+                            if *source_index < project_index {
+                                this.border_b_2()
+                            } else {
+                                this.border_t_2()
+                            }
+                            .border_color(cx.theme().primary)
+                            .bg(cx.theme().drop_target.opacity(0.72))
+                        }
+                        SidebarDragKind::Content(_) => {
+                            this.rounded(cx.theme().radius).bg(cx.theme().drop_target)
+                        }
+                    })
+                    .on_drop(move |info: &SidebarDragInfo, _, cx| {
+                        if matches!(&info.kind, SidebarDragKind::Content(_)) {
+                            drop_open_state.update(cx, |open, cx| {
+                                *open = true;
+                                cx.notify();
+                            });
+                        }
+                        sidebar.update(cx, |this, cx| match &info.kind {
+                            SidebarDragKind::Project { id, .. } => {
+                                this.reorder_project(*id, project_id, cx)
+                            }
+                            SidebarDragKind::Content(item) => {
+                                item.move_to(this, Some(project_id), cx)
+                            }
+                        });
+                    })
+                    .on_drag(drag_info, |info, position, _, cx| {
+                        cx.new(|_| info.clone().position(position))
+                    })
+                    .child(
+                        row.collapsed(collapsed)
+                            .render(format!("{}-row", id), window, cx),
+                    ),
+            )
+            .when(is_open, |this| {
+                this.child(
+                    v_flex()
+                        .id(format!("{}-children", id))
+                        .ml_3p5()
+                        .pl_2p5()
+                        .py_0p5()
+                        .gap_1()
+                        .border_l_1()
+                        .border_color(cx.theme().sidebar_border)
+                        .children(self.children.into_iter().enumerate().map(|(index, child)| {
+                            child.render(format!("{}-child-{index}", id), collapsed, window, cx)
+                        })),
+                )
+            })
+            .into_any_element()
+    }
+}
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
 
@@ -66,6 +411,22 @@ impl SidebarView {
             }))
     }
 
+    fn render_draggable_content_item(
+        &self,
+        item: SidebarContentItem,
+        origin: SharedString,
+        cx: &mut Context<Self>,
+        projects: Rc<Vec<(u32, SharedString)>>,
+    ) -> DraggableContentItem {
+        let drag_info = SidebarDragInfo::content(item.clone(), origin);
+        let menu_item = self.render_content_item(item, cx, true, projects);
+
+        DraggableContentItem {
+            menu_item,
+            drag_info,
+        }
+    }
+
     fn render_item_context_menu(
         mut menu: PopupMenu,
         item: SidebarContentItem,
@@ -80,13 +441,16 @@ impl SidebarView {
             })
             .menu_element(item.edit_action(), move |_window, _cx| {
                 Self::render_context_menu_row("Rename", IconName::Replace, muted)
-            })
-            .menu_element(item.move_action(None), move |_window, _cx| {
-                Self::render_context_menu_row("Move to Standalone", IconName::Folder, muted)
             });
 
+        if item.can_move_to(None) {
+            menu = menu.menu_element(item.move_action(None), move |_window, _cx| {
+                Self::render_context_menu_row("Move to Standalone", IconName::Folder, muted)
+            });
+        }
+
         for (target_project_id, name) in projects.iter() {
-            if Some(*target_project_id) == item.project_id() {
+            if !item.can_move_to(Some(*target_project_id)) {
                 continue;
             }
 
@@ -127,6 +491,7 @@ impl SidebarView {
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let theme_name = theme.theme_name().clone();
         let search_query = self.search_input.read(cx).text().to_string();
         let search_lower = search_query.to_lowercase();
         let move_project_targets: Rc<Vec<(u32, SharedString)>> = Rc::new(
@@ -135,25 +500,32 @@ impl Render for SidebarView {
                 .map(|project| (project.id, project.name.clone()))
                 .collect(),
         );
+        let sidebar = cx.entity();
         let mut pinned_items = Vec::new();
         for project in &self.projects {
+            let origin = project.name.clone();
             pinned_items.extend(
                 project
                     .notes
                     .iter()
                     .filter(|note| note.is_pinned)
                     .map(|note| {
-                        self.render_content_item(
+                        SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
                             note.into(),
+                            origin.clone(),
                             cx,
-                            true,
                             move_project_targets.clone(),
-                        )
+                        )))
                     }),
             );
             pinned_items.extend(project.boards.iter().filter(|board| board.is_pinned).map(
                 |board| {
-                    self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+                    SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
+                        board.into(),
+                        origin.clone(),
+                        cx,
+                        move_project_targets.clone(),
+                    )))
                 },
             ));
         }
@@ -162,7 +534,12 @@ impl Render for SidebarView {
                 .iter()
                 .filter(|note| note.is_pinned)
                 .map(|note| {
-                    self.render_content_item(note.into(), cx, true, move_project_targets.clone())
+                    SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
+                        note.into(),
+                        "Standalone".into(),
+                        cx,
+                        move_project_targets.clone(),
+                    )))
                 }),
         );
         pinned_items.extend(
@@ -170,14 +547,20 @@ impl Render for SidebarView {
                 .iter()
                 .filter(|board| board.is_pinned)
                 .map(|board| {
-                    self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+                    SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
+                        board.into(),
+                        "Standalone".into(),
+                        cx,
+                        move_project_targets.clone(),
+                    )))
                 }),
         );
 
-        let project_menu_items: Vec<SidebarMenuItem> = self
+        let project_menu_items: Vec<SidebarDragMenuEntry> = self
             .projects
             .iter()
-            .filter_map(|project| {
+            .enumerate()
+            .filter_map(|(project_index, project)| {
                 let project_matches =
                     search_lower.is_empty() || project.name.to_lowercase().contains(&search_lower);
                 let filtered_boards = project
@@ -202,7 +585,6 @@ impl Render for SidebarView {
                 let project_id = project.id;
                 let project_name = project.name.clone();
                 let is_renaming = self.renaming_project == Some(project_id);
-                let rename_input = self.rename_project_input.clone();
                 let is_first_project = self
                     .projects
                     .first()
@@ -213,92 +595,48 @@ impl Render for SidebarView {
                     .last()
                     .map(|project| project.id == project_id)
                     .unwrap_or(false);
-                let mut children: Vec<SidebarMenuItem> = Vec::new();
+                let mut children = Vec::new();
 
                 children.extend(filtered_notes.into_iter().map(|note| {
-                    self.render_content_item(note.into(), cx, true, move_project_targets.clone())
+                    self.render_draggable_content_item(
+                        note.into(),
+                        project_name.clone(),
+                        cx,
+                        move_project_targets.clone(),
+                    )
                 }));
 
                 children.extend(filtered_boards.into_iter().map(|board| {
-                    self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+                    self.render_draggable_content_item(
+                        board.into(),
+                        project_name.clone(),
+                        cx,
+                        move_project_targets.clone(),
+                    )
                 }));
 
-                Some(
-                    SidebarMenuItem::new(project_name)
-                        .icon(IconName::FolderOpen)
-                        .active(
-                            self.active_project_id == Some(project_id)
-                                && self.active_item.is_none(),
-                        )
-                        .when(is_renaming, |this| {
-                            this.suffix(move |_window, cx| {
-                                Input::new(&rename_input)
-                                    .small()
-                                    .bg(cx.theme().sidebar.opacity(0.))
-                                    .rounded_none()
-                                    .focus_bordered(false)
-                                    .border_0()
-                                    .text_xs()
-                                    .w_full()
-                            })
-                        })
-                        .default_open(project.is_expanded || !search_lower.is_empty())
-                        .click_to_toggle(true)
-                        .children(children)
-                        .context_menu(move |menu, _, cx| {
-                            let muted = cx.theme().muted_foreground;
-                            menu.menu_element(
-                                Box::new(RenameProjectAction(project_id)),
-                                move |_window, _cx| {
-                                    Self::render_context_menu_row(
-                                        "Rename",
-                                        IconName::Replace,
-                                        muted,
-                                    )
-                                },
-                            )
-                            .when(!is_first_project, |menu| {
-                                menu.menu_element(
-                                    Box::new(MoveProjectUpAction(project_id)),
-                                    move |_window, _cx| {
-                                        Self::render_context_menu_row(
-                                            "Move up",
-                                            IconName::ArrowUp,
-                                            muted,
-                                        )
-                                    },
-                                )
-                            })
-                            .when(!is_last_project, |menu| {
-                                menu.menu_element(
-                                    Box::new(MoveProjectDownAction(project_id)),
-                                    move |_window, _cx| {
-                                        Self::render_context_menu_row(
-                                            "Move down",
-                                            IconName::ArrowDown,
-                                            muted,
-                                        )
-                                    },
-                                )
-                            })
-                            .menu_element(
-                                Box::new(DeleteProjectAction(project_id)),
-                                move |_window, _cx| {
-                                    Self::render_context_menu_row(
-                                        "Move to Trash",
-                                        IconName::Delete,
-                                        muted,
-                                    )
-                                },
-                            )
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.active_project_id = Some(project_id);
-                            cx.emit(SidebarEvent::ActivateProject { project_id });
-                            this.focus_handle.focus(window, cx);
-                            cx.notify();
-                        })),
-                )
+                Some(SidebarDragMenuEntry::Project(Box::new(
+                    DraggableProjectItem {
+                        project_id,
+                        project_index,
+                        name: project_name.clone(),
+                        default_open: project.is_expanded || !search_lower.is_empty(),
+                        active: self.active_project_id == Some(project_id)
+                            && self.active_item.is_none(),
+                        is_renaming,
+                        rename_input: self.rename_project_input.clone(),
+                        is_first: is_first_project,
+                        is_last: is_last_project,
+                        drag_info: SidebarDragInfo::project(
+                            project_id,
+                            project_index,
+                            project_name,
+                            project.notes.len() + project.boards.len(),
+                        ),
+                        children,
+                        sidebar: sidebar.clone(),
+                    },
+                )))
             })
             .collect();
 
@@ -317,16 +655,27 @@ impl Render for SidebarView {
             .filter(|note| standalone_matches || note.title.to_lowercase().contains(&search_lower))
             .collect::<Vec<_>>();
 
-        let mut standalone_items: Vec<SidebarMenuItem> = standalone_notes
+        let mut standalone_items: Vec<SidebarDragMenuEntry> = standalone_notes
             .into_iter()
             .map(|note| {
-                self.render_content_item(note.into(), cx, true, move_project_targets.clone())
+                SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
+                    note.into(),
+                    "Standalone".into(),
+                    cx,
+                    move_project_targets.clone(),
+                )))
             })
             .collect();
 
         standalone_items.extend(standalone_boards.into_iter().map(|board| {
-            self.render_content_item(board.into(), cx, true, move_project_targets.clone())
+            SidebarDragMenuEntry::Content(Box::new(self.render_draggable_content_item(
+                board.into(),
+                "Standalone".into(),
+                cx,
+                move_project_targets.clone(),
+            )))
         }));
+        let show_standalone = search_lower.is_empty() || !standalone_items.is_empty();
 
         div()
             .h_full()
@@ -456,101 +805,132 @@ impl Render for SidebarView {
                     .when(!pinned_items.is_empty(), |this| {
                         this.child(
                             SidebarGroup::new("Pinned")
-                                .child(SidebarMenu::new().children(pinned_items)),
+                                .child(SidebarDragMenu::new(pinned_items, sidebar.clone())),
                         )
                     })
                     .child(
                         SidebarGroup::new("Projects")
-                            .child(SidebarMenu::new().children(project_menu_items)),
+                            .child(SidebarDragMenu::new(project_menu_items, sidebar.clone())),
                     )
-                    .when(!standalone_items.is_empty(), |this| {
+                    .when(show_standalone, |this| {
                         this.child(
-                            SidebarGroup::new("Standalone")
-                                .child(SidebarMenu::new().children(standalone_items)),
+                            SidebarGroup::new("Standalone").child(
+                                SidebarDragMenu::new(standalone_items, sidebar)
+                                    .standalone_drop_target(),
+                            ),
                         )
                     })
                     .footer(
-                        SidebarFooter::new().child(
-                            v_flex()
-                                .w_full()
-                                .gap_1()
-                                .child(
-                                    h_flex()
-                                        .id("sidebar-home")
-                                        .w_full()
-                                        .h_8()
-                                        .px_2()
-                                        .gap_2()
-                                        .items_center()
-                                        .rounded(theme.radius)
-                                        .text_sm()
-                                        .text_color(theme.muted_foreground)
-                                        .hover(|this| this.bg(theme.secondary_hover.opacity(0.72)))
-                                        .child(Icon::new(IconName::LayoutDashboard).xsmall())
-                                        .child("Home")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(SidebarEvent::OpenHome);
-                                        })),
-                                )
-                                .child(
-                                    h_flex()
-                                        .id("sidebar-trash")
-                                        .w_full()
-                                        .h_8()
-                                        .px_2()
-                                        .gap_2()
-                                        .items_center()
-                                        .rounded(theme.radius)
-                                        .text_sm()
-                                        .text_color(theme.muted_foreground)
-                                        .hover(|this| this.bg(theme.secondary_hover.opacity(0.72)))
-                                        .child(Icon::new(IconName::Delete).xsmall())
-                                        .child("Trash")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(SidebarEvent::OpenTrash);
-                                        })),
-                                )
-                                .child(
-                                    h_flex()
-                                        .id("theme-select-footer")
-                                        .w_full()
-                                        .h_10()
-                                        .gap_2()
-                                        .justify_center()
-                                        .items_center()
-                                        .rounded(theme.radius)
-                                        .border_1()
-                                        .border_color(theme.border.opacity(0.7))
-                                        .bg(theme.secondary.opacity(0.55))
-                                        .px_2()
-                                        .hover(|this| {
-                                            this.bg(theme.secondary_hover.opacity(0.8))
-                                                .border_color(theme.primary.opacity(0.35))
-                                        })
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .size_6()
-                                                .flex_shrink_0()
-                                                .rounded(theme.radius)
-                                                .bg(theme.primary.opacity(0.18))
-                                                .text_color(theme.primary)
-                                                .child(Icon::new(IconName::Palette).xsmall()),
-                                        )
-                                        .child(
-                                            div().items_center().flex_1().child(
-                                                Select::new(&self.theme_select)
-                                                    .placeholder("Theme")
-                                                    .appearance(false)
-                                                    .small()
-                                                    .w_full()
-                                                    .menu_max_h(rems(14.)),
-                                            ),
-                                        ),
-                                ),
-                        ),
+                        v_flex()
+                            .id("sidebar-utility-dock")
+                            .w_full()
+                            .gap_1()
+                            .p_1()
+                            .rounded(px(10.))
+                            .border_1()
+                            .border_color(theme.sidebar_border.opacity(0.72))
+                            .bg(theme.secondary.opacity(0.3))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .id("sidebar-home")
+                                            .flex_1()
+                                            .h_9()
+                                            .px_2()
+                                            .gap_2()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(6.))
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(theme.sidebar_foreground.opacity(0.82))
+                                            .hover(|this| {
+                                                this.bg(theme.secondary_hover.opacity(0.8))
+                                                    .text_color(theme.sidebar_foreground)
+                                            })
+                                            .active(|this| {
+                                                this.bg(theme.secondary_hover.opacity(0.95))
+                                            })
+                                            .child(
+                                                Icon::new(IconName::LayoutDashboard)
+                                                    .xsmall()
+                                                    .text_color(theme.muted_foreground),
+                                            )
+                                            .child("Home")
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(SidebarEvent::OpenHome);
+                                            })),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .id("sidebar-trash")
+                                            .flex_1()
+                                            .h_9()
+                                            .px_2()
+                                            .gap_2()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(6.))
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(theme.sidebar_foreground.opacity(0.82))
+                                            .hover(|this| {
+                                                this.bg(theme.secondary_hover.opacity(0.8))
+                                                    .text_color(theme.sidebar_foreground)
+                                            })
+                                            .active(|this| {
+                                                this.bg(theme.secondary_hover.opacity(0.95))
+                                            })
+                                            .child(
+                                                Icon::new(IconName::Delete)
+                                                    .xsmall()
+                                                    .text_color(theme.muted_foreground),
+                                            )
+                                            .child("Trash")
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(SidebarEvent::OpenTrash);
+                                            })),
+                                    ),
+                            )
+                            .child(div().mx_2().h(px(1.)).bg(theme.sidebar_border.opacity(0.6)))
+                            .child(
+                                h_flex()
+                                    .id("theme-select-footer")
+                                    .w_full()
+                                    .h_9()
+                                    .gap_2()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.))
+                                    .px_2()
+                                    .cursor_pointer()
+                                    .hover(|this| {
+                                        this.bg(theme.secondary_hover.opacity(0.8))
+                                            .text_color(theme.sidebar_foreground)
+                                    })
+                                    .active(|this| this.bg(theme.secondary_hover.opacity(0.95)))
+                                    .child(
+                                        Icon::new(IconName::Palette)
+                                            .xsmall()
+                                            .text_color(theme.muted_foreground),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(theme.sidebar_foreground.opacity(0.82))
+                                            .truncate()
+                                            .child(theme_name),
+                                    )
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(SidebarEvent::OpenThemeSwitcher);
+                                    })),
+                            ),
                     ),
             )
     }
