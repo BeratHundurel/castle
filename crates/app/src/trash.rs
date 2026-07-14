@@ -65,6 +65,12 @@ pub(crate) struct RestoreTrashItem(pub(crate) MoveToTrash);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PurgeTrashItem(pub(crate) MoveToTrash);
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PurgedArtifacts {
+    pub(crate) managed_files: Vec<PathBuf>,
+    pub(crate) attachment_note_ids: Vec<u32>,
+}
+
 pub(crate) async fn load_trash(db: &DatabaseConnection) -> Result<Vec<TrashItem>> {
     let rows = db
         .query_all_raw(Statement::from_string(
@@ -161,8 +167,8 @@ pub(crate) async fn restore_item(db: &DatabaseConnection, item: RestoreTrashItem
 pub(crate) async fn purge_item(
     db: &DatabaseConnection,
     item: PurgeTrashItem,
-) -> Result<Vec<PathBuf>> {
-    let mut managed_files = Vec::new();
+) -> Result<PurgedArtifacts> {
+    let mut artifacts = PurgedArtifacts::default();
     if item.0.kind == TrashItemKind::Note {
         let row = db
             .query_one_raw(Statement::from_sql_and_values(
@@ -171,31 +177,32 @@ pub(crate) async fn purge_item(
                 [(item.0.id as i64).into()],
             ))
             .await?;
-        if let Some(path) = row.and_then(|row| {
+        if let Some(row) = row {
+            artifacts.attachment_note_ids.push(item.0.id);
             let managed = row
                 .try_get::<bool>("", "file_managed_by_app")
                 .unwrap_or(false);
-            managed
-                .then(|| {
-                    row.try_get::<Option<String>>("", "file_path")
-                        .ok()
-                        .flatten()
-                })
-                .flatten()
-                .map(PathBuf::from)
-        }) {
-            managed_files.push(path);
+            if managed && let Ok(Some(path)) = row.try_get::<Option<String>>("", "file_path") {
+                artifacts.managed_files.push(PathBuf::from(path));
+            }
         }
     } else if item.0.kind == TrashItemKind::Project {
         let rows = db
             .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT file_path FROM note WHERE project_id = ? AND file_managed_by_app = 1 AND file_path IS NOT NULL",
+                "SELECT id, file_path, file_managed_by_app FROM note WHERE project_id = ?",
                 [(item.0.id as i64).into()],
             ))
             .await?;
         for row in rows {
-            managed_files.push(PathBuf::from(row.try_get::<String>("", "file_path")?));
+            artifacts
+                .attachment_note_ids
+                .push(row.try_get::<i64>("", "id")? as u32);
+            if row.try_get::<bool>("", "file_managed_by_app")?
+                && let Some(path) = row.try_get::<Option<String>>("", "file_path")?
+            {
+                artifacts.managed_files.push(PathBuf::from(path));
+            }
         }
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -221,26 +228,34 @@ pub(crate) async fn purge_item(
     ))
     .await?;
     crate::search::rebuild_search_index(db).await?;
-    Ok(managed_files)
+    Ok(artifacts)
 }
 
-pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<Vec<PathBuf>> {
+pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts> {
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
             r#"
-            SELECT n.file_path
+            SELECT n.id, n.file_path, n.file_managed_by_app
             FROM note n
             LEFT JOIN project p ON p.id = n.project_id
-            WHERE n.file_managed_by_app = 1
-              AND n.file_path IS NOT NULL
-              AND (n.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL)
+            WHERE n.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL
             "#,
         ))
         .await?;
-    let mut managed_files = Vec::with_capacity(rows.len());
+    let mut artifacts = PurgedArtifacts {
+        managed_files: Vec::new(),
+        attachment_note_ids: Vec::with_capacity(rows.len()),
+    };
     for row in rows {
-        managed_files.push(PathBuf::from(row.try_get::<String>("", "file_path")?));
+        artifacts
+            .attachment_note_ids
+            .push(row.try_get::<i64>("", "id")? as u32);
+        if row.try_get::<bool>("", "file_managed_by_app")?
+            && let Some(path) = row.try_get::<Option<String>>("", "file_path")?
+        {
+            artifacts.managed_files.push(PathBuf::from(path));
+        }
     }
 
     for sql in [
@@ -256,7 +271,7 @@ pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<Vec<PathBuf>> {
             .await?;
     }
     crate::search::rebuild_search_index(db).await?;
-    Ok(managed_files)
+    Ok(artifacts)
 }
 
 async fn ensure_parent_available(db: &DatabaseConnection, item: MoveToTrash) -> Result<()> {
@@ -333,6 +348,47 @@ mod tests {
         assert_eq!(restored.file_managed_by_app, inserted.file_managed_by_app);
         assert_eq!(restored.cached_content, inserted.cached_content);
         assert!(restore_item(&db, RestoreTrashItem(request)).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn purging_note_returns_its_managed_file_and_attachment_id() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let inserted = note::ActiveModel {
+            title: Set("Disposable note".to_string()),
+            project_id: Set(None),
+            file_path: Set(Some("C:\\notes\\disposable.md".to_string())),
+            file_managed_by_app: Set(true),
+            cached_content: Set(String::new()),
+            file_missing_since: Set(None),
+            created_at: Set(10),
+            updated_at: Set(10),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let request = MoveToTrash {
+            kind: TrashItemKind::Note,
+            id: inserted.id as u32,
+        };
+        move_to_trash(&db, request, 20).await?;
+
+        let artifacts = purge_item(&db, PurgeTrashItem(request)).await?;
+
+        assert_eq!(
+            artifacts,
+            PurgedArtifacts {
+                managed_files: vec![PathBuf::from("C:\\notes\\disposable.md")],
+                attachment_note_ids: vec![inserted.id as u32],
+            }
+        );
+        assert!(
+            note::Entity::find_by_id(inserted.id)
+                .one(&db)
+                .await?
+                .is_none()
+        );
         Ok(())
     }
 

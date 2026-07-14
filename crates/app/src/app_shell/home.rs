@@ -10,7 +10,7 @@ use gpui_component::{
 
 use super::*;
 use crate::home::{TodayEntry, WorkspaceHomeItem, WorkspaceItemKind};
-use crate::trash::{MoveToTrash, PurgeTrashItem, RestoreTrashItem};
+use crate::trash::{MoveToTrash, PurgeTrashItem, PurgedArtifacts, RestoreTrashItem};
 
 impl AppShell {
     pub(super) fn load_home(&mut self, cx: &mut Context<Self>) {
@@ -691,8 +691,6 @@ impl AppShell {
                     this.reload_open_boards_after_restore(item.kind, cx);
                     this.load_trash(cx);
                     this.load_home(cx);
-                    this.sidebar
-                        .update(cx, |sidebar, cx| sidebar.refresh_projects(cx));
                     this.refresh_workspace(cx);
                 }
                 Err(err) => {
@@ -759,7 +757,9 @@ impl AppShell {
     }
 
     fn purge_trash_item(&mut self, item: crate::trash::TrashItem, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
+        let app_db = cx.global::<DB>();
+        let db = app_db.conn.clone();
+        let attachments_dir = app_db.data_dir.join("attachments");
         let background = cx.background_executor().clone();
         let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| {
@@ -774,14 +774,10 @@ impl AppShell {
                 Ok(result) => result,
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
-            if let Ok(paths) = &result {
-                let paths = paths.clone();
+            if let Ok(artifacts) = &result {
+                let artifacts = artifacts.clone();
                 let _ = background
-                    .spawn(async move {
-                        for path in paths {
-                            let _ = std::fs::remove_file(path);
-                        }
-                    })
+                    .spawn(async move { remove_purged_artifacts(artifacts, attachments_dir) })
                     .await;
             }
             this.update(cx, |this, cx| match result {
@@ -832,7 +828,9 @@ impl AppShell {
     }
 
     fn empty_trash(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
+        let app_db = cx.global::<DB>();
+        let db = app_db.conn.clone();
+        let attachments_dir = app_db.data_dir.join("attachments");
         let background = cx.background_executor().clone();
         let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| {
@@ -843,14 +841,10 @@ impl AppShell {
                 Ok(result) => result,
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
-            if let Ok(paths) = &result {
-                let paths = paths.clone();
+            if let Ok(artifacts) = &result {
+                let artifacts = artifacts.clone();
                 let _ = background
-                    .spawn(async move {
-                        for path in paths {
-                            let _ = std::fs::remove_file(path);
-                        }
-                    })
+                    .spawn(async move { remove_purged_artifacts(artifacts, attachments_dir) })
                     .await;
             }
             this.update(cx, |this, cx| {
@@ -861,13 +855,20 @@ impl AppShell {
                     this.board_views.clear();
                 }
                 this.load_trash(cx);
-                this.sidebar
-                    .update(cx, |sidebar, cx| sidebar.list_projects(cx));
                 this.refresh_workspace(cx);
             })
             .ok();
         })
         .detach();
+    }
+}
+
+fn remove_purged_artifacts(artifacts: PurgedArtifacts, attachments_dir: std::path::PathBuf) {
+    for path in artifacts.managed_files {
+        let _ = std::fs::remove_file(path);
+    }
+    for note_id in artifacts.attachment_note_ids {
+        let _ = std::fs::remove_dir_all(attachments_dir.join(note_id.to_string()));
     }
 }
 
@@ -949,6 +950,40 @@ mod tests {
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    #[test]
+    fn purged_artifact_cleanup_keeps_active_note_attachments() -> anyhow::Result<()> {
+        let test_dir = std::env::temp_dir().join(format!(
+            "castle-purged-artifacts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let attachments_dir = test_dir.join("attachments");
+        let purged_note_dir = attachments_dir.join("41");
+        let active_note_dir = attachments_dir.join("42");
+        std::fs::create_dir_all(&purged_note_dir)?;
+        std::fs::create_dir_all(&active_note_dir)?;
+        std::fs::write(purged_note_dir.join("image.png"), b"purged")?;
+        std::fs::write(active_note_dir.join("image.png"), b"active")?;
+        let managed_file = test_dir.join("note.md");
+        std::fs::write(&managed_file, b"note")?;
+
+        remove_purged_artifacts(
+            PurgedArtifacts {
+                managed_files: vec![managed_file.clone()],
+                attachment_note_ids: vec![41],
+            },
+            attachments_dir,
+        );
+
+        assert!(!managed_file.exists());
+        assert!(!purged_note_dir.exists());
+        assert!(active_note_dir.join("image.png").exists());
+        std::fs::remove_dir_all(test_dir)?;
+        Ok(())
+    }
 
     #[gpui::test]
     fn rapid_tab_churn_keeps_database_and_views_responsive(cx: &mut gpui::TestAppContext) {
@@ -1144,9 +1179,7 @@ mod tests {
 
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
-                shell
-                    .sidebar
-                    .update(cx, |sidebar, cx| sidebar.refresh_projects(cx));
+                shell.refresh_workspace(cx);
                 if let Some(index) = shell.open_tabs.iter().position(
                     |tab| matches!(tab.kind, OpenTabKind::Board { board_id: id, .. } if id == board_id),
                 ) {

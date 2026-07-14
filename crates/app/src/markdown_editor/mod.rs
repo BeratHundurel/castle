@@ -1,4 +1,5 @@
 pub(crate) mod action;
+mod attachments;
 mod emmet;
 mod formatting;
 mod handlers;

@@ -15,6 +15,7 @@ use gpui_component::{
 
 use super::MarkdownEditorView;
 use super::types::*;
+use crate::DB;
 use crate::app_settings::AppSettings;
 
 impl Focusable for MarkdownEditorView {
@@ -69,6 +70,7 @@ impl MarkdownEditorView {
         div()
             .id("markdown-source")
             .key_context("MarkdownSource")
+            .capture_action(cx.listener(Self::on_action_paste))
             .size_full()
             .opacity(if source_is_ready { 1. } else { 0. })
             .bg(cx.theme().background)
@@ -87,6 +89,10 @@ impl MarkdownEditorView {
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size = px(AppSettings::markdown_preview_font_size(cx) as f32);
         let sections = self.outline.sections.clone();
+        let local_image_plugin = super::attachments::LocalImagePlugin::new(
+            cx.global::<DB>().data_dir.clone(),
+            self.current_path.as_deref(),
+        );
 
         div()
             .id("markdown-preview")
@@ -98,20 +104,30 @@ impl MarkdownEditorView {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.preview_scroll_handle)
-                    .child(div().w_full().flex().justify_center().child(
-                        v_flex().w_full().max_w(px(920.)).min_w_0().p_6().children(
-                            sections.into_iter().enumerate().map(|(index, section)| {
-                                TextView::markdown(("markdown-preview-section", index), section)
-                                    .style(markdown_preview_style(font_size))
-                                    .code_block_actions(|code_block, _window, _cx| {
-                                        Clipboard::new("copy-code").value(code_block.code().clone())
-                                    })
-                                    .text_size(font_size)
-                                    .scrollable(false)
-                                    .selectable(true)
-                            }),
+                    .child(
+                        div().w_full().flex().justify_center().child(
+                            v_flex().w_full().max_w(px(920.)).min_w_0().p_6().children(
+                                sections
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(move |(index, section)| {
+                                        TextView::markdown(
+                                            ("markdown-preview-section", index),
+                                            section,
+                                        )
+                                        .plugin(local_image_plugin.clone())
+                                        .style(markdown_preview_style(font_size))
+                                        .code_block_actions(|code_block, _window, _cx| {
+                                            Clipboard::new("copy-code")
+                                                .value(code_block.code().clone())
+                                        })
+                                        .text_size(font_size)
+                                        .scrollable(false)
+                                        .selectable(true)
+                                    }),
+                            ),
                         ),
-                    )),
+                    ),
             )
     }
 
