@@ -1,85 +1,131 @@
 ---
 name: minimalist-ui
-description: Clean editorial-style interfaces. Warm monochrome palette, typographic contrast, flat bento grids, muted pastels. No gradients, no heavy shadows.
+description: Design quiet, editorial, utilitarian native desktop interfaces for Castle with GPUI and GPUI Components. Use for focused note, board, settings, search, and navigation surfaces that need warm monochrome themes, strong typography, restrained accents, and minimal visual noise.
 ---
 
-# Protocol: Premium Utilitarian Minimalism UI Architect
+# Premium Utilitarian Native UI
 
-## 1. Protocol Overview
-Name: Premium Utilitarian Minimalism & Editorial UI
-Description: An advanced frontend engineering directive for generating highly refined, ultra-minimalist, "document-style" web interfaces analogous to top-tier workspace platforms. This protocol strictly enforces a high-contrast warm monochrome palette, bespoke typographic hierarchies, meticulous structural macro-whitespace, bento-grid layouts, and an ultra-flat component architecture with deliberate muted pastel accents. It actively rejects standard generic SaaS design trends.
+Build calm, precise native application surfaces. Minimalism means fewer competing signals and clearer work, not missing states or empty decoration. Apply this skill through Rust, GPUI, project theme tokens, and GPUI Components. Do not translate the rules into HTML, CSS, Tailwind, DOM, browser, or marketing-page patterns.
 
-## 2. Absolute Negative Constraints (Banned Elements)
-The AI must strictly avoid the following generic web development defaults:
-- DO NOT use the "Inter", "Roboto", or "Open Sans" typefaces.
-- DO NOT use generic, thin-line icon libraries like "Lucide", "Feather", or standard "Heroicons".
-- DO NOT use Tailwind's default heavy drop shadows (e.g., `shadow-md`, `shadow-lg`, `shadow-xl`). Shadows must be practically non-existent or heavily customized to be ultra-diffuse and low opacity (< 0.05).
-- DO NOT use primary colored backgrounds for large elements or sections (e.g., no bright blue, green, or red hero sections).
-- DO NOT use gradients, neon colors, or 3D glassmorphism (beyond subtle navbar blurs).
-- DO NOT use `rounded-full` (pill shapes) for large containers, cards, or primary buttons.
-- DO NOT use emojis anywhere in code, markup, text content, headings, or alt text. Replace with proper icons or clean SVG primitives.
-- DO NOT use generic placeholder names like "John Doe", "Acme Corp", or "Lorem Ipsum". Use realistic, contextual content.
-- DO NOT use AI copywriting clichés: "Elevate", "Seamless", "Unleash", "Next-Gen", "Game-changer", "Delve". Write plain, specific language.
+Read the `gpui` skill and relevant references before implementing unfamiliar framework behavior.
 
-## 3. Typographic Architecture
-The interface must rely on extreme typographic contrast and premium font selection to establish an editorial feel.
-- Primary Sans-Serif (Body, UI, Buttons): Use clean, geometric, or system-native fonts with character. Target: `font-family: 'SF Pro Display', 'Geist Sans', 'Helvetica Neue', 'Switzer', sans-serif`.
-- Editorial Serif (Hero Headings & Quotes): Target: `font-family: 'Lyon Text', 'Newsreader', 'Playfair Display', 'Instrument Serif', serif`. Apply tight tracking (`letter-spacing: -0.02em` to `-0.04em`) and tight line-height (`1.1`).
-- Monospace (Code, Keystrokes, Meta-data): Target: `font-family: 'Geist Mono', 'SF Mono', 'JetBrains Mono', monospace`.
-- Text Colors: Body text must never be absolute black (`#000000`). Use off-black/charcoal (`#111111` or `#2F3437`) with a generous `line-height` of `1.6` for legibility. Secondary text should be muted gray (`#787774`).
+## 1. Visual character
 
-## 4. Color Palette (Warm Monochrome + Spot Pastels)
-Color is a scarce resource, utilized only for semantic meaning or subtle accents.
-- Canvas / Background: Pure White `#FFFFFF` or Warm Bone/Off-White `#F7F6F3` / `#FBFBFA`.
-- Primary Surface (Cards): `#FFFFFF` or `#F9F9F8`.
-- Structural Borders / Dividers: Ultra-light gray `#EAEAEA` or `rgba(0,0,0,0.06)`.
-- Accent Colors: Exclusively use highly desaturated, washed-out pastels for tags, inline code backgrounds, or subtle icon backgrounds.
-  - Pale Red: `#FDEBEC` (Text: `#9F2F2D`)
-  - Pale Blue: `#E1F3FE` (Text: `#1F6C9F`)
-  - Pale Green: `#EDF3EC` (Text: `#346538`)
-  - Pale Yellow: `#FBF3DB` (Text: `#956400`)
+- Use warm monochrome or softly neutral surfaces.
+- Establish hierarchy through typography, spacing, and tone before borders or shadows.
+- Keep the content canvas quiet and reserve accent color for selection, focus, primary action, or semantic status.
+- Use flat, well-aligned groups. Add containment only when it communicates a real boundary.
+- Prefer subtle contrast between background, surface, hover, and selected states.
+- Avoid gradients, neon, glassmorphism, strong drop shadows, glossy effects, and decorative noise.
 
-## 5. Component Specifications
-- Bento Box Feature Grids:
-  - Utilize asymmetrical CSS Grid layouts.
-  - Cards must have exactly `border: 1px solid #EAEAEA`.
-  - Border-radius must be crisp: `8px` or `12px` maximum.
-  - Internal padding must be generous (e.g., `24px` to `40px`).
-- Primary Call-To-Action (Buttons):
-  - Solid background `#111111`, text `#FFFFFF`. 
-  - Slight border-radius (`4px` to `6px`). No box-shadow. 
-  - Hover state should be a subtle color shift to `#333333` or a micro-scale `transform: scale(0.98)`.
-- Tags & Status Badges:
-  - Pill-shaped (`border-radius: 9999px`), very small typography (`text-xs`), uppercase with wide tracking (`letter-spacing: 0.05em`).
-  - Background must use the defined Muted Pastels.
-- Accordions (FAQ):
-  - Strip all container boxes. Separate items only with a `border-bottom: 1px solid #EAEAEA`.
-  - Use a clean, sharp `+` and `-` icon for the toggle state.
-- Keystroke Micro-UIs:
-  - Render shortcuts as physical keys using `<kbd>` tags: `border: 1px solid #EAEAEA`, `border-radius: 4px`, `background: #F7F6F3`, using the Monospace font.
-- Faux-OS Window Chrome:
-  - When mocking up software, wrap it in a minimalist container with a white top bar containing three small, light gray circles (replicating macOS window controls).
+## 2. Theme tokens
 
-## 6. Iconography & Imagery Directives
-- System Icons: Use "Phosphor Icons (Bold or Fill weights)" or "Radix UI Icons" for a technical, slightly thicker-stroke aesthetic. Standardize stroke width across all icons.
-- Illustrations: Monochromatic, rough continuous-line ink sketches on a white background, featuring a single offset geometric shape filled with a muted pastel color.
-- Photography: Use high-quality, desaturated images with a warm tone. Apply subtle overlays (`opacity: 0.04` warm grain) to blend photos into the monochrome palette. Never use oversaturated stock photos. Use reliable placeholders like `https://picsum.photos/seed/{context}/1200/800` when real assets are unavailable.
-- Hero & Section Backgrounds: Sections should not feel empty and flat. Use subtle full-width background imagery at very low opacity, soft radial light spots (`radial-gradient` with warm tones at `opacity: 0.03`), or minimal geometric line patterns to add depth without breaking the clean aesthetic.
+Use `cx.theme()` semantic colors rather than hardcoded values whenever possible:
 
-## 7. Subtle Motion & Micro-Animations
-Motion should feel invisible — present but never distracting. The goal is quiet sophistication, not spectacle.
-- Scroll Entry: Elements fade in gently as they enter the viewport. Use `translateY(12px)` + `opacity: 0` resolving over `600ms` with `cubic-bezier(0.16, 1, 0.3, 1)`. Use `IntersectionObserver`, never `window.addEventListener('scroll')`.
-- Hover States: Cards lift with an ultra-subtle shadow shift (`box-shadow` transitioning from `0 0 0` to `0 2px 8px rgba(0,0,0,0.04)` over `200ms`). Buttons respond with `scale(0.98)` on `:active`.
-- Staggered Reveals: Lists and grid items enter with a cascade delay (`animation-delay: calc(var(--index) * 80ms)`). Never mount everything at once.
-- Background Ambient Motion: Optional. A single, very slow-moving radial gradient blob (`animation-duration: 20s+`, `opacity: 0.02-0.04`) drifting behind hero sections. Must be applied to a `position: fixed; pointer-events: none` layer. Never on scrolling containers.
-- Performance: Animate exclusively via `transform` and `opacity`. No layout-triggering properties (`top`, `left`, `width`, `height`). Use `will-change: transform` sparingly and only on actively animating elements.
+- `background` for the window canvas.
+- `surface` or established secondary tokens for grouped regions.
+- `foreground` for primary text.
+- `muted_foreground` for secondary text that remains readable.
+- `border` for structural separation.
+- `primary` and `primary_foreground` for the main action or selection.
+- `danger`, `warning`, `success`, and `info` only for their meanings.
+- Existing hover, focus, and drop-target tokens for interaction feedback.
 
-## 8. Execution Protocol
-When tasked with writing frontend code (HTML, React, Tailwind, Vue) or designing a layout:
-1. Establish the macro-whitespace first. Use massive vertical padding between sections (e.g., `py-24` or `py-32` in Tailwind).
-2. Constrain the main typography content width to `max-w-4xl` or `max-w-5xl`.
-3. Apply the custom typographic hierarchy and monochromatic color variables immediately.
-4. Ensure every card, divider, and border adheres strictly to the `1px solid #EAEAEA` rule.
-5. Add scroll-entry animations to all major content blocks.
-6. Ensure sections have visual depth through imagery, ambient gradients, or subtle textures — no empty flat backgrounds.
-7. Provide code that reflects this high-end, uncluttered, editorial aesthetic natively without requiring manual adjustments.
+Do not introduce a new palette inside one component. Verify hierarchy and semantic states in every supported theme.
+
+## 3. Typography
+
+- Use the configured native font family unless an existing bundled font is part of the product identity.
+- Use a compact scale: display or view title, section title, body, metadata, shortcut.
+- Keep view titles strong but space-efficient.
+- Use medium or semibold weight for hierarchy before increasing size.
+- Keep labels in sentence case. Avoid uppercase tracking as a repeated decoration.
+- Use monospaced or tabular numerals for shortcuts, counts, and aligned data when useful.
+- Keep body text comfortable and concise; avoid dense help prose inside working views.
+- Do not use placeholder copy, marketing clichés, or decorative metadata.
+
+## 4. Spacing and geometry
+
+- Follow the project's 4 px-based shorthand rhythm where possible.
+- Use compact spacing within controls, moderate spacing inside groups, and larger spacing between regions.
+- Align text baselines, icons, counts, and controls optically, not only mathematically.
+- Use `cx.theme().radius` or one documented radius scale.
+- Avoid pill shapes for large containers and primary controls. Reserve pills for compact tags or statuses whose shape carries meaning.
+- Prefer one divider between groups to a border around every row.
+- Use shadows only for transient elevation such as a menu, palette, or dialog, and keep them subdued.
+
+## 5. Native components
+
+### Buttons
+
+- Use one clear primary action per focused region.
+- Keep labels short and on one line.
+- Provide hover, pressed, focus, and disabled feedback.
+- Use icon-only buttons only when the meaning is conventional or a label is otherwise discoverable.
+
+### Inputs
+
+- Keep persistent labels near non-obvious fields.
+- Do not rely on placeholder text as the only label.
+- Make focus, validation, disabled, and read-only states distinct.
+- Put error copy near the field and state how to recover.
+
+### Lists and rows
+
+- Prefer rows for scan-heavy notes, commands, settings, and history.
+- Align leading icons, primary text, metadata, and trailing actions consistently.
+- Keep selection stronger than hover and focus visible within both.
+- Avoid putting each row in an individual card.
+
+### Cards
+
+- Use cards for kanban items, attachments, or bounded objects that move or select as a unit.
+- Keep metadata subordinate and remove fields that do not help the current decision.
+- Use a restrained border or surface shift; avoid border-plus-shadow-plus-tint all at once.
+
+### Dialogs and palettes
+
+- Use a clear title, focused content, and predictable action order.
+- Focus the first safe control and restore previous focus on close.
+- Keep command palettes dense, keyboard-first, and visually stable as results update.
+
+## 6. Motion
+
+- Use motion sparingly for selection, expansion, reorder, drag feedback, and transient surface appearance.
+- Keep transitions short, interruptible, and subordinate to input.
+- Avoid ambient loops and decorative motion in note or board workspaces.
+- Respect reduced-motion behavior when supported.
+- Use only verified GPUI APIs already available to the project.
+
+## 7. Accessibility and resilience
+
+- Provide complete keyboard access using focus handles, actions, key contexts, and bindings.
+- Make focus indicators visible against all surfaces.
+- Never communicate status by color alone.
+- Keep pointer targets comfortable even when the visual icon is small.
+- Verify narrow, typical, and wide window layouts and scaled text.
+- Handle loading, empty, error, disabled, dirty, saving, and saved states without layout jumps.
+
+## 8. Banned defaults
+
+- A card around every group.
+- Large gradients, glows, glass panels, or saturated color blocks.
+- Heavy shadows and excessive elevation.
+- Repeated uppercase micro-labels.
+- Oversized headings in productivity views.
+- Pill-shaped primary buttons and containers everywhere.
+- Emojis as icons.
+- Placeholder people, companies, metrics, or Latin filler.
+- Hover-only essential actions.
+- Hardcoded colors that bypass semantic theme tokens.
+- Web implementation language such as HTML tags, CSS properties, Tailwind classes, React hooks, viewport units, media queries, or browser events.
+
+## 9. Execution
+
+1. Inspect the existing surface, theme use, component variants, focus flow, and state model.
+2. Establish the hierarchy and macro layout first.
+3. Apply typography, spacing, and semantic color tokens.
+4. Add only the containment needed for selection, grouping, or elevation.
+5. Implement all relevant interaction and data states.
+6. Verify keyboard use, focus, theme parity, and multiple window widths.
+7. Run relevant tests, `cargo check`, and `cargo clippy --fix --allow-dirty` when applicable.
