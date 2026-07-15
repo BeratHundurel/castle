@@ -1,0 +1,36 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Castle"
+    Manufacturer="Castle"
+    Version="$(Version)"
+    UpgradeCode="$(UpgradeCode)"
+    Scope="perMachine"
+    Compressed="yes"
+  >
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Castle is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Castle">
+        <Component Id="CastleExecutable" Guid="*">
+          <File Id="CastleExe" Source="$(SourceExe)" Name="Castle.exe" KeyPath="yes">
+            <Shortcut
+              Id="CastleStartMenuShortcut"
+              Directory="ProgramMenuFolder"
+              Name="Castle"
+              Description="Private notes and kanban workspace"
+              WorkingDirectory="INSTALLFOLDER"
+              Advertise="yes"
+            />
+          </File>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="MainFeature" Title="Castle" Level="1">
+      <ComponentRef Id="CastleExecutable" />
+    </Feature>
+  </Package>
+</Wix>

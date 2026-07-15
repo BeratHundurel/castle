@@ -4,6 +4,10 @@ version.workspace = true
 publish      = false
 edition.workspace = true
 
+[[bin]]
+name = "castle"
+path = "src/main.rs"
+
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
