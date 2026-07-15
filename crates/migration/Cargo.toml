@@ -16,4 +16,4 @@ features = [
     "sqlx-sqlite",
     "runtime-tokio",
 ]
-version = "2.0.0-rc.42"
+version = "2.0.0-rc.43"

@@ -492,7 +492,7 @@ impl BoardView {
                             .min_w_0()
                             .whitespace_normal()
                             .line_height(relative(1.3))
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::NORMAL)
                             .child(entry.title.clone()),
                     )
                     .when(!entry.labels.is_empty(), |this| {

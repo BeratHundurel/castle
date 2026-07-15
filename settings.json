@@ -1,22 +1,27 @@
 {
-  "theme_name": "Catppuccin Mocha",
+  "theme_name": "Tokyo Night",
   "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
-  "show_sidebar": true,
+  "show_sidebar": false,
   "scrollbar_show": "scrolling",
   "editor_font_family": "IBM Plex Mono",
-  "markdown_font_size": 15.0,
-  "markdown_preview_font_size": 12.0,
+  "markdown_font_size": 14.0,
+  "markdown_preview_font_size": 14.0,
   "markdown_editor_mode": "source",
+  "markdown_status_line_visible": false,
   "markdown_line_numbers": false,
   "markdown_soft_wrap": true,
+  "markdown_outline_visible": true,
   "close_to_tray": true,
   "tray_shortcut": "Ctrl+Alt+Space",
   "tab_session": {
     "tabs": [
       {
-        "kind": "chooser"
+        "kind": "note",
+        "note_id": 39,
+        "project_id": 1,
+        "title": "The Bug"
       }
     ],
     "active_tab_index": 0,
