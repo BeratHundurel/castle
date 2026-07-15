@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build, for example v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Validate release
+    runs-on: windows-2022
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Validate tag and Cargo version
+        id: release
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            '${{ inputs.tag }}'
+          } else {
+            '${{ github.ref_name }}'
+          }
+
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+            throw "Release tag '$tag' must use vMAJOR.MINOR.PATCH."
+          }
+          $version = $Matches[1]
+
+          $manifest = Get-Content Cargo.toml -Raw
+          if ($manifest -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
+            throw 'Could not read workspace.package.version from Cargo.toml.'
+          }
+          $cargoVersion = $Matches[1]
+
+          if ($version -ne $cargoVersion) {
+            throw "Tag version '$version' does not match Cargo version '$cargoVersion'."
+          }
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+  build:
+    name: Windows ${{ matrix.arch }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            wix_arch: x64
+            upgrade_code: 9D111732-1765-4896-AB4C-E5C8C131B6DC
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            wix_arch: arm64
+            upgrade_code: F0A6B8F7-F15E-4E54-9B1B-3D47DA6F7021
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build Castle
+        run: cargo build --locked --release --bin castle --target ${{ matrix.target }}
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --tool-path .wix wix --version 5.0.2
+
+      - name: Package executable and installer
+        shell: pwsh
+        run: |
+          $version = '${{ needs.metadata.outputs.version }}'
+          $arch = '${{ matrix.arch }}'
+          $sourceExe = (Resolve-Path 'target/${{ matrix.target }}/release/castle.exe').Path
+          $dist = New-Item -ItemType Directory -Force dist
+          $portableExe = Join-Path $dist "Castle-$version-windows-$arch.exe"
+          $installer = Join-Path $dist "Castle-$version-windows-$arch.msi"
+
+          Copy-Item -LiteralPath $sourceExe -Destination $portableExe
+          .\.wix\wix.exe build installer/Castle.wxs `
+            -arch '${{ matrix.wix_arch }}' `
+            -d "Version=$version" `
+            -d "SourceExe=$sourceExe" `
+            -d 'UpgradeCode=${{ matrix.upgrade_code }}' `
+            -pdbtype none `
+            -o $installer
+
+      - name: Upload architecture artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Castle-${{ needs.metadata.outputs.version }}-windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [metadata, build]
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Castle-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $checksums = Get-ChildItem release -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          $checksums | Set-Content release/SHA256SUMS.txt -Encoding utf8
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ needs.metadata.outputs.tag }}'
+          $assets = Get-ChildItem release -File | ForEach-Object FullName
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $assets `
+              --verify-tag `
+              --generate-notes `
+              --title "Castle $tag" `
+              --repo $env:GITHUB_REPOSITORY
+          }
