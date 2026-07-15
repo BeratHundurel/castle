@@ -1,7 +1,7 @@
 use chrono::{Local, NaiveDate};
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Selectable, Sizable,
+    ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     checkbox::Checkbox,
     date_picker::DatePicker,
@@ -464,7 +464,8 @@ impl BoardView {
 
         div()
             .id(entry.id as usize)
-            .p_2()
+            .px_3()
+            .py_2p5()
             .bg(cx.theme().primary)
             .text_color(cx.theme().primary_foreground)
             .rounded(cx.theme().radius)
@@ -484,23 +485,23 @@ impl BoardView {
                 v_flex()
                     .w_full()
                     .min_w_0()
-                    .gap_1()
+                    .gap_1p5()
                     .child(
                         div()
                             .w_full()
                             .min_w_0()
                             .whitespace_normal()
+                            .line_height(relative(1.3))
+                            .font_weight(FontWeight::MEDIUM)
                             .child(entry.title.clone()),
                     )
                     .when(!entry.labels.is_empty(), |this| {
                         this.child(self.render_card_label_chips(entry, cx))
                     })
-                    .when_some(entry.due_on.as_ref(), |this, due_on| {
-                        this.child(self.render_card_due_date(due_on, cx))
-                    })
-                    .when(!entry.checklist_items.is_empty(), |this| {
-                        this.child(self.render_card_checklist_progress(entry, cx))
-                    }),
+                    .when(
+                        entry.due_on.is_some() || !entry.checklist_items.is_empty(),
+                        |this| this.child(self.render_card_metadata(entry, cx)),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_entry_dialog(entry_id, window, cx);
@@ -669,13 +670,14 @@ impl BoardView {
         let color = self.label_color(label.color.as_ref(), cx);
 
         h_flex()
+            .flex_shrink_0()
             .min_w_0()
-            .max_w(px(112.))
+            .max_w(px(128.))
             .gap_1()
             .items_center()
-            .rounded(px(3.))
-            .px_1()
-            .py(px(2.))
+            .rounded_full()
+            .px_1p5()
+            .py_0p5()
             .bg(color.opacity(0.18))
             .text_color(color)
             .text_xs()
@@ -685,25 +687,34 @@ impl BoardView {
     }
 
     fn render_card_label_chips(&self, entry: &EntryDTO, cx: &Context<Self>) -> impl IntoElement {
-        let remaining = entry.labels.len().saturating_sub(2);
-
         h_flex()
-            .gap_1()
+            .w_full()
+            .h_5()
+            .min_w_0()
+            .gap_1p5()
             .items_center()
+            .flex_wrap()
+            .overflow_hidden()
             .children(
                 entry
                     .labels
                     .iter()
-                    .take(2)
                     .map(|label| self.render_label_chip(label, cx)),
             )
-            .when(remaining > 0, |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().primary_foreground.opacity(0.76))
-                        .child(format!("+{remaining}")),
-                )
+    }
+
+    fn render_card_metadata(&self, entry: &EntryDTO, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .h_5()
+            .gap_3()
+            .items_center()
+            .when_some(entry.due_on.as_ref(), |this, due_on| {
+                this.child(self.render_card_due_date(due_on, cx))
+            })
+            .when(!entry.checklist_items.is_empty(), |this| {
+                this.child(self.render_card_checklist_progress(entry, cx))
             })
     }
 
@@ -711,8 +722,10 @@ impl BoardView {
         let status = due_date_status(due_on.as_ref(), Local::now().date_naive());
         let color = match status {
             DueDateStatus::Overdue => cx.theme().danger,
-            DueDateStatus::Today => cx.theme().primary,
-            DueDateStatus::Future | DueDateStatus::Invalid => cx.theme().muted_foreground,
+            DueDateStatus::Today => cx.theme().warning,
+            DueDateStatus::Future | DueDateStatus::Invalid => {
+                cx.theme().primary_foreground.opacity(0.76)
+            }
         };
         let label = NaiveDate::parse_from_str(due_on.as_ref(), "%Y-%m-%d")
             .map(|date| date.format("%b %-d").to_string())
@@ -738,13 +751,18 @@ impl BoardView {
             .iter()
             .filter(|item| item.checked)
             .count();
+        let is_complete = completed == entry.checklist_items.len();
 
         h_flex()
             .gap_1()
             .items_center()
             .text_xs()
             .font_weight(FontWeight::MEDIUM)
-            .text_color(cx.theme().primary_foreground.opacity(0.76))
+            .text_color(if is_complete {
+                cx.theme().success
+            } else {
+                cx.theme().primary_foreground.opacity(0.76)
+            })
             .child(Icon::new(IconName::CircleCheck).xsmall())
             .child(format!("{completed}/{}", entry.checklist_items.len()))
     }
@@ -1127,37 +1145,48 @@ impl BoardView {
                         ),
                 )
             })
-            .children(items.iter().map(|item| {
+            .children(items.iter().enumerate().map(|(index, item)| {
                 let item_id = item.id;
                 let board_view = board_view.clone();
 
                 h_flex()
                     .id(("checklist-item", item_id as usize))
+                    .min_w_0()
                     .items_center()
-                    .gap_2()
+                    .gap_1()
                     .px_2()
                     .py_1()
                     .rounded(cx.theme().radius * 0.5)
+                    .overflow_hidden()
                     .bg(cx.theme().secondary.opacity(0.22))
                     .hover(|this| this.bg(cx.theme().secondary_hover))
                     .when(item.checked, |this| this.opacity(0.62))
-                    .when_else(
+                    .child(div().flex_1().min_w_0().overflow_hidden().when_else(
                         self.renaming_checklist_item_id == Some(item_id),
                         |this| {
                             this.child(
                                 Input::new(&self.rename_checklist_item_input)
-                                    .flex_1()
+                                    .w_full()
                                     .min_w_0()
+                                    .xsmall()
                                     .bg(cx.theme().input_background()),
                             )
                         },
                         |this| {
                             this.child(
                                 Checkbox::new(("checklist-item-toggle", item_id as usize))
-                                    .flex_1()
+                                    .w_full()
                                     .min_w_0()
+                                    .xsmall()
                                     .checked(item.checked)
-                                    .label(item.title.clone())
+                                    .tooltip(item.title.clone())
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(item.title.clone()),
+                                    )
                                     .on_click(move |checked, _, cx| {
                                         board_view.update(cx, |this, cx| {
                                             this.set_checklist_item_checked(item_id, *checked, cx);
@@ -1165,48 +1194,55 @@ impl BoardView {
                                     }),
                             )
                         },
-                    )
+                    ))
                     .child(
-                        Button::new(("rename-checklist-item", item_id as usize))
-                            .icon(IconName::Replace)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("Rename checklist item")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.start_renaming_checklist_item(item_id, window, cx)
-                            })),
-                    )
-                    .when(total > 1, |this| {
-                        this.child(
-                            Button::new(("move-checklist-item-up", item_id as usize))
-                                .icon(IconName::ArrowUp)
-                                .ghost()
-                                .xsmall()
-                                .tooltip("Move up")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.move_checklist_item(item_id, -1, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(("move-checklist-item-down", item_id as usize))
-                                .icon(IconName::ArrowDown)
-                                .ghost()
-                                .xsmall()
-                                .tooltip("Move down")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.move_checklist_item(item_id, 1, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new(("delete-checklist-item", item_id as usize))
-                            .icon(IconName::Delete)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("Delete checklist item")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_checklist_item(item_id, cx);
-                            })),
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap_0p5()
+                            .child(
+                                Button::new(("rename-checklist-item", item_id as usize))
+                                    .icon(IconName::Replace)
+                                    .ghost()
+                                    .xsmall()
+                                    .tooltip("Rename checklist item")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.start_renaming_checklist_item(item_id, window, cx)
+                                    })),
+                            )
+                            .when(total > 1, |this| {
+                                this.child(
+                                    Button::new(("move-checklist-item-up", item_id as usize))
+                                        .icon(IconName::ArrowUp)
+                                        .ghost()
+                                        .xsmall()
+                                        .disabled(index == 0)
+                                        .tooltip("Move up")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.move_checklist_item(item_id, -1, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new(("move-checklist-item-down", item_id as usize))
+                                        .icon(IconName::ArrowDown)
+                                        .ghost()
+                                        .xsmall()
+                                        .disabled(index + 1 == total)
+                                        .tooltip("Move down")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.move_checklist_item(item_id, 1, cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new(("delete-checklist-item", item_id as usize))
+                                    .icon(IconName::Delete)
+                                    .ghost()
+                                    .xsmall()
+                                    .tooltip("Delete checklist item")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_checklist_item(item_id, cx);
+                                    })),
+                            ),
                     )
             }))
             .child(
@@ -1423,21 +1459,24 @@ impl BoardView {
 
                 h_flex()
                     .id(("board-label", label_id as usize))
+                    .min_w_0()
                     .items_center()
-                    .gap_2()
+                    .gap_1()
                     .px_2()
                     .py_1()
                     .rounded(cx.theme().radius * 0.5)
+                    .overflow_hidden()
                     .bg(cx.theme().secondary.opacity(0.2))
                     .hover(|this| this.bg(cx.theme().secondary_hover))
-                    .child(div().size_3().rounded(px(3.)).bg(color))
-                    .when_else(
+                    .child(div().size_2p5().flex_shrink_0().rounded(px(3.)).bg(color))
+                    .child(div().flex_1().min_w_0().overflow_hidden().when_else(
                         self.renaming_label_id == Some(label_id),
                         |this| {
                             this.child(
                                 Input::new(&self.rename_label_input)
-                                    .flex_1()
+                                    .w_full()
                                     .min_w_0()
+                                    .xsmall()
                                     .bg(cx.theme().input_background()),
                             )
                         },
@@ -1447,10 +1486,18 @@ impl BoardView {
                                     "toggle-card-label",
                                     ((entry_id.unwrap_or_default() as u64) << 32) | label_id as u64,
                                 ))
-                                .flex_1()
+                                .w_full()
                                 .min_w_0()
+                                .xsmall()
                                 .checked(assigned)
-                                .label(label.name.clone())
+                                .tooltip(label.name.clone())
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(label.name.clone()),
+                                )
                                 .on_click(
                                     move |assigned, _, cx| {
                                         if let Some(entry_id) = entry_id {
@@ -1464,26 +1511,31 @@ impl BoardView {
                                 ),
                             )
                         },
-                    )
+                    ))
                     .child(
-                        Button::new(("rename-board-label", label_id as usize))
-                            .icon(IconName::Replace)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("Rename label")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.start_renaming_board_label(label_id, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(("delete-board-label", label_id as usize))
-                            .icon(IconName::Delete)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("Delete label")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_board_label(label_id, cx);
-                            })),
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap_0p5()
+                            .child(
+                                Button::new(("rename-board-label", label_id as usize))
+                                    .icon(IconName::Replace)
+                                    .ghost()
+                                    .xsmall()
+                                    .tooltip("Rename label")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.start_renaming_board_label(label_id, window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new(("delete-board-label", label_id as usize))
+                                    .icon(IconName::Delete)
+                                    .ghost()
+                                    .xsmall()
+                                    .tooltip("Delete label")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_board_label(label_id, cx);
+                                    })),
+                            ),
                     )
             })))
             .when(labels.is_empty(), |this| {
@@ -1511,13 +1563,34 @@ impl BoardView {
             .child(
                 v_flex()
                     .gap_2()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(cx.theme().border.opacity(0.48))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Create label")
+                            .child("Press Enter to save"),
+                    )
                     .child(
                         Input::new(&self.new_label_input)
                             .w_full()
+                            .small()
+                            .prefix(
+                                div()
+                                    .size_2p5()
+                                    .rounded(px(3.))
+                                    .bg(self.label_color(self.selected_label_color.as_ref(), cx)),
+                            )
                             .bg(cx.theme().input_background()),
                     )
                     .child(
-                        h_flex().gap_2().flex_wrap().children(
+                        h_flex().gap_1p5().flex_wrap().children(
                             [
                                 ("blue", "Blue"),
                                 ("green", "Green"),
@@ -1547,9 +1620,13 @@ impl BoardView {
                                     )
                                     .outline()
                                     .xsmall()
+                                    .size_6()
                                     .selected(selected)
-                                    .child(div().size_3().rounded(px(3.)).bg(color))
-                                    .when(selected, |this| this.icon(IconName::Check))
+                                    .when_else(
+                                        selected,
+                                        |this| this.icon(IconName::Check),
+                                        |this| this.child(div().size_3().rounded(px(3.)).bg(color)),
+                                    )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.select_label_color(key, cx);
                                     }))
