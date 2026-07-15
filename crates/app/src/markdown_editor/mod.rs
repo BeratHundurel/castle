@@ -181,9 +181,8 @@ impl MarkdownEditorView {
 
     fn toggle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = match self.mode {
-            EditorMode::Split => EditorMode::Source,
             EditorMode::Source => EditorMode::Preview,
-            EditorMode::Preview => EditorMode::Split,
+            EditorMode::Preview => EditorMode::Source,
         };
         self.focus_active_mode(window, cx);
         cx.notify();
@@ -191,7 +190,7 @@ impl MarkdownEditorView {
 
     fn focus_active_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
         match self.mode {
-            EditorMode::Split | EditorMode::Source => {
+            EditorMode::Source => {
                 self.editor
                     .update(cx, |editor, cx| editor.focus(window, cx));
             }
@@ -236,7 +235,7 @@ impl MarkdownEditorView {
         self.outline_navigation_generation = self.outline_navigation_generation.saturating_add(1);
         let navigation_generation = self.outline_navigation_generation;
         match self.mode {
-            EditorMode::Source | EditorMode::Split => {
+            EditorMode::Source => {
                 self.editor.update(cx, |editor, cx| {
                     editor.set_cursor_position(
                         gpui_component::input::Position {

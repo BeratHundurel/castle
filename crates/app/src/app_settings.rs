@@ -19,6 +19,7 @@ pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
 const DEFAULT_MARKDOWN_FONT_SIZE: f64 = 13.0;
 const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE: f64 = 16.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
+const DEFAULT_MARKDOWN_STATUS_LINE_VISIBLE: bool = true;
 const DEFAULT_MARKDOWN_LINE_NUMBERS: bool = false;
 const DEFAULT_MARKDOWN_SOFT_WRAP: bool = true;
 const DEFAULT_MARKDOWN_OUTLINE_VISIBLE: bool = true;
@@ -68,6 +69,7 @@ struct StoredSettings {
     markdown_font_size: f64,
     markdown_preview_font_size: f64,
     markdown_editor_mode: String,
+    markdown_status_line_visible: bool,
     markdown_line_numbers: bool,
     markdown_soft_wrap: bool,
     markdown_outline_visible: bool,
@@ -89,6 +91,7 @@ impl Default for StoredSettings {
             markdown_font_size: DEFAULT_MARKDOWN_FONT_SIZE,
             markdown_preview_font_size: DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE,
             markdown_editor_mode: DEFAULT_MARKDOWN_EDITOR_MODE.to_string(),
+            markdown_status_line_visible: DEFAULT_MARKDOWN_STATUS_LINE_VISIBLE,
             markdown_line_numbers: DEFAULT_MARKDOWN_LINE_NUMBERS,
             markdown_soft_wrap: DEFAULT_MARKDOWN_SOFT_WRAP,
             markdown_outline_visible: DEFAULT_MARKDOWN_OUTLINE_VISIBLE,
@@ -246,6 +249,10 @@ impl AppSettings {
         cx.global::<Self>().values.markdown_line_numbers
     }
 
+    pub(crate) fn markdown_status_line_visible(cx: &App) -> bool {
+        cx.global::<Self>().values.markdown_status_line_visible
+    }
+
     pub(crate) fn markdown_soft_wrap(cx: &App) -> bool {
         cx.global::<Self>().values.markdown_soft_wrap
     }
@@ -254,6 +261,13 @@ impl AppSettings {
         Self::update(cx, |settings| {
             settings.values.markdown_editor_mode = value.to_string();
         });
+    }
+
+    pub(crate) fn set_markdown_status_line_visible(visible: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.markdown_status_line_visible = visible;
+        });
+        cx.refresh_windows();
     }
 
     pub(crate) fn set_markdown_line_numbers(enabled: bool, cx: &mut App) {
@@ -357,10 +371,7 @@ impl StoredSettings {
             self.scrollbar_show = DEFAULT_SCROLLBAR_SHOW.to_string();
         }
 
-        if !matches!(
-            self.markdown_editor_mode.as_str(),
-            "source" | "split" | "preview"
-        ) {
+        if !matches!(self.markdown_editor_mode.as_str(), "source" | "preview") {
             self.markdown_editor_mode = DEFAULT_MARKDOWN_EDITOR_MODE.to_string();
         }
 
@@ -462,6 +473,7 @@ mod tests {
             settings.markdown_preview_font_size,
             DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE
         );
+        assert!(settings.markdown_status_line_visible);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
     }
@@ -507,5 +519,17 @@ mod tests {
         settings.normalize();
 
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
+    }
+
+    #[test]
+    fn removed_split_editor_mode_is_reset_to_source() {
+        let mut settings = StoredSettings {
+            markdown_editor_mode: "split".to_string(),
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+
+        assert_eq!(settings.markdown_editor_mode, DEFAULT_MARKDOWN_EDITOR_MODE);
     }
 }

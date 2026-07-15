@@ -327,7 +327,6 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                             SettingField::dropdown(
                                 vec![
                                     (EditorMode::Source.as_str().into(), "Write".into()),
-                                    (EditorMode::Split.as_str().into(), "Split".into()),
                                     (EditorMode::Preview.as_str().into(), "Read".into()),
                                 ],
                                 AppSettings::markdown_editor_mode,
@@ -336,6 +335,17 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                             .default_value(EditorMode::Source.as_str()),
                         )
                         .description("Choose the view used when a note editor opens."),
+                        SettingItem::new(
+                            "Status Line",
+                            SettingField::switch(
+                                AppSettings::markdown_status_line_visible,
+                                AppSettings::set_markdown_status_line_visible,
+                            )
+                            .default_value(true),
+                        )
+                        .description(
+                            "Show file, save state, view controls, and document statistics below note editors.",
+                        ),
                         SettingItem::new(
                             "Line Numbers",
                             SettingField::switch(

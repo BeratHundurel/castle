@@ -7,7 +7,6 @@ use gpui_component::{
     clipboard::Clipboard,
     h_flex,
     input::Input,
-    resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     text::{TextView, TextViewStyle},
     v_flex,
@@ -39,9 +38,7 @@ impl MarkdownEditorView {
             .text_size(cx.theme().mono_font_size)
             .focus_bordered(false);
 
-        let input = if self.mode == EditorMode::Split {
-            input.px_5().into_any_element()
-        } else if outline_in_layout && self.outline_transition_epoch > 0 {
+        let input = if outline_in_layout && self.outline_transition_epoch > 0 {
             let (from_width, to_width) = if self.outline_visible {
                 (self.view_width, self.view_width - px(224.))
             } else {
@@ -281,14 +278,6 @@ impl MarkdownEditorView {
         }
 
         match self.mode {
-            EditorMode::Split => div()
-                .size_full()
-                .child(
-                    h_resizable("markdown-editor-split")
-                        .child(resizable_panel().child(self.render_source(cx)))
-                        .child(resizable_panel().child(self.render_preview(cx))),
-                )
-                .into_any_element(),
             EditorMode::Source => self.render_source(cx).into_any_element(),
             EditorMode::Preview => self.render_preview(cx).into_any_element(),
         }
@@ -390,17 +379,6 @@ impl MarkdownEditorView {
                     })),
             )
             .child(
-                Button::new("mode-split")
-                    .icon(IconName::PanelRight)
-                    .ghost()
-                    .xsmall()
-                    .selected(mode == EditorMode::Split)
-                    .tooltip("Split")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.set_mode(EditorMode::Split, window, cx);
-                    })),
-            )
-            .child(
                 Button::new("mode-preview")
                     .icon(IconName::Eye)
                     .ghost()
@@ -436,6 +414,7 @@ impl Render for MarkdownEditorView {
         let theme_background = cx.theme().background;
         let theme_border = cx.theme().border;
         let theme_input = cx.theme().input;
+        let status_line_visible = AppSettings::markdown_status_line_visible(cx);
 
         v_flex()
             .id("markdown-editor-window")
@@ -487,7 +466,7 @@ impl Render for MarkdownEditorView {
                             ),
                     ),
             )
-            .child(self.render_status_bar(cx))
+            .children(status_line_visible.then(|| self.render_status_bar(cx)))
             .children(self.show_emmet_input.then(|| {
                 div()
                     .key_context("EmmetInput")

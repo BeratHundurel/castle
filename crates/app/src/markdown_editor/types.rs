@@ -2,7 +2,6 @@ use gpui::SharedString;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditorMode {
-    Split,
     Source,
     Preview,
 }
@@ -10,7 +9,6 @@ pub(crate) enum EditorMode {
 impl EditorMode {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Split => "split",
             Self::Source => "source",
             Self::Preview => "preview",
         }
@@ -18,7 +16,6 @@ impl EditorMode {
 
     pub(crate) fn from_str(value: &str) -> Self {
         match value {
-            "split" => Self::Split,
             "preview" => Self::Preview,
             _ => Self::Source,
         }
