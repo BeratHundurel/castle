@@ -1,3 +1,4 @@
+pub mod app_paths;
 pub mod app_settings;
 pub mod app_shell;
 pub mod board;

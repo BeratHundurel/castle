@@ -1,42 +1,39 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::Result;
+#[cfg(debug_assertions)]
 use dotenvy::dotenv;
 use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database};
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::fs;
 use std::sync::Arc;
-use std::{env, fs, path::Path};
 
-use app::{DB, app_settings::AppSettings, app_shell::AppShell, keymap, tray};
+use app::{DB, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap, tray};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
-    dotenv()?;
+    #[cfg(debug_assertions)]
+    let _ = dotenv();
 
-    let database_url = env::var("DATABASE_URL")?;
-    let db_path = PathBuf::from(database_url.trim_start_matches("sqlite:"));
+    let paths = AppPaths::discover()?;
+    fs::create_dir_all(&paths.data_dir)?;
+    let db_path = paths.database_path()?;
     if !db_path.exists() {
         fs::File::create(&db_path)?;
     }
 
-    let data_dir = db_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let mut options = ConnectOptions::new(database_url);
+    let mut options = ConnectOptions::new(paths.database_url);
     options.max_connections(4).min_connections(1);
     let connection = Database::connect(options).await?;
     Migrator::up(&connection, None).await?;
 
     let db = DB {
         conn: Arc::new(connection),
-        data_dir,
+        data_dir: paths.data_dir,
     };
     let app_settings = AppSettings::load(&db.data_dir);
 
