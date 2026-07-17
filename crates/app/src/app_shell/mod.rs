@@ -34,10 +34,11 @@ use crate::DB;
 use crate::app_settings::{AppSettings, StoredTab};
 use crate::board::BoardView;
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
-use crate::home::WorkspaceHomeState;
-use crate::markdown_editor::{
-    DEFAULT_NOTE, MarkdownEditorView, SaveState, now_ts, unique_note_path,
+use crate::document_editor::{
+    DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState, now_ts,
+    unique_note_path,
 };
+use crate::home::WorkspaceHomeState;
 use crate::sidebar::{SidebarEvent, SidebarView};
 use crate::trash::{TrashItem, TrashItemKind};
 
@@ -60,7 +61,7 @@ enum OpenTabKind {
     Note {
         note_id: u32,
         project_id: Option<u32>,
-        view: Entity<MarkdownEditorView>,
+        view: Entity<DocumentEditorView>,
     },
 }
 
@@ -104,7 +105,7 @@ pub struct AppShell {
     pub(crate) command_palette: CommandPalette,
     open_tabs: Vec<OpenTab>,
     board_views: HashMap<u32, Entity<BoardView>>,
-    note_views: HashMap<u32, Entity<MarkdownEditorView>>,
+    note_views: HashMap<u32, Entity<DocumentEditorView>>,
     active_tab_index: usize,
     next_tab_id: u64,
     pub(crate) projects: Vec<ProjectChoice>,
@@ -140,6 +141,16 @@ impl AppShell {
         cx.new(|cx| Self::new(window, cx))
     }
 
+    fn observe_document_editor(view: &Entity<DocumentEditorView>, cx: &mut Context<Self>) {
+        cx.subscribe(
+            view,
+            |this, _, event: &DocumentEditorEvent, cx| match event {
+                DocumentEditorEvent::PathChanged => this.refresh_workspace(cx),
+            },
+        )
+        .detach();
+    }
+
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
@@ -173,7 +184,8 @@ impl AppShell {
                     project_id,
                     title,
                 } => {
-                    let view = MarkdownEditorView::view(note_id, window, cx);
+                    let view = DocumentEditorView::view(note_id, window, cx);
+                    Self::observe_document_editor(&view, cx);
                     note_views.insert(note_id, view.clone());
                     (
                         SharedString::from(title),

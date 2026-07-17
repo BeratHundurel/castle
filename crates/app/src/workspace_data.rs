@@ -34,6 +34,7 @@ pub(crate) struct NoteRow {
     pub(crate) id: u32,
     pub(crate) title: String,
     pub(crate) project_id: Option<u32>,
+    pub(crate) file_path: Option<String>,
     pub(crate) is_pinned: bool,
     pub(crate) last_opened_at: Option<i64>,
 }
@@ -119,17 +120,19 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
         .column(note::Column::Id)
         .column(note::Column::Title)
         .column(note::Column::ProjectId)
+        .column(note::Column::FilePath)
         .column(note::Column::IsPinned)
         .column(note::Column::LastOpenedAt)
-        .into_tuple::<(i64, String, Option<i64>, bool, Option<i64>)>()
+        .into_tuple::<(i64, String, Option<i64>, Option<String>, bool, Option<i64>)>()
         .all(db)
         .await?
         .into_iter()
         .map(
-            |(id, title, project_id, is_pinned, last_opened_at)| NoteRow {
+            |(id, title, project_id, file_path, is_pinned, last_opened_at)| NoteRow {
                 id: id as u32,
                 title,
                 project_id: project_id.map(|id| id as u32),
+                file_path,
                 is_pinned,
                 last_opened_at,
             },
@@ -271,17 +274,32 @@ mod tests {
             .await?;
         }
 
-        for (id, title, project_id) in [
-            (1, "Active note", Some(active_project.id)),
-            (2, "Archived note", Some(archived_project.id)),
-            (3, "Deleted note", Some(deleted_project.id)),
-            (4, "Standalone note", None),
+        for (id, title, project_id, file_path) in [
+            (
+                1,
+                "Active note",
+                Some(active_project.id),
+                Some("active.json"),
+            ),
+            (
+                2,
+                "Archived note",
+                Some(archived_project.id),
+                Some("archived.md"),
+            ),
+            (
+                3,
+                "Deleted note",
+                Some(deleted_project.id),
+                Some("deleted.md"),
+            ),
+            (4, "Standalone note", None, Some("scratch.txt")),
         ] {
             note::ActiveModel {
                 id: Set(id),
                 title: Set(title.to_string()),
                 project_id: Set(project_id),
-                file_path: Set(None),
+                file_path: Set(file_path.map(str::to_string)),
                 file_managed_by_app: Set(false),
                 cached_content: Set(String::new()),
                 file_missing_since: Set(None),
@@ -310,6 +328,8 @@ mod tests {
             rows.notes.iter().map(|note| note.id).collect::<Vec<_>>(),
             vec![1, 4]
         );
+        assert_eq!(rows.notes[0].file_path.as_deref(), Some("active.json"));
+        assert_eq!(rows.notes[1].file_path.as_deref(), Some("scratch.txt"));
 
         Ok(())
     }

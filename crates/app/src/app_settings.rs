@@ -16,13 +16,13 @@ const DEFAULT_RADIUS: f64 = 6.0;
 const DEFAULT_SHOW_SIDEBAR: bool = true;
 const DEFAULT_SCROLLBAR_SHOW: &str = "scrolling";
 pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
-const DEFAULT_MARKDOWN_FONT_SIZE: f64 = 13.0;
+const DEFAULT_EDITOR_FONT_SIZE: f64 = 13.0;
 const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE: f64 = 16.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
-const DEFAULT_MARKDOWN_STATUS_LINE_VISIBLE: bool = true;
-const DEFAULT_MARKDOWN_LINE_NUMBERS: bool = false;
-const DEFAULT_MARKDOWN_SOFT_WRAP: bool = true;
-const DEFAULT_MARKDOWN_OUTLINE_VISIBLE: bool = true;
+const DEFAULT_EDITOR_STATUS_LINE_VISIBLE: bool = true;
+const DEFAULT_EDITOR_LINE_NUMBERS: bool = false;
+const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
+const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 
@@ -66,13 +66,18 @@ struct StoredSettings {
     show_sidebar: bool,
     scrollbar_show: String,
     editor_font_family: String,
-    markdown_font_size: f64,
+    #[serde(alias = "markdown_font_size")]
+    editor_font_size: f64,
     markdown_preview_font_size: f64,
     markdown_editor_mode: String,
-    markdown_status_line_visible: bool,
-    markdown_line_numbers: bool,
-    markdown_soft_wrap: bool,
-    markdown_outline_visible: bool,
+    #[serde(alias = "markdown_status_line_visible")]
+    editor_status_line_visible: bool,
+    #[serde(alias = "markdown_line_numbers")]
+    editor_line_numbers: bool,
+    #[serde(alias = "markdown_soft_wrap")]
+    editor_soft_wrap: bool,
+    #[serde(alias = "markdown_outline_visible")]
+    document_outline_visible: bool,
     close_to_tray: bool,
     tray_shortcut: String,
     tab_session: TabSession,
@@ -88,13 +93,13 @@ impl Default for StoredSettings {
             show_sidebar: DEFAULT_SHOW_SIDEBAR,
             scrollbar_show: DEFAULT_SCROLLBAR_SHOW.to_string(),
             editor_font_family: DEFAULT_EDITOR_FONT_FAMILY.to_string(),
-            markdown_font_size: DEFAULT_MARKDOWN_FONT_SIZE,
+            editor_font_size: DEFAULT_EDITOR_FONT_SIZE,
             markdown_preview_font_size: DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE,
             markdown_editor_mode: DEFAULT_MARKDOWN_EDITOR_MODE.to_string(),
-            markdown_status_line_visible: DEFAULT_MARKDOWN_STATUS_LINE_VISIBLE,
-            markdown_line_numbers: DEFAULT_MARKDOWN_LINE_NUMBERS,
-            markdown_soft_wrap: DEFAULT_MARKDOWN_SOFT_WRAP,
-            markdown_outline_visible: DEFAULT_MARKDOWN_OUTLINE_VISIBLE,
+            editor_status_line_visible: DEFAULT_EDITOR_STATUS_LINE_VISIBLE,
+            editor_line_numbers: DEFAULT_EDITOR_LINE_NUMBERS,
+            editor_soft_wrap: DEFAULT_EDITOR_SOFT_WRAP,
+            document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
             tab_session: TabSession::default(),
@@ -130,7 +135,7 @@ impl AppSettings {
         apply_radius(self.values.radius, cx);
         apply_scrollbar_show(&self.values.scrollbar_show, cx);
         apply_editor_font_family(&self.values.editor_font_family, cx);
-        apply_markdown_font_size(self.values.markdown_font_size, cx);
+        apply_editor_font_size(self.values.editor_font_size, cx);
         cx.refresh_windows();
     }
 
@@ -158,7 +163,7 @@ impl AppSettings {
         apply_radius(values.radius, cx);
         apply_scrollbar_show(&values.scrollbar_show, cx);
         apply_editor_font_family(&values.editor_font_family, cx);
-        apply_markdown_font_size(values.markdown_font_size, cx);
+        apply_editor_font_size(values.editor_font_size, cx);
         cx.refresh_windows();
     }
 
@@ -214,16 +219,16 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_markdown_font_size(font_size: f64, cx: &mut App) {
-        apply_markdown_font_size(font_size, cx);
+    pub(crate) fn set_editor_font_size(font_size: f64, cx: &mut App) {
+        apply_editor_font_size(font_size, cx);
         Self::update(cx, |settings| {
-            settings.values.markdown_font_size = font_size;
+            settings.values.editor_font_size = font_size;
         });
         cx.refresh_windows();
     }
 
-    pub(crate) fn markdown_font_size(cx: &App) -> f64 {
-        cx.global::<Self>().values.markdown_font_size
+    pub(crate) fn editor_font_size(cx: &App) -> f64 {
+        cx.global::<Self>().values.editor_font_size
     }
 
     pub(crate) fn set_markdown_preview_font_size(font_size: f64, cx: &mut App) {
@@ -245,16 +250,16 @@ impl AppSettings {
             .into()
     }
 
-    pub(crate) fn markdown_line_numbers(cx: &App) -> bool {
-        cx.global::<Self>().values.markdown_line_numbers
+    pub(crate) fn editor_line_numbers(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_line_numbers
     }
 
-    pub(crate) fn markdown_status_line_visible(cx: &App) -> bool {
-        cx.global::<Self>().values.markdown_status_line_visible
+    pub(crate) fn editor_status_line_visible(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_status_line_visible
     }
 
-    pub(crate) fn markdown_soft_wrap(cx: &App) -> bool {
-        cx.global::<Self>().values.markdown_soft_wrap
+    pub(crate) fn editor_soft_wrap(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_soft_wrap
     }
 
     pub(crate) fn set_markdown_editor_mode(value: SharedString, cx: &mut App) {
@@ -263,32 +268,32 @@ impl AppSettings {
         });
     }
 
-    pub(crate) fn set_markdown_status_line_visible(visible: bool, cx: &mut App) {
+    pub(crate) fn set_editor_status_line_visible(visible: bool, cx: &mut App) {
         Self::update(cx, |settings| {
-            settings.values.markdown_status_line_visible = visible;
+            settings.values.editor_status_line_visible = visible;
         });
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_markdown_line_numbers(enabled: bool, cx: &mut App) {
+    pub(crate) fn set_editor_line_numbers(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
-            settings.values.markdown_line_numbers = enabled;
+            settings.values.editor_line_numbers = enabled;
         });
     }
 
-    pub(crate) fn set_markdown_soft_wrap(enabled: bool, cx: &mut App) {
+    pub(crate) fn set_editor_soft_wrap(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
-            settings.values.markdown_soft_wrap = enabled;
+            settings.values.editor_soft_wrap = enabled;
         });
     }
 
-    pub(crate) fn markdown_outline_visible(cx: &App) -> bool {
-        cx.global::<Self>().values.markdown_outline_visible
+    pub(crate) fn document_outline_visible(cx: &App) -> bool {
+        cx.global::<Self>().values.document_outline_visible
     }
 
-    pub(crate) fn set_markdown_outline_visible(enabled: bool, cx: &mut App) {
+    pub(crate) fn set_document_outline_visible(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
-            settings.values.markdown_outline_visible = enabled;
+            settings.values.document_outline_visible = enabled;
         });
     }
 
@@ -361,7 +366,7 @@ impl StoredSettings {
         self.radius = self.radius.clamp(0.0, 12.0);
         self.editor_font_family =
             normalize_font_family(&self.editor_font_family, DEFAULT_EDITOR_FONT_FAMILY);
-        self.markdown_font_size = self.markdown_font_size.clamp(10.0, 22.0);
+        self.editor_font_size = self.editor_font_size.clamp(10.0, 22.0);
         self.markdown_preview_font_size = self.markdown_preview_font_size.clamp(10.0, 22.0);
 
         if !matches!(
@@ -439,7 +444,7 @@ fn apply_editor_font_family(font_family: &str, cx: &mut App) {
     Theme::global_mut(cx).mono_font_family = SharedString::from(font_family);
 }
 
-fn apply_markdown_font_size(font_size: f64, cx: &mut App) {
+fn apply_editor_font_size(font_size: f64, cx: &mut App) {
     Theme::global_mut(cx).mono_font_size = px(font_size as f32);
 }
 
@@ -473,9 +478,33 @@ mod tests {
             settings.markdown_preview_font_size,
             DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE
         );
-        assert!(settings.markdown_status_line_visible);
+        assert!(settings.editor_status_line_visible);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
+    }
+
+    #[test]
+    fn legacy_markdown_editor_settings_deserialize_into_document_settings() {
+        let settings: StoredSettings = serde_json::from_str(
+            r#"{
+                "markdown_font_size": 17.0,
+                "markdown_status_line_visible": false,
+                "markdown_line_numbers": true,
+                "markdown_soft_wrap": false,
+                "markdown_outline_visible": false
+            }"#,
+        )
+        .expect("legacy editor settings should deserialize");
+
+        assert_eq!(settings.editor_font_size, 17.0);
+        assert!(!settings.editor_status_line_visible);
+        assert!(settings.editor_line_numbers);
+        assert!(!settings.editor_soft_wrap);
+        assert!(!settings.document_outline_visible);
+
+        let serialized = serde_json::to_string(&settings).expect("settings should serialize");
+        assert!(serialized.contains("\"editor_font_size\""));
+        assert!(!serialized.contains("\"markdown_font_size\""));
     }
 
     #[test]

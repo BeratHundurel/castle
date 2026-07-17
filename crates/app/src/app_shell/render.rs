@@ -1,5 +1,8 @@
 use gpui::Hsla;
-use gpui_component::Icon;
+use gpui_component::{
+    Icon,
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use crate::command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
@@ -89,10 +92,17 @@ impl AppShell {
         };
 
         let save_state = view.read(cx).save_state();
+        let document_kind = view.read(cx).kind();
+        let document_kind_label = if self.window_is_narrow {
+            document_kind.extension().to_ascii_uppercase()
+        } else {
+            document_kind.label().to_string()
+        };
         let save_shortcut = platform_shortcut("S");
         let save_as_shortcut = platform_shortcut("Shift+S");
         let save_view = view.clone();
-        let save_as_view = view;
+        let save_as_view = view.clone();
+        let kind_view = view;
 
         h_flex()
             .id("title-bar-note-actions")
@@ -101,6 +111,31 @@ impl AppShell {
             .gap_2()
             .px_3()
             .flex_shrink_0()
+            .child(
+                Button::new("title-document-kind")
+                    .label(document_kind_label)
+                    .ghost()
+                    .xsmall()
+                    .dropdown_caret(true)
+                    .tooltip("Document type")
+                    .dropdown_menu(move |menu, _, _| {
+                        menu.item(document_kind_menu_item(
+                            kind_view.clone(),
+                            document_kind,
+                            DocumentKind::Markdown,
+                        ))
+                        .item(document_kind_menu_item(
+                            kind_view.clone(),
+                            document_kind,
+                            DocumentKind::Json,
+                        ))
+                        .item(document_kind_menu_item(
+                            kind_view.clone(),
+                            document_kind,
+                            DocumentKind::PlainText,
+                        ))
+                    }),
+            )
             .child(
                 Button::new("title-save-note")
                     .icon(IconName::Check)
@@ -323,6 +358,20 @@ fn tab_label(tab: &OpenTab, cx: &mut Context<AppShell>) -> SharedString {
         OpenTabKind::Trash => tab.title.clone(),
         _ => tab.title.clone(),
     }
+}
+
+fn document_kind_menu_item(
+    view: Entity<DocumentEditorView>,
+    current: DocumentKind,
+    kind: DocumentKind,
+) -> PopupMenuItem {
+    PopupMenuItem::new(kind.menu_label())
+        .checked(current == kind)
+        .on_click(move |_, window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.change_document_kind(kind, window, cx);
+            });
+        })
 }
 
 fn save_status_pill(save_state: SaveState, cx: &mut Context<AppShell>) -> impl IntoElement {

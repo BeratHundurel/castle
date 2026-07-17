@@ -2,33 +2,40 @@ use gpui::Action;
 use serde::Deserialize;
 
 gpui::actions!(
-    markdown_editor,
-    [SaveMarkdownFile, SaveMarkdownFileAs, ToggleEditorMode,]
+    document_editor,
+    [SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentPreview,]
 );
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
+#[action(namespace = document_editor, no_json)]
 pub(crate) struct ApplyMarkdownFormat(pub(crate) MarkdownFormat);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
+#[action(namespace = document_editor, no_json)]
 pub(crate) struct ExpandEmmet;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
+#[action(namespace = document_editor, no_json)]
 pub(crate) struct EmmetSubmitWrap;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
+#[action(namespace = document_editor, no_json)]
 pub(crate) struct EmmetCancelWrap;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
-#[action(namespace = markdown_editor, no_json)]
+#[action(namespace = document_editor, no_json)]
 pub(crate) struct ToggleDocumentOutline;
 
 gpui::actions!(
-    markdown_outline,
-    [OutlinePrevious, OutlineNext, OutlineOpen, OutlineClose]
+    document_outline,
+    [
+        OutlinePrevious,
+        OutlineNext,
+        OutlineLeft,
+        OutlineRight,
+        OutlineOpen,
+        OutlineClose
+    ]
 );
 
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize)]

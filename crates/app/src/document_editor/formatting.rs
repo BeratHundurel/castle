@@ -2,18 +2,18 @@ use gpui::{Context, EntityInputHandler, Window};
 use gpui_component::input::RopeExt;
 use std::ops::Range;
 
-use super::MarkdownEditorView;
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
 use super::types::EditorMode;
+use super::{DocumentEditorView, DocumentKind};
 
-impl MarkdownEditorView {
+impl DocumentEditorView {
     pub(super) fn apply_format(
         &mut self,
         action: &ApplyMarkdownFormat,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.mode == EditorMode::Preview {
+        if self.kind != DocumentKind::Markdown || self.mode == EditorMode::Preview {
             return;
         }
 

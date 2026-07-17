@@ -5,10 +5,10 @@ use crate::command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
-use crate::markdown_editor::action::{
+use crate::document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
-    OutlineClose, OutlineNext, OutlineOpen, OutlinePrevious, SaveMarkdownFile, SaveMarkdownFileAs,
-    ToggleDocumentOutline, ToggleEditorMode,
+    OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious, OutlineRight,
+    SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline, ToggleDocumentPreview,
 };
 
 #[derive(Clone)]
@@ -211,32 +211,38 @@ fn default_bindings() -> Vec<KeyBinding> {
             Some("MarkdownSource"),
         ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-s", SaveMarkdownFile, Some("MarkdownEditor")),
+        KeyBinding::new("cmd-s", SaveDocumentFile, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-s", SaveMarkdownFile, Some("MarkdownEditor")),
+        KeyBinding::new("ctrl-s", SaveDocumentFile, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-s", SaveMarkdownFileAs, Some("MarkdownEditor")),
+        KeyBinding::new("cmd-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-s", SaveMarkdownFileAs, Some("MarkdownEditor")),
+        KeyBinding::new("ctrl-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-v", ToggleEditorMode, Some("MarkdownEditor")),
+        KeyBinding::new("cmd-shift-v", ToggleDocumentPreview, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-v", ToggleEditorMode, Some("MarkdownEditor")),
+        KeyBinding::new(
+            "ctrl-shift-v",
+            ToggleDocumentPreview,
+            Some("DocumentEditor"),
+        ),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-v", ToggleEditorMode, Some("TextView")),
+        KeyBinding::new("cmd-shift-v", ToggleDocumentPreview, Some("TextView")),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-v", ToggleEditorMode, Some("TextView")),
+        KeyBinding::new("ctrl-shift-v", ToggleDocumentPreview, Some("TextView")),
         KeyBinding::new("enter", EmmetSubmitWrap, Some("EmmetInput")),
         KeyBinding::new("escape", EmmetCancelWrap, Some("EmmetInput")),
         KeyBinding::new(
             "ctrl-shift-o",
             ToggleDocumentOutline,
-            Some("MarkdownEditor"),
+            Some("DocumentEditor"),
         ),
-        KeyBinding::new("up", OutlinePrevious, Some("MarkdownOutline")),
-        KeyBinding::new("down", OutlineNext, Some("MarkdownOutline")),
-        KeyBinding::new("enter", OutlineOpen, Some("MarkdownOutline")),
-        KeyBinding::new("escape", OutlineClose, Some("MarkdownOutline")),
+        KeyBinding::new("up", OutlinePrevious, Some("DocumentOutline")),
+        KeyBinding::new("down", OutlineNext, Some("DocumentOutline")),
+        KeyBinding::new("left", OutlineLeft, Some("DocumentOutline")),
+        KeyBinding::new("right", OutlineRight, Some("DocumentOutline")),
+        KeyBinding::new("enter", OutlineOpen, Some("DocumentOutline")),
+        KeyBinding::new("escape", OutlineClose, Some("DocumentOutline")),
     ]
 }
 

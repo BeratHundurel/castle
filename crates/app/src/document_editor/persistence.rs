@@ -1,21 +1,24 @@
 use entity::{note, note::Entity as Note};
 use gpui::{Context, SharedString, Task, Window};
-use gpui_component::highlighter::Language;
+use gpui_component::{WindowExt as _, notification::Notification};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use std::{
     fs::read_to_string,
-    fs::{create_dir_all, write},
+    fs::{create_dir_all, remove_file, write},
     path::PathBuf,
 };
 
 use crate::DB;
 
-use super::outline::MarkdownOutline;
-use super::types::{DocumentStats, SaveState};
-use super::util::{now_ts, suggested_file_name, unique_note_path};
-use super::{AUTO_SAVE_IDLE_DELAY, MarkdownEditorView};
+use super::outline::DocumentOutline;
+use super::types::{DocumentKind, DocumentStats, SaveState};
+use super::util::{
+    now_ts, suggested_save_as_file_name, suggested_save_as_file_name_with_extension,
+    unique_note_path,
+};
+use super::{AUTO_SAVE_IDLE_DELAY, DocumentEditorEvent, DocumentEditorView};
 
-impl MarkdownEditorView {
+impl DocumentEditorView {
     pub(super) fn load_note_async(
         note_id: u32,
         window: &mut Window,
@@ -166,6 +169,8 @@ impl MarkdownEditorView {
     ) {
         self.title = model.title.into();
         self.current_path = model.file_path.map(PathBuf::from);
+        let current_path = self.current_path.clone();
+        self.apply_document_kind(current_path.as_deref(), cx);
         self.file_managed_by_app = model.file_managed_by_app;
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = is_loading;
@@ -177,21 +182,18 @@ impl MarkdownEditorView {
             SaveState::Saved
         };
 
-        self.stats = DocumentStats::from_text(&content);
-        self.outline = MarkdownOutline::parse(&content);
-        self.outline_selected = self.outline.active_index_for_line(0);
+        self.stats = DocumentStats::from_text("");
+        self.outline = DocumentOutline::None;
+        self.outline_selected = None;
+        self.rebuild_outline_rows();
 
         self.suppress_editor_events = true;
         self.editor.update(cx, |editor, cx| {
-            editor.set_highlighter(Language::Markdown, cx);
             editor.set_value(content.as_str(), window, cx);
             editor.focus(window, cx);
         });
         self.suppress_editor_events = false;
-
-        self.preview.update(cx, |preview, cx| {
-            preview.set_text(content.as_ref(), cx);
-        });
+        self.schedule_document_analysis(false, cx);
 
         cx.notify();
     }
@@ -216,17 +218,8 @@ impl MarkdownEditorView {
             return;
         }
 
-        let value = self.editor.read(cx).value();
-
-        self.preview.update(cx, |preview, cx| {
-            preview.set_text(value.as_ref(), cx);
-        });
-
-        self.stats = DocumentStats::from_text(value.as_ref());
-        self.outline = MarkdownOutline::parse(value.as_ref());
-        let cursor_line = self.editor.read(cx).cursor_position().line as usize;
-        self.outline_selected = self.outline.active_index_for_line(cursor_line);
-
+        self.outline_source_highlight = None;
+        self._outline_source_highlight_task = None;
         let old_save_state = self.save_state.clone();
         if !matches!(self.save_state, SaveState::Missing) {
             self.save_state = SaveState::Dirty;
@@ -236,12 +229,14 @@ impl MarkdownEditorView {
             cx.notify();
         }
 
+        self.schedule_document_analysis(true, cx);
         self.schedule_auto_save(cx);
     }
 
     pub(super) fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         let epoch = self.auto_save_epoch;
+        let runtime = tokio::runtime::Handle::current();
 
         self._auto_save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
@@ -294,30 +289,49 @@ impl MarkdownEditorView {
                     .await;
 
                 match write_result {
-                    Ok(()) => note::ActiveModel {
-                        id: Set(note_id as i64),
-                        cached_content: Set(content.to_string()),
-                        file_missing_since: Set(None),
-                        updated_at: Set(now_ts()),
-                        ..Default::default()
+                    Ok(()) => {
+                        let persisted_content = content.clone();
+                        let save_db = db.clone();
+                        match runtime
+                            .spawn(async move {
+                                note::ActiveModel {
+                                    id: Set(note_id as i64),
+                                    cached_content: Set(persisted_content.to_string()),
+                                    file_missing_since: Set(None),
+                                    updated_at: Set(now_ts()),
+                                    ..Default::default()
+                                }
+                                .update(&*save_db)
+                                .await
+                            })
+                            .await
+                        {
+                            Ok(Ok(_)) => Ok(()),
+                            Ok(Err(err)) => Err(err.to_string()),
+                            Err(err) => Err(format!("Failed to join autosave task: {err}")),
+                        }
                     }
-                    .update(&*db)
-                    .await
-                    .map(|_| ())
-                    .map_err(|err| err.to_string()),
                     Err(err) => Err(err),
                 }
             } else {
-                note::ActiveModel {
-                    id: Set(note_id as i64),
-                    cached_content: Set(content.to_string()),
-                    updated_at: Set(now_ts()),
-                    ..Default::default()
+                let persisted_content = content.clone();
+                match runtime
+                    .spawn(async move {
+                        note::ActiveModel {
+                            id: Set(note_id as i64),
+                            cached_content: Set(persisted_content.to_string()),
+                            updated_at: Set(now_ts()),
+                            ..Default::default()
+                        }
+                        .update(&*db)
+                        .await
+                    })
+                    .await
+                {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(err)) => Err(err.to_string()),
+                    Err(err) => Err(format!("Failed to join autosave task: {err}")),
                 }
-                .update(&*db)
-                .await
-                .map(|_| ())
-                .map_err(|err| err.to_string())
             };
 
             match result {
@@ -355,13 +369,55 @@ impl MarkdownEditorView {
     }
 
     pub(crate) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file_name =
+            suggested_save_as_file_name(self.current_path.as_deref(), self.title.as_ref());
+        self.prompt_save_as(file_name, window, cx);
+    }
+
+    pub(crate) fn change_document_kind(
+        &mut self,
+        kind: DocumentKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.kind == kind || self.is_loading {
+            return;
+        }
+
+        if let Some(current_path) = self.current_path.clone()
+            && self.file_managed_by_app
+        {
+            let target_path = current_path.with_extension(kind.extension());
+            if target_path.exists() {
+                window.push_notification(
+                    Notification::error(format!(
+                        "Cannot convert this document because {} already exists.",
+                        target_path.display()
+                    )),
+                    cx,
+                );
+                return;
+            }
+
+            self.save_to_path_replacing(target_path, true, Some(current_path), cx);
+            return;
+        }
+
+        let file_name = suggested_save_as_file_name_with_extension(
+            self.current_path.as_deref(),
+            self.title.as_ref(),
+            kind.extension(),
+        );
+        self.prompt_save_as(file_name, window, cx);
+    }
+
+    fn prompt_save_as(&mut self, file_name: String, window: &mut Window, cx: &mut Context<Self>) {
         let start_dir = self
             .current_path
             .as_ref()
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
             .unwrap_or_else(|| cx.global::<DB>().data_dir.join("notes"));
 
-        let file_name = suggested_file_name(self.title.as_ref());
         let receiver = cx.prompt_for_new_path(&start_dir, Some(&file_name));
         let view = cx.entity();
 
@@ -384,6 +440,16 @@ impl MarkdownEditorView {
         &mut self,
         path: PathBuf,
         file_managed_by_app: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_to_path_replacing(path, file_managed_by_app, None, cx);
+    }
+
+    fn save_to_path_replacing(
+        &mut self,
+        path: PathBuf,
+        file_managed_by_app: bool,
+        replaced_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
@@ -440,11 +506,31 @@ impl MarkdownEditorView {
 
             match result {
                 Ok(_) => {
+                    if let Some(replaced_path) = replaced_path {
+                        let replaced_path_display = replaced_path.display().to_string();
+                        if let Err(err) = background_executor
+                            .spawn(async move { remove_file(replaced_path) })
+                            .await
+                        {
+                            eprintln!(
+                                "Failed to remove replaced document file \
+                                 {replaced_path_display}: {err}"
+                            );
+                        }
+                    }
+
                     this.update(cx, |this, cx| {
+                        let path_changed = this.current_path.as_ref() != Some(&saved_path);
                         this.current_path = Some(saved_path);
                         this.file_managed_by_app = file_managed_by_app;
                         this.is_loading = false;
                         this.save_state = this.resolve_save_state(&content, cx);
+                        let path = this.current_path.clone();
+                        this.apply_document_kind(path.as_deref(), cx);
+                        this.schedule_document_analysis(false, cx);
+                        if path_changed {
+                            cx.emit(DocumentEditorEvent::PathChanged);
+                        }
                     })
                     .ok();
                 }

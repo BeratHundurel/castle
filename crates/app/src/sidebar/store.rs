@@ -5,6 +5,8 @@ use gpui::{Context, SharedString};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, PaginatorTrait};
 
 use crate::DB;
+use crate::document_editor::DocumentKind;
+use std::path::Path;
 
 use super::{SidebarView, dto::*};
 
@@ -65,6 +67,7 @@ impl SidebarView {
                 id: note.id,
                 title: SharedString::from(note.title.as_str()),
                 project_id: note.project_id,
+                kind: DocumentKind::from_path(note.file_path.as_deref().map(Path::new)),
                 is_pinned: note.is_pinned,
                 last_opened_at: note.last_opened_at,
             };

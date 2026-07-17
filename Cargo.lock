@@ -279,6 +279,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tray-icon",
+ "tree-sitter",
+ "tree-sitter-json",
  "windows-sys 0.61.2",
 ]
 

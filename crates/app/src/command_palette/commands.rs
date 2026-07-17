@@ -115,8 +115,8 @@ impl AppShell {
                 },
             },
             PaletteCommand {
-                label: "Open note file".into(),
-                subtitle: "Choose a markdown or text file".into(),
+                label: "Open text file".into(),
+                subtitle: "Choose a Markdown, JSON, or plain text file".into(),
                 icon: IconName::FolderOpen,
                 kind: PaletteCommandKind::OpenFile,
             },

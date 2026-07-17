@@ -12,8 +12,8 @@ use gpui_component::{
 };
 
 use crate::app_settings::{AppSettings, scrollbar_show_key};
+use crate::document_editor::types::EditorMode;
 use crate::keymap::{humanize_identifier, shortcuts};
-use crate::markdown_editor::types::EditorMode;
 
 use super::AppShell;
 
@@ -281,90 +281,92 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
             ]),
         SettingPage::new("Editor")
             .icon(Icon::new(IconName::BookOpen))
+            .group(SettingGroup::new().title("Documents").items(vec![
+                SettingItem::new(
+                    "Editor Font",
+                    searchable_select_field(
+                        "editor-font",
+                        FONT_SEARCH_PLACEHOLDER,
+                        font_options(cx),
+                        AppSettings::editor_font_family,
+                        AppSettings::set_editor_font_family,
+                    ),
+                )
+                .description("Choose the monospace font family used while editing documents.")
+                .layout(Axis::Vertical),
+                SettingItem::new(
+                    "Editor Font Size",
+                    SettingField::number_input(
+                        NumberFieldOptions {
+                            min: 10.0,
+                            max: 22.0,
+                            step: 1.0,
+                        },
+                        AppSettings::editor_font_size,
+                        AppSettings::set_editor_font_size,
+                    )
+                    .default_value(13.0),
+                )
+                .description("Adjust the monospace font size used while editing documents."),
+                SettingItem::new(
+                    "Status Line",
+                    SettingField::switch(
+                        AppSettings::editor_status_line_visible,
+                        AppSettings::set_editor_status_line_visible,
+                    )
+                    .default_value(true),
+                )
+                .description(
+                    "Show file, document type, save state, and statistics below document editors.",
+                ),
+                SettingItem::new(
+                    "Line Numbers",
+                    SettingField::switch(
+                        AppSettings::editor_line_numbers,
+                        AppSettings::set_editor_line_numbers,
+                    )
+                    .default_value(false),
+                )
+                .description("Show line numbers in newly opened document editors."),
+                SettingItem::new(
+                    "Soft Wrap",
+                    SettingField::switch(
+                        AppSettings::editor_soft_wrap,
+                        AppSettings::set_editor_soft_wrap,
+                    )
+                    .default_value(true),
+                )
+                .description("Wrap long lines in newly opened document editors."),
+            ]))
             .group(SettingGroup::new().title("Markdown").items(vec![
-                        SettingItem::new(
-                            "Editor Font",
-                            searchable_select_field(
-                                "editor-font",
-                                FONT_SEARCH_PLACEHOLDER,
-                                font_options(cx),
-                                AppSettings::editor_font_family,
-                                AppSettings::set_editor_font_family,
-                            ),
-                        )
-                        .description("Choose the monospace font family used while writing notes.")
-                        .layout(Axis::Vertical),
-                        SettingItem::new(
-                            "Source Font Size",
-                            SettingField::number_input(
-                                NumberFieldOptions {
-                                    min: 10.0,
-                                    max: 22.0,
-                                    step: 1.0,
-                                },
-                                AppSettings::markdown_font_size,
-                                AppSettings::set_markdown_font_size,
-                            )
-                            .default_value(13.0),
-                        )
-                        .description("Adjust the monospace font size used while writing notes."),
-                        SettingItem::new(
-                            "Preview Font Size",
-                            SettingField::number_input(
-                                NumberFieldOptions {
-                                    min: 10.0,
-                                    max: 22.0,
-                                    step: 1.0,
-                                },
-                                AppSettings::markdown_preview_font_size,
-                                AppSettings::set_markdown_preview_font_size,
-                            )
-                            .default_value(16.0),
-                        )
-                        .description("Adjust the font size used while reading rendered notes."),
-                        SettingItem::new(
-                            "Default Note View",
-                            SettingField::dropdown(
-                                vec![
-                                    (EditorMode::Source.as_str().into(), "Write".into()),
-                                    (EditorMode::Preview.as_str().into(), "Read".into()),
-                                ],
-                                AppSettings::markdown_editor_mode,
-                                AppSettings::set_markdown_editor_mode,
-                            )
-                            .default_value(EditorMode::Source.as_str()),
-                        )
-                        .description("Choose the view used when a note editor opens."),
-                        SettingItem::new(
-                            "Status Line",
-                            SettingField::switch(
-                                AppSettings::markdown_status_line_visible,
-                                AppSettings::set_markdown_status_line_visible,
-                            )
-                            .default_value(true),
-                        )
-                        .description(
-                            "Show file, save state, view controls, and document statistics below note editors.",
-                        ),
-                        SettingItem::new(
-                            "Line Numbers",
-                            SettingField::switch(
-                                AppSettings::markdown_line_numbers,
-                                AppSettings::set_markdown_line_numbers,
-                            )
-                            .default_value(false),
-                        )
-                        .description("Show line numbers in newly opened note editors."),
-                        SettingItem::new(
-                            "Soft Wrap",
-                            SettingField::switch(
-                                AppSettings::markdown_soft_wrap,
-                                AppSettings::set_markdown_soft_wrap,
-                            )
-                            .default_value(true),
-                        )
-                        .description("Wrap long lines in newly opened note editors."),
-                    ])),
+                SettingItem::new(
+                    "Preview Font Size",
+                    SettingField::number_input(
+                        NumberFieldOptions {
+                            min: 10.0,
+                            max: 22.0,
+                            step: 1.0,
+                        },
+                        AppSettings::markdown_preview_font_size,
+                        AppSettings::set_markdown_preview_font_size,
+                    )
+                    .default_value(16.0),
+                )
+                .description("Adjust the font size used while reading rendered Markdown."),
+                SettingItem::new(
+                    "Default Note View",
+                    SettingField::dropdown(
+                        vec![
+                            (EditorMode::Source.as_str().into(), "Write".into()),
+                            (EditorMode::Preview.as_str().into(), "Read".into()),
+                        ],
+                        AppSettings::markdown_editor_mode,
+                        AppSettings::set_markdown_editor_mode,
+                    )
+                    .default_value(EditorMode::Source.as_str()),
+                )
+                .description("Choose the view used when a Markdown note opens."),
+            ])),
         SettingPage::new("Shortcuts")
             .icon(Icon::new(IconName::SquareTerminal))
             .description("Keyboard shortcuts currently registered by Castle.")
@@ -450,7 +452,8 @@ fn shortcut_context_name(context: &str) -> SharedString {
     match context {
         "AppShell" => "Application".into(),
         "CommandPalette" => "Command Palette".into(),
-        "MarkdownEditor" => "Markdown Editor".into(),
+        "DocumentEditor" => "Document Editor".into(),
+        "DocumentOutline" => "Document Outline".into(),
         "EmmetInput" => "Emmet Input".into(),
         "TextView" => "Text View".into(),
         _ => humanize_identifier(context),

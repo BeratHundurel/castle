@@ -1,5 +1,8 @@
 use entity::{board, note, project};
 use gpui::SharedString;
+use std::path::Path;
+
+use crate::document_editor::DocumentKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActiveItem {
@@ -30,6 +33,7 @@ pub(crate) struct NoteDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,
     pub(crate) project_id: Option<u32>,
+    pub(crate) kind: DocumentKind,
     pub(crate) is_pinned: bool,
     pub(crate) last_opened_at: Option<i64>,
 }
@@ -73,10 +77,12 @@ impl From<board::ModelEx> for BoardDTO {
 
 impl From<note::Model> for NoteDTO {
     fn from(note: note::Model) -> Self {
+        let kind = DocumentKind::from_path(note.file_path.as_deref().map(Path::new));
         Self {
             id: note.id as u32,
             title: SharedString::from(note.title),
             project_id: note.project_id.map(|id| id as u32),
+            kind,
             is_pinned: note.is_pinned,
             last_opened_at: note.last_opened_at,
         }
@@ -85,10 +91,12 @@ impl From<note::Model> for NoteDTO {
 
 impl From<note::ModelEx> for NoteDTO {
     fn from(note: note::ModelEx) -> Self {
+        let kind = DocumentKind::from_path(note.file_path.as_deref().map(Path::new));
         Self {
             id: note.id as u32,
             title: SharedString::from(note.title),
             project_id: note.project_id.map(|id| id as u32),
+            kind,
             is_pinned: note.is_pinned,
             last_opened_at: note.last_opened_at,
         }

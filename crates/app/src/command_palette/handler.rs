@@ -203,7 +203,7 @@ impl AppShell {
             }
             PaletteCommandKind::OpenFile => {
                 self.close_command_palette(window, cx);
-                self.open_note_file(window, cx);
+                self.open_text_file(window, cx);
             }
             PaletteCommandKind::NewTab => {
                 self.close_command_palette(window, cx);

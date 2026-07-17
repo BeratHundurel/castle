@@ -502,11 +502,14 @@ impl AppShell {
             return;
         }
 
-        let view = self
-            .note_views
-            .entry(note_id)
-            .or_insert_with(|| MarkdownEditorView::view(note_id, window, cx))
-            .clone();
+        let view = if let Some(view) = self.note_views.get(&note_id) {
+            view.clone()
+        } else {
+            let view = DocumentEditorView::view(note_id, window, cx);
+            Self::observe_document_editor(&view, cx);
+            self.note_views.insert(note_id, view.clone());
+            view
+        };
         self.replace_or_push_active(
             OpenTabKind::Note {
                 note_id,

@@ -962,7 +962,7 @@ impl BoardView {
                     kind: crate::trash::TrashItemKind::Entry,
                     id: entry_id,
                 },
-                crate::markdown_editor::now_ts(),
+                crate::document_editor::now_ts(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())
@@ -1058,7 +1058,7 @@ impl BoardView {
                     kind: crate::trash::TrashItemKind::List,
                     id: card_id,
                 },
-                crate::markdown_editor::now_ts(),
+                crate::document_editor::now_ts(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())

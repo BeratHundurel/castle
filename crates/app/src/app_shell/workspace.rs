@@ -3,6 +3,7 @@ use std::fs::{create_dir_all, read_to_string, write};
 
 use super::*;
 use crate::workspace_data::load_workspace_rows;
+use gpui_component::{WindowExt as _, notification::Notification};
 
 impl AppShell {
     pub(crate) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
@@ -203,12 +204,12 @@ impl AppShell {
         .detach();
     }
 
-    pub(crate) fn open_note_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_text_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open note file".into()),
+            prompt: Some("Open text file".into()),
         });
 
         let background_executor = cx.background_executor().clone();
@@ -217,22 +218,37 @@ impl AppShell {
         let runtime = tokio::runtime::Handle::current();
 
         cx.spawn_in(window, async move |_, window| {
-            let paths = paths.await.ok()?.ok()??;
-            let path = paths.first()?.clone();
+            let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
+                return;
+            };
+            let Some(path) = paths.first().cloned() else {
+                return;
+            };
             let readable_path = path.clone();
-            let content = background_executor
+            let content = match background_executor
                 .spawn(async move { read_to_string(readable_path) })
                 .await
-                .ok()?;
+            {
+                Ok(content) => content,
+                Err(err) => {
+                    let message = format!("Could not open {} as UTF-8 text: {err}", path.display());
+                    window
+                        .update(|window, cx| {
+                            window.push_notification(Notification::error(message), cx);
+                        })
+                        .ok();
+                    return;
+                }
+            };
 
             let path_string = path.display().to_string();
             let title = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("Untitled note")
+                .unwrap_or("Untitled document")
                 .to_string();
 
-            let (note_id, note_title) = runtime
+            let persisted = runtime
                 .spawn(async move {
                     let existing = Note::find()
                         .filter(note::Column::FilePath.eq(path_string.clone()))
@@ -271,9 +287,29 @@ impl AppShell {
                         Ok((inserted.id as u32, inserted.title))
                     }
                 })
-                .await
-                .ok()?
-                .ok()?;
+                .await;
+
+            let (note_id, note_title) = match persisted {
+                Ok(Ok(note)) => note,
+                Ok(Err(err)) => {
+                    let message = format!("Could not add the text file to the workspace: {err}");
+                    window
+                        .update(|window, cx| {
+                            window.push_notification(Notification::error(message), cx);
+                        })
+                        .ok();
+                    return;
+                }
+                Err(err) => {
+                    let message = format!("Could not finish opening the text file: {err}");
+                    window
+                        .update(|window, cx| {
+                            window.push_notification(Notification::error(message), cx);
+                        })
+                        .ok();
+                    return;
+                }
+            };
 
             window
                 .update(|window, cx| {
@@ -292,9 +328,7 @@ impl AppShell {
                         this.refresh_workspace(cx);
                     });
                 })
-                .ok()?;
-
-            Some(())
+                .ok();
         })
         .detach();
     }

@@ -1,18 +1,18 @@
 use gpui::{Context, EntityInputHandler, Window};
 use gpui_component::input::RopeExt;
 
-use super::MarkdownEditorView;
 use super::action::*;
 use super::emmet::parse_emmet_abbreviation;
+use super::{DocumentEditorView, DocumentKind};
 
-impl MarkdownEditorView {
+impl DocumentEditorView {
     pub(super) fn on_action_toggle_outline(
         &mut self,
         _: &ToggleDocumentOutline,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_outline(cx);
+        self.toggle_outline(window, cx);
     }
 
     pub(super) fn on_action_outline_previous(
@@ -21,10 +21,14 @@ impl MarkdownEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.outline.items.is_empty() {
+        if self.outline_rows.is_empty() {
             return;
         }
         self.outline_selected = Some(self.outline_selected.unwrap_or(0).saturating_sub(1));
+        if let Some(index) = self.outline_selected {
+            self.outline_scroll_handle
+                .scroll_to_item(index, gpui::ScrollStrategy::Top);
+        }
         cx.notify();
     }
 
@@ -34,15 +38,65 @@ impl MarkdownEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.outline.items.is_empty() {
+        if self.outline_rows.is_empty() {
             return;
         }
         let next = self
             .outline_selected
             .unwrap_or(0)
             .saturating_add(1)
-            .min(self.outline.items.len().saturating_sub(1));
+            .min(self.outline_rows.len().saturating_sub(1));
         self.outline_selected = Some(next);
+        self.outline_scroll_handle
+            .scroll_to_item(next, gpui::ScrollStrategy::Bottom);
+        cx.notify();
+    }
+
+    pub(super) fn on_action_outline_left(
+        &mut self,
+        _: &OutlineLeft,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected) = self.outline_selected else {
+            return;
+        };
+        let Some(row) = self.outline_rows.get(selected) else {
+            return;
+        };
+        let Some(node_index) = row.node_index else {
+            return;
+        };
+
+        if row.expanded && self.outline.collapse(node_index) {
+            self.rebuild_outline_rows();
+        } else if let Some(parent_row) = self.outline.parent_row_index(node_index) {
+            self.outline_selected = Some(parent_row);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn on_action_outline_right(
+        &mut self,
+        _: &OutlineRight,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected) = self.outline_selected else {
+            return;
+        };
+        let Some(row) = self.outline_rows.get(selected) else {
+            return;
+        };
+        let Some(node_index) = row.node_index else {
+            return;
+        };
+
+        if row.has_children && !row.expanded && self.outline.expand(node_index) {
+            self.rebuild_outline_rows();
+        } else if let Some(child_row) = self.outline.first_child_row_index(node_index) {
+            self.outline_selected = Some(child_row);
+        }
         cx.notify();
     }
 
@@ -68,7 +122,7 @@ impl MarkdownEditorView {
 
     pub(super) fn on_action_save(
         &mut self,
-        _: &SaveMarkdownFile,
+        _: &SaveDocumentFile,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -77,7 +131,7 @@ impl MarkdownEditorView {
 
     pub(super) fn on_action_save_as(
         &mut self,
-        _: &SaveMarkdownFileAs,
+        _: &SaveDocumentFileAs,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -86,7 +140,7 @@ impl MarkdownEditorView {
 
     pub(super) fn on_action_toggle_mode(
         &mut self,
-        _: &ToggleEditorMode,
+        _: &ToggleDocumentPreview,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -99,6 +153,9 @@ impl MarkdownEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.kind != DocumentKind::Markdown {
+            return;
+        }
         let selected = self.editor.read(cx).selected_value().to_string();
         let editor_has_selection = !selected.is_empty();
 
@@ -172,7 +229,7 @@ impl MarkdownEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.show_emmet_input {
+        if self.kind != DocumentKind::Markdown || !self.show_emmet_input {
             return;
         }
 
@@ -208,7 +265,7 @@ impl MarkdownEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_emmet_input {
+        if self.kind == DocumentKind::Markdown && self.show_emmet_input {
             self.show_emmet_input = false;
             self.emmet_replacement_range = None;
             self.editor

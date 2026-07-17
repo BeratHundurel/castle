@@ -15,7 +15,7 @@ use std::{
 
 use crate::DB;
 
-use super::MarkdownEditorView;
+use super::{DocumentEditorView, DocumentKind};
 
 enum ImageImport {
     Clipboard {
@@ -121,13 +121,16 @@ fn resolve_local_image_path(
     Some(base_dir.join(path))
 }
 
-impl MarkdownEditorView {
+impl DocumentEditorView {
     pub(super) fn on_action_paste(
         &mut self,
         _: &Paste,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.kind != DocumentKind::Markdown {
+            return;
+        }
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };

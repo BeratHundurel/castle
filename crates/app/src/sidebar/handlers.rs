@@ -43,23 +43,7 @@ impl SidebarView {
             .find(|board| board.id == action.0)
             .map(|board| board.title.clone())
             .unwrap_or_else(|| "this board".into());
-
-        let view = cx.entity();
-        let board_id = action.0;
-        window.open_alert_dialog(cx, move |alert, _, cx| {
-            alert
-                .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
-                .title(format!("Move board ‘{title}’ to Trash"))
-                .description("The board and everything inside it will be hidden until you restore it from Trash.")
-                .button_props(DialogButtonProps::default().ok_variant(ButtonVariant::Danger).ok_text("Move to Trash").cancel_text("Cancel").show_cancel(true))
-                .on_ok({
-                    let view = view.clone();
-                    move |_, _, cx| {
-                        view.update(cx, |this, cx| this.delete_board(cx, board_id));
-                        true
-                    }
-                })
-        });
+        self.delete_board(action.0, title, window, cx);
     }
 
     pub(super) fn on_edit_board_action(

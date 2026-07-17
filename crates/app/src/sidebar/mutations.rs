@@ -147,35 +147,57 @@ impl SidebarView {
         });
     }
 
-    pub(super) fn delete_board(&mut self, cx: &mut Context<Self>, board_id: u32) {
+    pub(super) fn delete_board(
+        &mut self,
+        board_id: u32,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let db = cx.global::<DB>().conn.clone();
         let runtime = tokio::runtime::Handle::current();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            runtime
+        cx.spawn_in(window, async move |this, cx| {
+            let request = crate::trash::MoveToTrash {
+                kind: crate::trash::TrashItemKind::Board,
+                id: board_id,
+            };
+            let result = match runtime
                 .spawn(async move {
                     crate::trash::move_to_trash(
                         db.as_ref(),
-                        crate::trash::MoveToTrash {
-                            kind: crate::trash::TrashItemKind::Board,
-                            id: board_id,
-                        },
-                        crate::markdown_editor::now_ts(),
+                        request,
+                        crate::document_editor::now_ts(),
                     )
                     .await
                 })
-                .await??;
-            this.update(cx, |this, cx| {
-                this.standalone_boards.retain(|board| board.id != board_id);
-                for project in &mut this.projects {
-                    project.boards.retain(|board| board.id != board_id);
+                .await
+            {
+                Ok(result) => result,
+                Err(err) => Err(anyhow::anyhow!(err)),
+            };
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(()) => {
+                    this.standalone_boards.retain(|board| board.id != board_id);
+                    for project in &mut this.projects {
+                        project.boards.retain(|board| board.id != board_id);
+                    }
+                    this.renaming_board = None;
+                    cx.emit(SidebarEvent::BoardDeleted { board_id });
+                    cx.emit(SidebarEvent::WorkspaceChanged);
+                    this.push_trash_undo(
+                        crate::trash::TrashItemKind::Board,
+                        board_id,
+                        title.clone(),
+                        window,
+                        cx,
+                    );
+                    cx.notify();
                 }
-                this.renaming_board = None;
-                cx.emit(SidebarEvent::BoardDeleted { board_id });
-                cx.emit(SidebarEvent::WorkspaceChanged);
-                cx.notify();
+                Err(err) => {
+                    eprintln!("Failed to move board to Trash: {err}");
+                }
             })
             .ok();
-            Ok(())
         })
         .detach();
     }
@@ -249,7 +271,7 @@ impl SidebarView {
                     crate::trash::move_to_trash(
                         db.as_ref(),
                         request,
-                        crate::markdown_editor::now_ts(),
+                        crate::document_editor::now_ts(),
                     )
                     .await
                 })
@@ -619,7 +641,7 @@ impl SidebarView {
                             kind: crate::trash::TrashItemKind::Project,
                             id: project_id,
                         },
-                        crate::markdown_editor::now_ts(),
+                        crate::document_editor::now_ts(),
                     )
                     .await
                 })
