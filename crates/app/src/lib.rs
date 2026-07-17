@@ -2,6 +2,7 @@ pub mod app_paths;
 pub mod app_settings;
 pub mod app_shell;
 pub mod board;
+pub(crate) mod color_contrast;
 pub(crate) mod command_palette;
 pub(crate) mod home;
 pub mod keymap;

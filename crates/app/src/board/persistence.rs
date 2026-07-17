@@ -76,7 +76,7 @@ impl BoardView {
     }
 }
 
-async fn load_board_data(
+pub(super) async fn load_board_data(
     db: &DatabaseConnection,
     board_id: u32,
 ) -> Result<(Vec<CardDTO>, Vec<BoardLabelDTO>), DbErr> {

@@ -19,6 +19,7 @@ use super::drag::*;
 use super::dto::EntryDTO;
 use super::due_date::{DueDateStatus, due_date_status};
 use super::filters::{DueDateFilter, matches_filters};
+use crate::color_contrast::accessible_text_colors;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -31,7 +32,8 @@ impl Render for BoardView {
             .on_action(cx.listener(Self::on_edit_card_action))
             .on_action(cx.listener(Self::on_duplicate_card_action))
             .on_action(cx.listener(Self::on_delete_entry_action))
-            .on_action(cx.listener(Self::on_duplicate_entry_action));
+            .on_action(cx.listener(Self::on_duplicate_entry_action))
+            .on_action(cx.listener(Self::on_move_entry_action));
 
         let Some(board_id_for_render) = self.board_id else {
             return board.child(self.render_scrollable_board(None, cx));
@@ -651,14 +653,14 @@ impl BoardView {
         )
     }
 
-    fn label_color(&self, color: &str, cx: &Context<Self>) -> Hsla {
+    fn label_marker_color(&self, color: &str, cx: &Context<Self>) -> Hsla {
         match color {
-            "green" => cx.theme().success,
-            "amber" => cx.theme().warning,
-            "red" => cx.theme().danger,
-            "purple" => cx.theme().accent_foreground,
+            "green" => cx.theme().green,
+            "amber" => cx.theme().yellow,
+            "red" => cx.theme().red,
+            "purple" => cx.theme().magenta,
             "slate" => cx.theme().muted_foreground,
-            _ => cx.theme().info,
+            _ => cx.theme().blue,
         }
     }
 
@@ -667,29 +669,31 @@ impl BoardView {
         label: &super::dto::BoardLabelDTO,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let color = self.label_color(label.color.as_ref(), cx);
+        let marker = self.label_marker_color(label.color.as_ref(), cx);
+        let colors = accessible_text_colors(cx.theme().secondary, cx.theme().secondary_foreground);
 
         h_flex()
             .flex_shrink_0()
+            .h_5()
             .min_w_0()
             .max_w(px(128.))
             .gap_1()
             .items_center()
             .rounded_full()
             .px_1p5()
-            .py_0p5()
-            .bg(color.opacity(0.18))
-            .text_color(color)
+            .bg(colors.background)
+            .text_color(colors.foreground)
             .text_xs()
+            .line_height(relative(1.2))
             .font_weight(FontWeight::MEDIUM)
-            .child(div().size(px(6.)).rounded_full().bg(color))
+            .child(div().size(px(6.)).rounded_full().bg(marker))
             .child(div().truncate().child(label.name.clone()))
     }
 
     fn render_card_label_chips(&self, entry: &EntryDTO, cx: &Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
-            .h_5()
+            .h_6()
             .min_w_0()
             .gap_1p5()
             .items_center()
@@ -872,6 +876,22 @@ impl BoardView {
     }
 
     fn render_entry_header_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry_id = self.entry_dialog.entry_id;
+        let move_destinations = entry_id
+            .and_then(|entry_id| {
+                self.cards
+                    .iter()
+                    .find(|card| card.entries.iter().any(|entry| entry.id == entry_id))
+                    .map(|source_card| {
+                        self.cards
+                            .iter()
+                            .filter(|card| card.id != source_card.id)
+                            .map(|card| (card.id, card.title.clone()))
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .unwrap_or_default();
+
         h_flex()
             .items_center()
             .gap_1()
@@ -892,8 +912,30 @@ impl BoardView {
                         .ghost()
                         .compact()
                         .tooltip("Card actions")
-                        .dropdown_menu_with_anchor(Anchor::LeftCenter, |menu, _, cx| {
+                        .dropdown_menu_with_anchor(Anchor::LeftCenter, move |menu, window, cx| {
                             let danger = cx.theme().danger;
+                            let menu = if let Some(entry_id) = entry_id
+                                && !move_destinations.is_empty()
+                            {
+                                let destinations = move_destinations.clone();
+                                menu.submenu("Move to list", window, cx, move |menu, _, _| {
+                                    destinations.iter().fold(
+                                        menu,
+                                        |menu, (target_card_id, title)| {
+                                            menu.menu(
+                                                title.clone(),
+                                                Box::new(MoveEntryAction {
+                                                    entry_id,
+                                                    target_card_id: *target_card_id,
+                                                }),
+                                            )
+                                        },
+                                    )
+                                })
+                                .separator()
+                            } else {
+                                menu
+                            };
 
                             menu.menu_element(Box::new(DuplicateEntryAction), move |_, _| {
                                 h_flex()
@@ -1454,7 +1496,7 @@ impl BoardView {
                             })
                     })
                     .unwrap_or(false);
-                let color = self.label_color(label.color.as_ref(), cx);
+                let color = self.label_marker_color(label.color.as_ref(), cx);
                 let board_view = cx.entity();
 
                 h_flex()
@@ -1581,12 +1623,9 @@ impl BoardView {
                         Input::new(&self.new_label_input)
                             .w_full()
                             .small()
-                            .prefix(
-                                div()
-                                    .size_2p5()
-                                    .rounded(px(3.))
-                                    .bg(self.label_color(self.selected_label_color.as_ref(), cx)),
-                            )
+                            .prefix(div().size_2p5().rounded(px(3.)).bg(
+                                self.label_marker_color(self.selected_label_color.as_ref(), cx),
+                            ))
                             .bg(cx.theme().input_background()),
                     )
                     .child(
@@ -1602,7 +1641,7 @@ impl BoardView {
                             .into_iter()
                             .enumerate()
                             .map(|(index, (key, label))| {
-                                let color = self.label_color(key, cx);
+                                let color = self.label_marker_color(key, cx);
                                 let selected = self.selected_label_color.as_ref() == key;
 
                                 Button::new(("label-color", index))

@@ -303,4 +303,13 @@ impl BoardView {
     ) {
         self.duplicate_selected_entry(cx);
     }
+
+    pub(super) fn on_move_entry_action(
+        &mut self,
+        action: &MoveEntryAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_entry_to_list_end(action.entry_id, action.target_card_id, cx);
+    }
 }

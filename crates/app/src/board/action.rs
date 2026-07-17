@@ -20,3 +20,10 @@ pub(crate) struct DeleteEntryAction;
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = board, no_json)]
 pub(crate) struct DuplicateEntryAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = board, no_json)]
+pub(crate) struct MoveEntryAction {
+    pub(crate) entry_id: u32,
+    pub(crate) target_card_id: u32,
+}
