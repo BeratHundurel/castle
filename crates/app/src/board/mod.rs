@@ -1,4 +1,5 @@
 mod action;
+mod attachments;
 mod drag;
 mod dto;
 mod due_date;
@@ -9,7 +10,7 @@ mod interactions;
 mod persistence;
 mod render;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use dto::*;
 use gpui::*;
@@ -50,6 +51,7 @@ pub(crate) struct BoardView {
     next_checklist_item_position: i32,
     next_due_date_update_revision: u64,
     persisted_due_date_revisions: Arc<tokio::sync::Mutex<HashMap<u32, u64>>>,
+    attachment_preview_paths: HashMap<u32, PathBuf>,
     load_generation: u64,
 }
 
@@ -273,6 +275,7 @@ impl BoardView {
             next_checklist_item_position: 0,
             next_due_date_update_revision: 0,
             persisted_due_date_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            attachment_preview_paths: HashMap::new(),
             load_generation: 0,
         }
     }

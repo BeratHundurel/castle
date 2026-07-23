@@ -11,10 +11,21 @@ use std::borrow::Cow;
 use std::fs;
 use std::sync::Arc;
 
-use app::{DB, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap, tray};
+use app::{
+    DB, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap,
+    system_notifications, tray,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == "--register-mcp")
+    {
+        app::mcp_registration::register_installed()?;
+        return Ok(());
+    }
+
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
     #[cfg(debug_assertions)]
     let _ = dotenv();
@@ -36,6 +47,7 @@ async fn main() -> Result<()> {
         data_dir: paths.data_dir,
     };
     let app_settings = AppSettings::load(&db.data_dir);
+    system_notifications::start(db.conn.clone());
 
     app.run(move |cx| {
         gpui_component::init(cx);

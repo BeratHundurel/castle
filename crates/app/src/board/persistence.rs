@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use entity::{
     board_label, board_label::Entity as BoardLabel, card, card::Entity as Card,
-    entry::Entity as Entry, entry_checklist_item,
-    entry_checklist_item::Entity as EntryChecklistItem, entry_label,
+    entry::Entity as Entry, entry_attachment, entry_attachment::Entity as EntryAttachment,
+    entry_checklist_item, entry_checklist_item::Entity as EntryChecklistItem, entry_label,
     entry_label::Entity as EntryLabel,
 };
 use gpui::{Context, SharedString};
@@ -31,6 +31,7 @@ impl BoardView {
         self.board_id = Some(board_id);
         self.cards.clear();
         self.board_labels.clear();
+        self.attachment_preview_paths.clear();
         self.load_error = None;
         self.is_adding_list = false;
         self.next_checklist_item_position = 0;
@@ -129,6 +130,23 @@ pub(super) async fn load_board_data(
         }
     }
 
+    let attachments = if entry_ids.is_empty() {
+        vec![]
+    } else {
+        EntryAttachment::find()
+            .filter(entry_attachment::Column::EntryId.is_in(entry_ids.clone()))
+            .order_by_asc(entry_attachment::Column::Id)
+            .all(db)
+            .await?
+    };
+    let mut attachments_by_entry = HashMap::<i64, Vec<EntryAttachmentDTO>>::new();
+    for attachment in attachments {
+        attachments_by_entry
+            .entry(attachment.entry_id)
+            .or_default()
+            .push(EntryAttachmentDTO::from(attachment));
+    }
+
     let checklist_items = if entry_ids.is_empty() {
         vec![]
     } else {
@@ -155,6 +173,9 @@ pub(super) async fn load_board_data(
             entry.checklist_items = checklist_items_by_entry
                 .remove(&(entry.id as i64))
                 .unwrap_or_default();
+            entry.attachments = attachments_by_entry
+                .remove(&(entry.id as i64))
+                .unwrap_or_default();
         }
     }
 
@@ -167,14 +188,122 @@ mod tests {
     use anyhow::Result;
     use entity::{
         board, board::Entity as Board, board_label, board_label::Entity as BoardLabel, card,
-        card::Entity as Card, entry, entry::Entity as Entry, entry_label,
-        entry_label::Entity as EntryLabel,
+        card::Entity as Card, entry, entry::Entity as Entry, entry_attachment,
+        entry_checklist_item, entry_label, entry_label::Entity as EntryLabel,
     };
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{
-        ActiveModelTrait, ActiveValue::Set, ColumnTrait, Database, EntityTrait, QueryFilter,
+        ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, Database, DbBackend,
+        EntityTrait, QueryFilter, Statement,
     };
-    use std::{path::PathBuf, sync::Arc};
+    use std::{path::PathBuf, sync::Arc, time::Instant};
+
+    #[tokio::test]
+    #[ignore = "performance proof; run explicitly with one test thread"]
+    async fn large_board_load_latency_benchmark() -> Result<()> {
+        const LISTS: usize = 10;
+        const ENTRIES_PER_LIST: usize = 50;
+        const MEASUREMENTS: usize = 20;
+
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = board::ActiveModel {
+            title: Set("Large board".to_string()),
+            project_id: Set(None),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let label = board_label::ActiveModel {
+            board_id: Set(board.id),
+            name: Set("Measured".to_string()),
+            color: Set("blue".to_string()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let mut entry_id = 1_i64;
+        for list_index in 0..LISTS {
+            let list = card::ActiveModel {
+                id: Set(list_index as i64 + 1),
+                title: Set(format!("List {list_index}")),
+                board_id: Set(board.id),
+                position: Set(list_index as i32),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+
+            for entry_index in 0..ENTRIES_PER_LIST {
+                entry::ActiveModel {
+                    id: Set(entry_id),
+                    title: Set(format!("Entry {list_index}-{entry_index}")),
+                    description: Set("A measured card description".to_string()),
+                    card_id: Set(list.id),
+                    position: Set(entry_index as i32),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                entry_label::ActiveModel {
+                    id: Set(entry_id),
+                    entry_id: Set(entry_id),
+                    board_label_id: Set(label.id),
+                }
+                .insert(&db)
+                .await?;
+                entry_attachment::ActiveModel {
+                    id: Set(entry_id),
+                    entry_id: Set(entry_id),
+                    file_name: Set(format!("attachment-{entry_id}.png")),
+                }
+                .insert(&db)
+                .await?;
+                for checklist_index in 0..2_i64 {
+                    entry_checklist_item::ActiveModel {
+                        id: Set((entry_id - 1) * 2 + checklist_index + 1),
+                        entry_id: Set(entry_id),
+                        title: Set(format!("Check {checklist_index}")),
+                        checked: Set(checklist_index == 0),
+                        position: Set(checklist_index as i32),
+                    }
+                    .insert(&db)
+                    .await?;
+                }
+                entry_id += 1;
+            }
+        }
+
+        for _ in 0..3 {
+            load_board_data(&db, board.id as u32).await?;
+        }
+
+        let mut elapsed_micros = Vec::with_capacity(MEASUREMENTS);
+        for _ in 0..MEASUREMENTS {
+            let started = Instant::now();
+            let (cards, labels) = load_board_data(&db, board.id as u32).await?;
+            elapsed_micros.push(started.elapsed().as_micros());
+            assert_eq!(cards.len(), LISTS);
+            assert_eq!(
+                cards.iter().map(|card| card.entries.len()).sum::<usize>(),
+                LISTS * ENTRIES_PER_LIST
+            );
+            assert_eq!(labels.len(), 1);
+        }
+        elapsed_micros.sort_unstable();
+        let median = elapsed_micros[MEASUREMENTS / 2];
+        let p95 = elapsed_micros[MEASUREMENTS * 95 / 100];
+        println!(
+            "lists={LISTS} entries={} labels={} attachments={} checklist_items={} median_load_micros={median} p95_load_micros={p95}",
+            LISTS * ENTRIES_PER_LIST,
+            LISTS * ENTRIES_PER_LIST,
+            LISTS * ENTRIES_PER_LIST,
+            LISTS * ENTRIES_PER_LIST * 2
+        );
+
+        Ok(())
+    }
 
     #[gpui::test]
     fn restored_board_populates_gpui_view_without_restart(cx: &mut gpui::TestAppContext) {
@@ -415,6 +544,61 @@ mod tests {
             Some("2026-07-10")
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn card_images_and_reminders_reload_with_the_board() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = board::ActiveModel {
+            title: Set("Launch".to_string()),
+            project_id: Set(None),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let list = card::ActiveModel {
+            title: Set("Ready".to_string()),
+            board_id: Set(board.id),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let entry = entry::ActiveModel {
+            title: Set("Ship Castle".to_string()),
+            description: Set(String::new()),
+            card_id: Set(list.id),
+            position: Set(0),
+            due_on: Set(Some("2026-07-23".to_string())),
+            reminder_enabled: Set(true),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        entry_attachment::ActiveModel {
+            entry_id: Set(entry.id),
+            file_name: Set("release.png".to_string()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        let (cards, _) = load_board_data(&db, board.id as u32).await?;
+        let loaded = &cards[0].entries[0];
+        assert!(loaded.reminder_enabled);
+        assert_eq!(loaded.attachments.len(), 1);
+        assert_eq!(loaded.attachments[0].file_name.as_ref(), "release.png");
+
+        let revision = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT revision FROM castle_change_revision WHERE id = 1",
+            ))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("change revision row is missing"))?;
+        assert_eq!(revision.try_get::<i64>("", "revision")?, 0);
         Ok(())
     }
 }

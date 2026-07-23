@@ -19,6 +19,8 @@ sea-orm.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
+image.workspace = true
 chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
@@ -31,6 +33,8 @@ tray-icon = "0.24.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }
+winrt-notification = "0.5.1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+tempfile = "3.23"

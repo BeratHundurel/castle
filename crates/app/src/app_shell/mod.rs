@@ -10,8 +10,8 @@ pub(crate) use action::*;
 use entity::{board, note, note::Entity as Note};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathPromptOptions, Render, SharedString, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    MouseButton, ParentElement, PathPromptOptions, Pixels, Render, SharedString, Styled, Task,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar,
@@ -104,7 +104,6 @@ pub struct AppShell {
     title_input: Entity<InputState>,
     pub(crate) command_palette: CommandPalette,
     open_tabs: Vec<OpenTab>,
-    board_views: HashMap<u32, Entity<BoardView>>,
     note_views: HashMap<u32, Entity<DocumentEditorView>>,
     active_tab_index: usize,
     next_tab_id: u64,
@@ -134,6 +133,10 @@ pub struct AppShell {
     workspace_title_save_lock: Arc<tokio::sync::Mutex<()>>,
     record_opened_generation: u64,
     tab_session_save_generation: u64,
+    external_change_task: Option<Task<()>>,
+    last_change_revision: Option<i64>,
+    last_board_revision: Option<i64>,
+    last_note_revision: Option<i64>,
 }
 
 impl AppShell {
@@ -146,6 +149,19 @@ impl AppShell {
             view,
             |this, _, event: &DocumentEditorEvent, cx| match event {
                 DocumentEditorEvent::PathChanged => this.refresh_workspace(cx),
+                DocumentEditorEvent::Saved(note_id) => {
+                    if !this.open_tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.kind,
+                            OpenTabKind::Note {
+                                note_id: open_note_id,
+                                ..
+                            } if *open_note_id == *note_id
+                        )
+                    }) {
+                        this.note_views.remove(note_id);
+                    }
+                }
             },
         )
         .detach();
@@ -155,7 +171,6 @@ impl AppShell {
         let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
         let mut open_tabs = Vec::with_capacity(tab_session.tabs.len().max(1));
-        let mut board_views = HashMap::new();
         let mut note_views = HashMap::new();
         let mut next_tab_id = 1_u64;
         for stored_tab in tab_session.tabs {
@@ -169,7 +184,6 @@ impl AppShell {
                 } => {
                     let view = BoardView::view(window, cx);
                     view.update(cx, |board, cx| board.load_board(board_id, cx));
-                    board_views.insert(board_id, view.clone());
                     (
                         SharedString::from(title),
                         OpenTabKind::Board {
@@ -278,6 +292,7 @@ impl AppShell {
                 SidebarEvent::OpenHome => this.open_home(window, cx),
                 SidebarEvent::OpenTrash => this.open_trash(window, cx),
                 SidebarEvent::OpenThemeSwitcher => this.open_theme_switcher(window, cx),
+                SidebarEvent::WidthChanged => cx.notify(),
                 SidebarEvent::WorkspaceChanged => {
                     this.load_home(cx);
                     this.load_trash(cx);
@@ -406,7 +421,6 @@ impl AppShell {
             title_input,
             command_palette,
             open_tabs,
-            board_views,
             note_views,
             active_tab_index,
             next_tab_id,
@@ -436,6 +450,10 @@ impl AppShell {
             workspace_title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
             record_opened_generation: 0,
             tab_session_save_generation: 0,
+            external_change_task: None,
+            last_change_revision: None,
+            last_board_revision: None,
+            last_note_revision: None,
         };
 
         let show_sidebar = AppSettings::show_sidebar(cx);
@@ -449,6 +467,7 @@ impl AppShell {
         .detach();
         cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx))
             .detach();
+        this.start_external_change_watcher(window, cx);
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);
         this.load_home(cx);

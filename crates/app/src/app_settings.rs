@@ -14,6 +14,9 @@ pub(crate) const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
 const DEFAULT_FONT_SIZE: f64 = 16.0;
 const DEFAULT_RADIUS: f64 = 6.0;
 const DEFAULT_SHOW_SIDEBAR: bool = true;
+const DEFAULT_SIDEBAR_WIDTH: f64 = 260.0;
+const MIN_SIDEBAR_WIDTH: f64 = 200.0;
+const MAX_SIDEBAR_WIDTH: f64 = 480.0;
 const DEFAULT_SCROLLBAR_SHOW: &str = "scrolling";
 pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
 const DEFAULT_EDITOR_FONT_SIZE: f64 = 13.0;
@@ -64,6 +67,7 @@ struct StoredSettings {
     font_size: f64,
     radius: f64,
     show_sidebar: bool,
+    sidebar_width: f64,
     scrollbar_show: String,
     editor_font_family: String,
     #[serde(alias = "markdown_font_size")]
@@ -91,6 +95,7 @@ impl Default for StoredSettings {
             font_size: DEFAULT_FONT_SIZE,
             radius: DEFAULT_RADIUS,
             show_sidebar: DEFAULT_SHOW_SIDEBAR,
+            sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             scrollbar_show: DEFAULT_SCROLLBAR_SHOW.to_string(),
             editor_font_family: DEFAULT_EDITOR_FONT_FAMILY.to_string(),
             editor_font_size: DEFAULT_EDITOR_FONT_SIZE,
@@ -146,6 +151,16 @@ impl AppSettings {
     pub(crate) fn set_show_sidebar(visible: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.show_sidebar = visible;
+        });
+    }
+
+    pub(crate) fn sidebar_width(cx: &App) -> gpui::Pixels {
+        px(cx.global::<Self>().values.sidebar_width as f32)
+    }
+
+    pub(crate) fn set_sidebar_width(width: gpui::Pixels, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.sidebar_width = width.as_f32() as f64;
         });
     }
 
@@ -364,6 +379,9 @@ impl StoredSettings {
         self.font_family = normalize_font_family(&self.font_family, DEFAULT_FONT_FAMILY);
         self.font_size = self.font_size.clamp(12.0, 20.0);
         self.radius = self.radius.clamp(0.0, 12.0);
+        self.sidebar_width = self
+            .sidebar_width
+            .clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
         self.editor_font_family =
             normalize_font_family(&self.editor_font_family, DEFAULT_EDITOR_FONT_FAMILY);
         self.editor_font_size = self.editor_font_size.clamp(10.0, 22.0);
@@ -478,6 +496,7 @@ mod tests {
             settings.markdown_preview_font_size,
             DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE
         );
+        assert_eq!(settings.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
         assert!(settings.editor_status_line_visible);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
@@ -560,5 +579,20 @@ mod tests {
         settings.normalize();
 
         assert_eq!(settings.markdown_editor_mode, DEFAULT_MARKDOWN_EDITOR_MODE);
+    }
+
+    #[test]
+    fn sidebar_width_is_normalized_to_resizable_bounds() {
+        let mut settings = StoredSettings {
+            sidebar_width: 900.0,
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+        assert_eq!(settings.sidebar_width, MAX_SIDEBAR_WIDTH);
+
+        settings.sidebar_width = 100.0;
+        settings.normalize();
+        assert_eq!(settings.sidebar_width, MIN_SIDEBAR_WIDTH);
     }
 }

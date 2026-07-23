@@ -5,6 +5,7 @@ pub(crate) enum SidebarEvent {
     OpenHome,
     OpenTrash,
     OpenThemeSwitcher,
+    WidthChanged,
     WorkspaceChanged,
     OpenBoard {
         board_id: u32,

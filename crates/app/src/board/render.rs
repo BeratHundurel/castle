@@ -1,5 +1,5 @@
 use chrono::{Local, NaiveDate};
-use gpui::{prelude::FluentBuilder, *};
+use gpui::{StyledImage as _, prelude::FluentBuilder, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable,
     button::{Button, ButtonCustomVariant, ButtonVariants},
@@ -501,7 +501,9 @@ impl BoardView {
                         this.child(self.render_card_label_chips(entry, cx))
                     })
                     .when(
-                        entry.due_on.is_some() || !entry.checklist_items.is_empty(),
+                        entry.due_on.is_some()
+                            || !entry.checklist_items.is_empty()
+                            || !entry.attachments.is_empty(),
                         |this| this.child(self.render_card_metadata(entry, cx)),
                     ),
             )
@@ -720,6 +722,18 @@ impl BoardView {
             .when(!entry.checklist_items.is_empty(), |this| {
                 this.child(self.render_card_checklist_progress(entry, cx))
             })
+            .when(!entry.attachments.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cx.theme().primary_foreground.opacity(0.76))
+                        .child(Icon::new(IconName::Folder).xsmall())
+                        .child(entry.attachments.len().to_string()),
+                )
+            })
     }
 
     fn render_card_due_date(&self, due_on: &SharedString, cx: &Context<Self>) -> impl IntoElement {
@@ -786,6 +800,7 @@ impl BoardView {
             .items_stretch()
             .justify_end()
             .bg(theme.overlay.opacity(0.72))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.close_entry_dialog(cx)),
@@ -804,6 +819,7 @@ impl BoardView {
                     .bg(theme.popover)
                     .text_color(theme.popover_foreground)
                     .shadow_lg()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(self.render_entry_detail_header(selected_entry, cx))
                     .child(self.render_entry_detail_body(selected_entry, cx))
@@ -821,6 +837,7 @@ impl BoardView {
         let theme = cx.theme().clone();
 
         h_flex()
+            .flex_shrink_0()
             .items_start()
             .gap_4()
             .px_5()
@@ -893,6 +910,7 @@ impl BoardView {
             .unwrap_or_default();
 
         h_flex()
+            .flex_shrink_0()
             .items_center()
             .gap_1()
             .when(!self.entry_dialog.editing, |this| {
@@ -982,44 +1000,52 @@ impl BoardView {
         let theme = cx.theme().clone();
 
         if self.entry_dialog.editing {
-            return v_flex()
+            return div().flex_1().overflow_hidden().child(
+                v_flex()
+                    .id("entry-detail-edit-scroll")
+                    .size_full()
+                    .flex_1()
+                    .gap_4()
+                    .p_5()
+                    .overflow_y_scrollbar()
+                    .child(self.render_entry_edit_form(cx)),
+            );
+        }
+
+        div().flex_1().overflow_hidden().child(
+            v_flex()
+                .id("entry-detail-content-scroll")
+                .size_full()
                 .flex_1()
                 .gap_4()
                 .p_5()
+                .bg(theme.popover)
                 .overflow_y_scrollbar()
-                .child(self.render_entry_edit_form(cx));
-        }
-
-        v_flex()
-            .flex_1()
-            .gap_4()
-            .p_5()
-            .bg(theme.popover)
-            .overflow_y_scrollbar()
-            .child(
-                v_flex()
-                    .gap_4()
-                    .child(self.render_entry_description(selected_entry, cx))
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_4()
-                            .flex_wrap()
-                            .child(
-                                div()
-                                    .min_w(px(260.))
-                                    .flex_1()
-                                    .child(self.render_entry_labels(selected_entry, cx)),
-                            )
-                            .child(
-                                div()
-                                    .min_w(px(260.))
-                                    .flex_1()
-                                    .child(self.render_entry_due_date(selected_entry, cx)),
-                            ),
-                    )
-                    .child(self.render_entry_checklist(selected_entry, cx)),
-            )
+                .child(
+                    v_flex()
+                        .gap_4()
+                        .child(self.render_entry_description(selected_entry, cx))
+                        .child(
+                            h_flex()
+                                .items_start()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    div()
+                                        .min_w(px(260.))
+                                        .flex_1()
+                                        .child(self.render_entry_labels(selected_entry, cx)),
+                                )
+                                .child(
+                                    div()
+                                        .min_w(px(260.))
+                                        .flex_1()
+                                        .child(self.render_entry_due_date(selected_entry, cx)),
+                                ),
+                        )
+                        .child(self.render_entry_checklist(selected_entry, cx)),
+                ),
+        )
     }
 
     fn render_entry_due_date(
@@ -1030,6 +1056,9 @@ impl BoardView {
         let due_on = selected_entry
             .and_then(|(_, entry)| entry.due_on.as_deref())
             .filter(|due_on| !due_on.trim().is_empty());
+        let reminder_enabled = selected_entry
+            .map(|(_, entry)| entry.reminder_enabled)
+            .unwrap_or(false);
         let (status_label, status_color) = match due_on {
             Some(due_on) => match due_date_status(due_on, Local::now().date_naive()) {
                 DueDateStatus::Overdue => ("Overdue", cx.theme().danger),
@@ -1081,6 +1110,160 @@ impl BoardView {
                     .cleanable(true)
                     .placeholder("No due date")
                     .number_of_months(1),
+            )
+            .child(
+                Button::new("toggle-card-reminder")
+                    .icon(IconName::Bell)
+                    .label(if reminder_enabled {
+                        "Reminder on"
+                    } else {
+                        "Remind me"
+                    })
+                    .outline()
+                    .small()
+                    .selected(reminder_enabled)
+                    .disabled(due_on.is_none())
+                    .tooltip(if due_on.is_some() {
+                        "Show a system notification when this card is due"
+                    } else {
+                        "Choose a due date first"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_selected_entry_reminder(!reminder_enabled, cx);
+                    })),
+            )
+    }
+
+    fn render_entry_attachments(
+        &self,
+        selected_entry: Option<(&str, &EntryDTO)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let attachments = selected_entry
+            .map(|(_, entry)| entry.attachments.clone())
+            .unwrap_or_default();
+        let can_attach = selected_entry
+            .map(|(_, entry)| entry.id <= i32::MAX as u32)
+            .unwrap_or(false);
+        v_flex()
+            .gap_3()
+            .pt_3()
+            .border_t_1()
+            .border_color(cx.theme().border.opacity(0.48))
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(Icon::new(IconName::Folder).xsmall())
+                            .child(format!("Attachments · {}", attachments.len())),
+                    )
+                    .child(
+                        Button::new("add-card-images")
+                            .icon(IconName::Plus)
+                            .label("Attach")
+                            .ghost()
+                            .small()
+                            .disabled(!can_attach)
+                            .tooltip(if can_attach {
+                                "Choose one or more image files"
+                            } else {
+                                "Wait for this new card to finish saving"
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_image_attachments(window, cx);
+                            })),
+                    ),
+            )
+            .when_else(
+                attachments.is_empty(),
+                |this| {
+                    this.child(
+                        div()
+                            .min_h(px(52.))
+                            .flex()
+                            .items_center()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Add screenshots or visual references to this card."),
+                    )
+                },
+                |this| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .items_start()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(attachments.into_iter().map(|attachment| {
+                                let attachment_id = attachment.id;
+                                let preview_path =
+                                    self.attachment_preview_paths.get(&attachment_id).cloned();
+                                v_flex()
+                                    .w(px(252.))
+                                    .overflow_hidden()
+                                    .rounded(cx.theme().radius)
+                                    .border_1()
+                                    .border_color(cx.theme().border.opacity(0.6))
+                                    .bg(cx.theme().background)
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .w_full()
+                                            .h(px(150.))
+                                            .overflow_hidden()
+                                            .when_some(preview_path, |this, path| {
+                                                this.child(
+                                                    img(path)
+                                                        .size_full()
+                                                        .object_fit(ObjectFit::Cover),
+                                                )
+                                            })
+                                            .child(
+                                                Button::new((
+                                                    "delete-card-image",
+                                                    attachment_id as usize,
+                                                ))
+                                                .icon(IconName::Delete)
+                                                .ghost()
+                                                .xsmall()
+                                                .absolute()
+                                                .top_2()
+                                                .right_2()
+                                                .bg(cx.theme().popover.opacity(0.9))
+                                                .tooltip("Remove attachment")
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.delete_image_attachment(
+                                                            attachment_id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                )),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .px_2()
+                                            .py_1p5()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(attachment.file_name),
+                                    )
+                            })),
+                    )
+                },
             )
     }
 
@@ -1358,6 +1541,7 @@ impl BoardView {
                     })
                     .child(description),
             )
+            .child(self.render_entry_attachments(selected_entry, cx))
     }
 
     fn render_entry_labels(
@@ -1729,6 +1913,7 @@ impl BoardView {
         let theme = cx.theme().clone();
 
         h_flex()
+            .flex_shrink_0()
             .items_center()
             .justify_end()
             .gap_2()

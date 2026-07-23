@@ -65,6 +65,7 @@ pub(crate) struct AllocationSnapshot {
 
 pub(crate) struct AllocationDelta {
     pub(crate) peak_growth_bytes: usize,
+    pub(crate) retained_growth_bytes: usize,
     pub(crate) allocated_bytes: usize,
 }
 
@@ -82,6 +83,9 @@ impl AllocationSnapshot {
     pub(crate) fn finish(self) -> AllocationDelta {
         AllocationDelta {
             peak_growth_bytes: PEAK_BYTES
+                .load(Ordering::Relaxed)
+                .saturating_sub(self.baseline_bytes),
+            retained_growth_bytes: CURRENT_BYTES
                 .load(Ordering::Relaxed)
                 .saturating_sub(self.baseline_bytes),
             allocated_bytes: TOTAL_ALLOCATED_BYTES

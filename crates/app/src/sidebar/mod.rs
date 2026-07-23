@@ -12,6 +12,11 @@ use dto::*;
 use gpui::*;
 use gpui_component::input::{InputEvent, InputState};
 
+use crate::app_settings::AppSettings;
+
+const SIDEBAR_MIN_WIDTH: Pixels = px(200.);
+const SIDEBAR_MAX_WIDTH: Pixels = px(480.);
+
 pub(crate) use dto::ActiveItem;
 pub(crate) use event::SidebarEvent;
 
@@ -25,6 +30,8 @@ pub(crate) struct SidebarView {
     standalone_notes: Vec<NoteDTO>,
     is_adding_project: bool,
     collapsed: bool,
+    width: Pixels,
+    bounds: Option<Bounds<Pixels>>,
     new_project_input: Entity<InputState>,
     rename_board_input: Entity<InputState>,
     rename_note_input: Entity<InputState>,
@@ -161,6 +168,8 @@ impl SidebarView {
             standalone_notes: vec![],
             is_adding_project: false,
             collapsed: false,
+            width: AppSettings::sidebar_width(cx),
+            bounds: None,
             new_project_input,
             rename_board_input,
             rename_note_input,
@@ -195,6 +204,10 @@ impl SidebarView {
 
     pub(crate) fn is_collapsed(&self) -> bool {
         self.collapsed
+    }
+
+    pub(crate) fn width(&self) -> Pixels {
+        self.width
     }
 
     pub(crate) fn set_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {

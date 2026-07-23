@@ -136,6 +136,7 @@ impl BoardView {
         self.entry_dialog.editing = false;
         self.entry_dialog.managing_labels = false;
         self.sync_entry_edit_inputs(window, cx);
+        self.prepare_attachment_previews(entry_id, cx);
         cx.notify();
     }
 
@@ -145,6 +146,7 @@ impl BoardView {
         self.entry_dialog.entry_id = None;
         self.entry_dialog.editing = false;
         self.entry_dialog.managing_labels = false;
+        self.attachment_preview_paths.clear();
         cx.notify();
     }
 

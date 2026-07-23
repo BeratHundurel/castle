@@ -69,6 +69,7 @@ pub(crate) struct PurgeTrashItem(pub(crate) MoveToTrash);
 pub(crate) struct PurgedArtifacts {
     pub(crate) managed_files: Vec<PathBuf>,
     pub(crate) attachment_note_ids: Vec<u32>,
+    pub(crate) attachment_entry_ids: Vec<u32>,
 }
 
 pub(crate) async fn load_trash(db: &DatabaseConnection) -> Result<Vec<TrashItem>> {
@@ -168,7 +169,11 @@ pub(crate) async fn purge_item(
     db: &DatabaseConnection,
     item: PurgeTrashItem,
 ) -> Result<PurgedArtifacts> {
-    let mut artifacts = PurgedArtifacts::default();
+    let mut artifacts = PurgedArtifacts {
+        attachment_entry_ids: attachment_entry_ids_for_item(db, item.0).await?,
+        ..Default::default()
+    };
+
     if item.0.kind == TrashItemKind::Note {
         let row = db
             .query_one_raw(Statement::from_sql_and_values(
@@ -177,6 +182,7 @@ pub(crate) async fn purge_item(
                 [(item.0.id as i64).into()],
             ))
             .await?;
+
         if let Some(row) = row {
             artifacts.attachment_note_ids.push(item.0.id);
             let managed = row
@@ -194,6 +200,7 @@ pub(crate) async fn purge_item(
                 [(item.0.id as i64).into()],
             ))
             .await?;
+
         for row in rows {
             artifacts
                 .attachment_note_ids
@@ -204,12 +211,14 @@ pub(crate) async fn purge_item(
                 artifacts.managed_files.push(PathBuf::from(path));
             }
         }
+
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM note WHERE project_id = ?",
             [(item.0.id as i64).into()],
         ))
         .await?;
+
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "DELETE FROM board WHERE project_id = ?",
@@ -243,10 +252,13 @@ pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts
             "#,
         ))
         .await?;
+
     let mut artifacts = PurgedArtifacts {
         managed_files: Vec::new(),
         attachment_note_ids: Vec::with_capacity(rows.len()),
+        attachment_entry_ids: Vec::new(),
     };
+
     for row in rows {
         artifacts
             .attachment_note_ids
@@ -257,6 +269,26 @@ pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts
             artifacts.managed_files.push(PathBuf::from(path));
         }
     }
+
+    artifacts.attachment_entry_ids = db
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            r#"
+            SELECT e.id
+            FROM entry e
+            JOIN card c ON c.id = e.card_id
+            JOIN board b ON b.id = c.board_id
+            LEFT JOIN project p ON p.id = b.project_id
+            WHERE e.deleted_at IS NOT NULL
+               OR c.deleted_at IS NOT NULL
+               OR b.deleted_at IS NOT NULL
+               OR p.deleted_at IS NOT NULL
+            "#,
+        ))
+        .await?
+        .into_iter()
+        .map(|row| row.try_get::<i64>("", "id").map(|id| id as u32))
+        .collect::<Result<Vec<_>, _>>()?;
 
     for sql in [
         "DELETE FROM entry WHERE deleted_at IS NOT NULL",
@@ -272,6 +304,41 @@ pub(crate) async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts
     }
     crate::search::rebuild_search_index(db).await?;
     Ok(artifacts)
+}
+
+async fn attachment_entry_ids_for_item(
+    db: &DatabaseConnection,
+    item: MoveToTrash,
+) -> Result<Vec<u32>> {
+    let (sql, id) = match item.kind {
+        TrashItemKind::Project => (
+            "SELECT e.id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id JOIN project p ON p.id = b.project_id WHERE p.id = ? AND p.deleted_at IS NOT NULL",
+            item.id,
+        ),
+        TrashItemKind::Board => (
+            "SELECT e.id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id WHERE b.id = ? AND b.deleted_at IS NOT NULL",
+            item.id,
+        ),
+        TrashItemKind::List => (
+            "SELECT e.id FROM entry e JOIN card c ON c.id = e.card_id WHERE c.id = ? AND c.deleted_at IS NOT NULL",
+            item.id,
+        ),
+        TrashItemKind::Entry => (
+            "SELECT id FROM entry WHERE id = ? AND deleted_at IS NOT NULL",
+            item.id,
+        ),
+        TrashItemKind::Note => return Ok(Vec::new()),
+    };
+    db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        sql,
+        [(id as i64).into()],
+    ))
+    .await?
+    .into_iter()
+    .map(|row| row.try_get::<i64>("", "id").map(|id| id as u32))
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(Into::into)
 }
 
 async fn ensure_parent_available(db: &DatabaseConnection, item: MoveToTrash) -> Result<()> {
@@ -381,6 +448,7 @@ mod tests {
             PurgedArtifacts {
                 managed_files: vec![PathBuf::from("C:\\notes\\disposable.md")],
                 attachment_note_ids: vec![inserted.id as u32],
+                attachment_entry_ids: vec![],
             }
         );
         assert!(

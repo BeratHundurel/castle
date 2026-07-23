@@ -338,6 +338,9 @@ impl DocumentEditorView {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
                         this.save_state = this.resolve_save_state(&content, cx);
+                        if this.save_state == SaveState::Saved {
+                            cx.emit(DocumentEditorEvent::Saved(this.note_id));
+                        }
                     })
                     .ok();
                 }
@@ -525,6 +528,9 @@ impl DocumentEditorView {
                         this.file_managed_by_app = file_managed_by_app;
                         this.is_loading = false;
                         this.save_state = this.resolve_save_state(&content, cx);
+                        if this.save_state == SaveState::Saved {
+                            cx.emit(DocumentEditorEvent::Saved(this.note_id));
+                        }
                         let path = this.current_path.clone();
                         this.apply_document_kind(path.as_deref(), cx);
                         this.schedule_document_analysis(false, cx);

@@ -11,8 +11,7 @@ use crate::command_palette::{
 
 use super::*;
 
-const SIDEBAR_WIDTH: f32 = 260.;
-const COLLAPSED_TITLE_BAR_WIDTH: f32 = 48.;
+const COLLAPSED_TITLE_BAR_WIDTH: Pixels = px(48.);
 
 impl AppShell {
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -21,7 +20,7 @@ impl AppShell {
         let sidebar_title_width = if sidebar_collapsed {
             COLLAPSED_TITLE_BAR_WIDTH
         } else {
-            SIDEBAR_WIDTH
+            self.sidebar.read(cx).width()
         };
 
         TitleBar::new().border_0().bg(theme.sidebar).child(
@@ -34,7 +33,7 @@ impl AppShell {
                 .child(
                     h_flex()
                         .id("sidebar-title-bar")
-                        .w(px(sidebar_title_width))
+                        .w(sidebar_title_width)
                         .h_full()
                         .items_center()
                         .gap_2()

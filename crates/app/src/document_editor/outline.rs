@@ -1,3 +1,4 @@
+use gpui::SharedString;
 use std::collections::HashSet;
 
 const JSON_OUTLINE_NODE_LIMIT: usize = 10_000;
@@ -19,7 +20,7 @@ pub(crate) struct OutlineRow {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MarkdownOutline {
     items: Vec<OutlineRow>,
-    pub(crate) sections: Vec<String>,
+    pub(crate) sections: Vec<SharedString>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,7 +58,7 @@ impl DocumentOutline {
         }
     }
 
-    pub(crate) fn markdown_sections(&self) -> &[String] {
+    pub(crate) fn markdown_sections(&self) -> &[SharedString] {
         match self {
             Self::Markdown(outline) => &outline.sections,
             Self::None | Self::Json(_) => &[],
@@ -187,10 +188,10 @@ impl MarkdownOutline {
         let mut sections = Vec::with_capacity(headings.len().saturating_add(1));
         if let Some(first) = headings.first() {
             if first.2 > 0 {
-                sections.push(lines[..first.2].join("\n"));
+                sections.push(SharedString::from(lines[..first.2].join("\n")));
             }
         } else if !source.is_empty() {
-            sections.push(source.to_string());
+            sections.push(SharedString::from(source.to_string()));
         }
 
         let section_offset = usize::from(!sections.is_empty());
@@ -202,7 +203,7 @@ impl MarkdownOutline {
                     .get(index + 1)
                     .map(|heading| heading.2)
                     .unwrap_or(lines.len());
-                sections.push(lines[*source_line..end].join("\n"));
+                sections.push(SharedString::from(lines[*source_line..end].join("\n")));
                 OutlineRow {
                     node_index: Some(index),
                     title: title.clone(),
@@ -510,6 +511,54 @@ mod tests {
     use super::{
         DocumentOutline, JSON_OUTLINE_NODE_LIMIT, JsonOutline, MarkdownOutline, truncate_preview,
     };
+    use crate::test_alloc;
+
+    #[test]
+    fn preview_section_snapshots_share_markdown_content() {
+        const SECTION_BYTES: usize = 128 * 1024;
+        const SNAPSHOTS: usize = 8;
+
+        let body = "x".repeat(SECTION_BYTES);
+        let source = format!("# One\n{body}\n# Two\n{body}\n# Three\n{body}\n# Four\n{body}");
+        let outline = MarkdownOutline::parse(&source);
+        let legacy_sections = outline
+            .sections
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let legacy_allocation = test_alloc::start_measurement();
+        let legacy_started = std::time::Instant::now();
+        for _ in 0..SNAPSHOTS {
+            std::hint::black_box(legacy_sections.clone());
+        }
+        let legacy_elapsed = legacy_started.elapsed();
+        let legacy_allocation = legacy_allocation.finish();
+
+        let allocation = test_alloc::start_measurement();
+        let shared_started = std::time::Instant::now();
+        for _ in 0..SNAPSHOTS {
+            std::hint::black_box(outline.sections.clone());
+        }
+        let shared_elapsed = shared_started.elapsed();
+        let allocation = allocation.finish();
+
+        assert!(
+            allocation.allocated_bytes < legacy_allocation.allocated_bytes / 100,
+            "shared preview snapshots allocated {} bytes versus {} bytes for owned strings",
+            allocation.allocated_bytes,
+            legacy_allocation.allocated_bytes
+        );
+        println!(
+            "markdown_bytes={} snapshots={SNAPSHOTS} owned_string_clone_micros={} owned_string_allocated_bytes={} shared_clone_micros={} shared_peak_heap_growth_bytes={} shared_retained_heap_growth_bytes={} shared_allocated_bytes={}",
+            source.len(),
+            legacy_elapsed.as_micros(),
+            legacy_allocation.allocated_bytes,
+            shared_elapsed.as_micros(),
+            allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes,
+            allocation.allocated_bytes
+        );
+    }
 
     #[test]
     fn parses_markdown_headings_and_preview_sections() {

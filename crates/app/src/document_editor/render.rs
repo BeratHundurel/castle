@@ -160,7 +160,7 @@ impl DocumentEditorView {
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size = px(AppSettings::markdown_preview_font_size(cx) as f32);
         let sections = if self.outline.markdown_sections().is_empty() {
-            vec![self.editor.read(cx).value().to_string()]
+            vec![self.editor.read(cx).value()]
         } else {
             self.outline.markdown_sections().to_vec()
         };

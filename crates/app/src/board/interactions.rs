@@ -238,6 +238,9 @@ impl BoardView {
                 {
                     entry.id = real_id;
                 }
+                if this.entry_dialog.entry_id == Some(temp_id) {
+                    this.entry_dialog.entry_id = Some(real_id);
+                }
             })
             .ok();
 
@@ -338,8 +341,10 @@ impl BoardView {
                                     .map(|card| card.entries.len() as i32)
                                     .unwrap_or_default(),
                                 due_on: None,
+                                reminder_enabled: false,
                                 labels: vec![],
                                 checklist_items: vec![],
+                                attachments: vec![],
                             };
 
                             this.dialog_title_input.update(cx, |input, cx| {
@@ -586,11 +591,47 @@ impl BoardView {
             entry::ActiveModel {
                 id: Set(entry_id as i64),
                 due_on: Set(due_on),
+                reminder_notified_for: Set(None),
                 ..Default::default()
             }
             .update(&*db)
             .await?;
             persisted_revisions.insert(entry_id, revision);
+            crate::system_notifications::wake();
+            Ok::<(), sea_orm::DbErr>(())
+        });
+    }
+
+    pub(super) fn set_selected_entry_reminder(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(entry_id) = self.entry_dialog.entry_id else {
+            return;
+        };
+        let Some(entry) = self
+            .cards
+            .iter_mut()
+            .flat_map(|list| list.entries.iter_mut())
+            .find(|entry| entry.id == entry_id)
+        else {
+            return;
+        };
+        if entry.due_on.is_none() {
+            return;
+        }
+
+        entry.reminder_enabled = enabled;
+        cx.notify();
+
+        let db = cx.global::<DB>().conn.clone();
+        tokio::runtime::Handle::current().spawn(async move {
+            entry::ActiveModel {
+                id: Set(entry_id as i64),
+                reminder_enabled: Set(enabled),
+                reminder_notified_for: Set(None),
+                ..Default::default()
+            }
+            .update(&*db)
+            .await?;
+            crate::system_notifications::wake();
             Ok::<(), sea_orm::DbErr>(())
         });
     }
@@ -1153,8 +1194,10 @@ mod tests {
             card_id,
             position,
             due_on: Some(SharedString::from("2026-07-31")),
+            reminder_enabled: false,
             labels: vec![],
             checklist_items: vec![],
+            attachments: vec![],
         }
     }
 

@@ -413,3 +413,105 @@ impl AppShell {
         cx.notify();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    use entity::note;
+    use gpui::AppContext as _;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+
+    use super::*;
+
+    #[gpui::test]
+    fn workspace_search_applies_results_after_input_changes(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                note::ActiveModel {
+                    title: Set("Search regression needle".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(None),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set("A searchable note body".to_string()),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("search test database should initialize");
+        let app_db = crate::DB {
+            conn: Arc::new(db),
+            data_dir: PathBuf::new(),
+        };
+        let settings_dir = std::env::temp_dir().join(format!(
+            "castle-workspace-search-test-{}",
+            std::process::id()
+        ));
+
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("search test window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.open_workspace_search(window, cx);
+            });
+        });
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if !shell.read_with(&cx, |shell, _| shell.command_palette.search_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let input = shell.read_with(&cx, |shell, _| shell.command_palette.input.clone());
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| input.insert("needle", window, cx));
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(WORKSPACE_SEARCH_DEBOUNCE);
+
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if !shell.read_with(&cx, |shell, _| shell.command_palette.search_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        shell.read_with(&cx, |shell, _| {
+            assert_eq!(shell.command_palette.query, "needle");
+            assert_eq!(shell.command_palette.search_results.len(), 1);
+            assert_eq!(
+                shell.command_palette.search_results[0].title,
+                "Search regression needle"
+            );
+            assert!(shell.command_palette.search_error.is_none());
+        });
+    }
+}

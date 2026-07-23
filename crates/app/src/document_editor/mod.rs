@@ -59,6 +59,7 @@ struct OutlineSourceHighlight {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum DocumentEditorEvent {
     PathChanged,
+    Saved(u32),
 }
 
 pub(crate) struct DocumentEditorView {
@@ -198,6 +199,21 @@ impl DocumentEditorView {
         self.save_state.clone()
     }
 
+    pub(crate) fn reload_after_external_change(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.save_state != SaveState::Saved {
+            return;
+        }
+
+        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
+        self.is_loading = true;
+        Self::load_note_async(self.note_id, window, cx).detach();
+        cx.notify();
+    }
+
     pub(crate) fn kind(&self) -> DocumentKind {
         self.kind
     }
@@ -205,6 +221,20 @@ impl DocumentEditorView {
     #[cfg(test)]
     pub(crate) fn loaded_content(&self, cx: &App) -> Option<String> {
         (!self.is_loading).then(|| self.editor.read(cx).value().to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_content_for_test(
+        &mut self,
+        content: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.suppress_editor_events = true;
+        self.editor
+            .update(cx, |editor, cx| editor.set_value(content, window, cx));
+        self.suppress_editor_events = false;
+        self.update_from_editor(cx);
     }
 
     pub(crate) fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
@@ -391,7 +421,6 @@ impl DocumentEditorView {
         let generation = self.analysis_generation;
         let kind = self.kind;
         let analyze_json_outline = self.outline_visible;
-        let content = self.editor.read(cx).value().to_string();
         let background = cx.background_executor().clone();
 
         self._analysis_task = Some(cx.spawn(async move |this, cx| {
@@ -400,6 +429,17 @@ impl DocumentEditorView {
                     .timer(DOCUMENT_ANALYSIS_DELAY)
                     .await;
             }
+
+            let content = this
+                .read_with(cx, |this, cx| {
+                    analysis_is_current(this.analysis_generation, this.kind, generation, kind)
+                        .then(|| this.editor.read(cx).value().to_string())
+                })
+                .ok()
+                .flatten();
+            let Some(content) = content else {
+                return;
+            };
 
             let analysis = background
                 .spawn(async move { analyze_document(kind, content, analyze_json_outline) })
@@ -510,7 +550,118 @@ fn analysis_is_current(
 
 #[cfg(test)]
 mod tests {
-    use super::{DocumentKind, DocumentOutline, analysis_is_current, analyze_document};
+    use super::{
+        DocumentEditorView, DocumentKind, DocumentOutline, analysis_is_current, analyze_document,
+    };
+    use crate::{DB, test_alloc};
+    use entity::note;
+    use gpui::AppContext as _;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use std::{path::PathBuf, sync::Arc};
+
+    #[gpui::test]
+    fn delayed_analysis_does_not_copy_content_before_debounce(cx: &mut gpui::TestAppContext) {
+        const CONTENT_BYTES: usize = 512 * 1024;
+        const RESCHEDULES: usize = 8;
+
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("Large analysis note".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(None),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set("x".repeat(CONTENT_BYTES)),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("analysis test database should initialize");
+        let settings_dir = std::env::temp_dir().join(format!(
+            "castle-analysis-allocation-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos()
+        ));
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(DB {
+                conn: Arc::new(db),
+                data_dir: PathBuf::new(),
+            });
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("analysis test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let _window = window;
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view
+                .read_with(cx, |editor, cx| editor.loaded_content(cx))
+                .is_some()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let legacy_allocation = test_alloc::start_measurement();
+        let legacy_started = std::time::Instant::now();
+        for _ in 0..RESCHEDULES {
+            std::hint::black_box(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).value().to_string()),
+            );
+        }
+        let legacy_elapsed = legacy_started.elapsed();
+        let legacy_allocation = legacy_allocation.finish();
+
+        let allocation = test_alloc::start_measurement();
+        let optimized_started = std::time::Instant::now();
+        for _ in 0..RESCHEDULES {
+            view.update(cx, |editor, cx| {
+                editor.schedule_document_analysis(true, cx);
+            });
+        }
+        let optimized_elapsed = optimized_started.elapsed();
+        let allocation = allocation.finish();
+
+        assert!(
+            allocation.allocated_bytes < legacy_allocation.allocated_bytes / 100,
+            "delayed analysis allocated {} bytes versus {} bytes for eager snapshots",
+            allocation.allocated_bytes,
+            legacy_allocation.allocated_bytes
+        );
+        println!(
+            "document_bytes={CONTENT_BYTES} reschedules={RESCHEDULES} eager_snapshot_micros={} eager_snapshot_allocated_bytes={} delayed_schedule_micros={} delayed_schedule_peak_heap_growth_bytes={} delayed_schedule_retained_heap_growth_bytes={} delayed_schedule_allocated_bytes={}",
+            legacy_elapsed.as_micros(),
+            legacy_allocation.allocated_bytes,
+            optimized_elapsed.as_micros(),
+            allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes,
+            allocation.allocated_bytes
+        );
+    }
 
     #[test]
     fn large_plain_text_analysis_only_computes_statistics() {

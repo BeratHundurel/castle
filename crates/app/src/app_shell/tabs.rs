@@ -205,6 +205,7 @@ impl AppShell {
         if was_active || self.active_tab_index >= self.open_tabs.len() {
             self.sync_sidebar_active(cx);
         }
+        self.prune_closed_saved_note_views(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
         self.persist_tab_session(cx);
@@ -261,6 +262,7 @@ impl AppShell {
             self.next_tab_id = self.next_tab_id.saturating_add(1);
         }
         self.active_tab_index = 0;
+        self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
@@ -277,6 +279,7 @@ impl AppShell {
         });
         self.next_tab_id = self.next_tab_id.saturating_add(1);
         self.active_tab_index = 0;
+        self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
@@ -468,11 +471,7 @@ impl AppShell {
             return;
         }
 
-        let view = self
-            .board_views
-            .entry(board_id)
-            .or_insert_with(|| BoardView::view(window, cx))
-            .clone();
+        let view = BoardView::view(window, cx);
         view.update(cx, |board, cx| board.reload_board(board_id, cx));
         self.replace_or_push_active(
             OpenTabKind::Board {
@@ -520,6 +519,21 @@ impl AppShell {
             window,
             cx,
         );
+    }
+
+    fn prune_closed_saved_note_views(&mut self, cx: &App) {
+        let open_tabs = &self.open_tabs;
+        self.note_views.retain(|note_id, view| {
+            open_tabs.iter().any(|tab| {
+                matches!(
+                    &tab.kind,
+                    OpenTabKind::Note {
+                        note_id: open_note_id,
+                        ..
+                    } if open_note_id == note_id
+                )
+            }) || view.read(cx).save_state() != SaveState::Saved
+        });
     }
 
     pub(super) fn replace_or_push_active(

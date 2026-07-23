@@ -1,11 +1,100 @@
-use std::collections::HashMap;
 use std::fs::{create_dir_all, read_to_string, write};
+use std::{collections::HashMap, sync::Arc};
 
 use super::*;
 use crate::workspace_data::load_workspace_rows;
 use gpui_component::{WindowExt as _, notification::Notification};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
+
+const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
 
 impl AppShell {
+    pub(crate) fn start_external_change_watcher(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let (revision_sender, mut revision_receiver) = tokio::sync::watch::channel(None);
+
+        let poller = runtime.spawn(watch_change_revisions(
+            db,
+            revision_sender,
+            EXTERNAL_CHANGE_POLL_INTERVAL,
+        ));
+        drop(poller);
+
+        self.external_change_task = Some(cx.spawn_in(window, async move |this, cx| {
+            while revision_receiver.changed().await.is_ok() {
+                let Some(revision) = *revision_receiver.borrow_and_update() else {
+                    continue;
+                };
+
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        let changed = this
+                            .last_change_revision
+                            .is_some_and(|previous| previous != revision.revision);
+                        let board_changed = this
+                            .last_board_revision
+                            .is_some_and(|previous| previous != revision.board_revision);
+                        let note_changed = this
+                            .last_note_revision
+                            .is_some_and(|previous| previous != revision.note_revision);
+                        this.last_change_revision = Some(revision.revision);
+                        this.last_board_revision = Some(revision.board_revision);
+                        this.last_note_revision = Some(revision.note_revision);
+                        if changed {
+                            this.refresh_after_external_change(
+                                board_changed,
+                                note_changed,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn refresh_after_external_change(
+        &mut self,
+        board_changed: bool,
+        note_changed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if board_changed {
+            let board_views = self
+                .open_tabs
+                .iter()
+                .filter_map(|tab| match &tab.kind {
+                    OpenTabKind::Board { board_id, view, .. } => Some((*board_id, view.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+
+            for (board_id, view) in board_views {
+                view.update(cx, |board, cx| board.reload_board(board_id, cx));
+            }
+        }
+
+        if note_changed {
+            let note_views = self.note_views.values().cloned().collect::<Vec<_>>();
+            for view in note_views {
+                view.update(cx, |note, cx| note.reload_after_external_change(window, cx));
+            }
+        }
+        self.refresh_workspace(cx);
+        self.load_home(cx);
+        self.load_trash(cx);
+    }
+
     pub(crate) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
         if self.workspace_refreshing {
             self.workspace_refresh_pending = true;
@@ -393,12 +482,111 @@ impl AppShell {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChangeRevision {
+    revision: i64,
+    board_revision: i64,
+    note_revision: i64,
+}
+
+async fn watch_change_revisions(
+    db: Arc<sea_orm::DatabaseConnection>,
+    sender: tokio::sync::watch::Sender<Option<ChangeRevision>>,
+    interval: std::time::Duration,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_published = None;
+
+    loop {
+        ticker.tick().await;
+        match publish_change_revision(db.as_ref(), &sender, &mut last_published).await {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(err) => eprintln!("Failed to check for external Castle changes: {err}"),
+        }
+    }
+}
+
+async fn publish_change_revision(
+    db: &sea_orm::DatabaseConnection,
+    sender: &tokio::sync::watch::Sender<Option<ChangeRevision>>,
+    last_published: &mut Option<ChangeRevision>,
+) -> Result<bool, DbErr> {
+    let revision = load_change_revision(db).await?;
+    if *last_published == Some(revision) {
+        return Ok(true);
+    }
+    if sender.send(Some(revision)).is_err() {
+        return Ok(false);
+    }
+    *last_published = Some(revision);
+    Ok(true)
+}
+
+async fn load_change_revision(db: &sea_orm::DatabaseConnection) -> Result<ChangeRevision, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT revision, board_revision, note_revision
+             FROM castle_change_revision WHERE id = 1",
+        ))
+        .await?
+        .ok_or_else(|| DbErr::Custom("Castle change revision row is missing".to_string()))?;
+
+    Ok(ChangeRevision {
+        revision: row.try_get("", "revision")?,
+        board_revision: row.try_get("", "board_revision")?,
+        note_revision: row.try_get("", "note_revision")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, EntityTrait};
     use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    #[tokio::test]
+    async fn change_revision_updates_are_coalesced_before_reaching_gpui() -> anyhow::Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let (sender, mut receiver) = tokio::sync::watch::channel(None);
+        let mut last_published = None;
+
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
+        assert!(receiver.has_changed()?);
+        let initial = *receiver.borrow_and_update();
+
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
+        assert!(!receiver.has_changed()?);
+
+        db.execute_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE castle_change_revision
+             SET revision = revision + 1, board_revision = board_revision + 1
+             WHERE id = 1",
+        ))
+        .await?;
+
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
+        assert!(receiver.has_changed()?);
+        let changed = *receiver.borrow_and_update();
+        assert_eq!(
+            changed.map(|revision| revision.revision),
+            initial.map(|revision| revision.revision + 1)
+        );
+        assert_eq!(
+            changed.map(|revision| revision.board_revision),
+            initial.map(|revision| revision.board_revision + 1)
+        );
+
+        drop(receiver);
+        last_published = None;
+        assert!(!publish_change_revision(&db, &sender, &mut last_published).await?);
+        Ok(())
+    }
 
     #[gpui::test]
     #[ignore = "performance proof; run explicitly with one test thread"]

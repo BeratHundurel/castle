@@ -10,6 +10,9 @@ use sea_orm::{
     sea_query::{Query, SelectStatement},
 };
 
+const SEARCH_INSERT_BODY_BUDGET: usize = 1024 * 1024;
+const SEARCH_INSERT_DOCUMENT_LIMIT: usize = 100;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SearchResultKind {
     Note,
@@ -544,14 +547,17 @@ async fn insert_search_documents(
     db: &impl ConnectionTrait,
     documents: impl IntoIterator<Item = SearchDocument>,
 ) -> Result<(), DbErr> {
-    let mut chunk = Vec::with_capacity(100);
+    let mut chunk = Vec::with_capacity(SEARCH_INSERT_DOCUMENT_LIMIT);
+    let mut chunk_body_bytes = 0;
 
     for document in documents {
-        chunk.push(document);
-
-        if chunk.len() == 100 {
+        if should_flush_search_document_chunk(chunk.len(), chunk_body_bytes, document.body.len()) {
             insert_search_document_chunk(db, &mut chunk).await?;
+            chunk_body_bytes = 0;
         }
+
+        chunk_body_bytes = chunk_body_bytes.saturating_add(document.body.len());
+        chunk.push(document);
     }
 
     if !chunk.is_empty() {
@@ -559,6 +565,16 @@ async fn insert_search_documents(
     }
 
     Ok(())
+}
+
+fn should_flush_search_document_chunk(
+    current_documents: usize,
+    current_body_bytes: usize,
+    next_body_bytes: usize,
+) -> bool {
+    current_documents > 0
+        && (current_documents >= SEARCH_INSERT_DOCUMENT_LIMIT
+            || current_body_bytes.saturating_add(next_body_bytes) > SEARCH_INSERT_BODY_BUDGET)
 }
 
 async fn insert_search_document_chunk(
@@ -613,12 +629,32 @@ pub(crate) async fn delete_search_item(
 
 #[cfg(test)]
 mod tests {
-    use super::{fts_query, rebuild_search_index};
+    use super::{
+        SEARCH_INSERT_BODY_BUDGET, fts_query, rebuild_search_index,
+        should_flush_search_document_chunk,
+    };
     use crate::test_alloc;
     use anyhow::Result;
     use entity::{board, card, entry, note, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database};
+
+    #[test]
+    fn search_insert_batches_cap_accumulated_large_bodies() {
+        let document_body = SEARCH_INSERT_BODY_BUDGET / 2 + 1;
+
+        assert!(!should_flush_search_document_chunk(0, 0, document_body));
+        assert!(should_flush_search_document_chunk(
+            1,
+            document_body,
+            document_body
+        ));
+        assert!(!should_flush_search_document_chunk(
+            0,
+            0,
+            SEARCH_INSERT_BODY_BUDGET + 1
+        ));
+    }
 
     #[tokio::test]
     async fn streamed_rebuild_preserves_search_documents() -> Result<()> {
@@ -862,9 +898,10 @@ mod tests {
 
         assert_eq!(indexed_documents, expected_documents);
         println!(
-            "documents={expected_documents} source_description_bytes={} peak_heap_growth_bytes={} total_allocated_bytes={}",
+            "documents={expected_documents} source_description_bytes={} peak_heap_growth_bytes={} retained_heap_growth_bytes={} total_allocated_bytes={}",
             BOARD_COUNT * CARDS_PER_BOARD * ENTRIES_PER_CARD * DESCRIPTION_BYTES,
             allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes,
             allocation.allocated_bytes,
         );
 

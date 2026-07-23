@@ -1,4 +1,4 @@
-use entity::{board_label, card, entry, entry_checklist_item};
+use entity::{board_label, card, entry, entry_attachment, entry_checklist_item};
 use gpui::SharedString;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,8 +18,17 @@ pub(crate) struct EntryDTO {
     pub(crate) card_id: u32,
     pub(crate) position: i32,
     pub(crate) due_on: Option<SharedString>,
+    pub(crate) reminder_enabled: bool,
     pub(crate) labels: Vec<BoardLabelDTO>,
     pub(crate) checklist_items: Vec<ChecklistItemDTO>,
+    pub(crate) attachments: Vec<EntryAttachmentDTO>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EntryAttachmentDTO {
+    pub(crate) id: u32,
+    pub(crate) entry_id: u32,
+    pub(crate) file_name: SharedString,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,8 +78,10 @@ impl From<entry::Model> for EntryDTO {
             card_id: e.card_id as u32,
             position: e.position,
             due_on: e.due_on.map(SharedString::from),
+            reminder_enabled: e.reminder_enabled,
             labels: vec![],
             checklist_items: vec![],
+            attachments: vec![],
         }
     }
 }
@@ -84,8 +95,20 @@ impl From<entry::ModelEx> for EntryDTO {
             card_id: e.card_id as u32,
             position: e.position,
             due_on: e.due_on.map(SharedString::from),
+            reminder_enabled: e.reminder_enabled,
             labels: vec![],
             checklist_items: vec![],
+            attachments: vec![],
+        }
+    }
+}
+
+impl From<entry_attachment::Model> for EntryAttachmentDTO {
+    fn from(attachment: entry_attachment::Model) -> Self {
+        Self {
+            id: attachment.id as u32,
+            entry_id: attachment.entry_id as u32,
+            file_name: SharedString::from(attachment.file_name),
         }
     }
 }

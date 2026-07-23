@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use entity::{project, project::Entity as Project};
-use gpui::{Context, SharedString};
+use gpui::{Context, PathPromptOptions, SharedString, Window};
+use gpui_component::{WindowExt as _, notification::Notification};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, PaginatorTrait};
 
 use crate::DB;
@@ -130,6 +131,77 @@ impl SidebarView {
                 }
                 Ok(Err(err)) => eprintln!("Failed to add project: {err}"),
                 Err(err) => eprintln!("Failed to join project creation task: {err}"),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn add_folder_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add folder as project".into()),
+        });
+        let background_executor = cx.background_executor().clone();
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
+                return;
+            };
+            let Some(path) = paths.first().cloned() else {
+                return;
+            };
+
+            let scan = background_executor
+                .spawn(async move { crate::folder_import::scan_folder(&path) })
+                .await;
+            let scan = match scan {
+                Ok(scan) => scan,
+                Err(err) => {
+                    this.update_in(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(format!("Could not scan the folder: {err}")),
+                            cx,
+                        );
+                    })
+                    .ok();
+                    return;
+                }
+            };
+
+            let result = runtime
+                .spawn(async move { crate::folder_import::import_folder(db.as_ref(), scan).await })
+                .await;
+
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(Ok(result)) => {
+                    this.request_workspace_refresh(cx);
+                    let action = if result.created_project {
+                        "Added"
+                    } else {
+                        "Refreshed"
+                    };
+                    let mut message = format!(
+                        "{action} {}: {} new, {} refreshed",
+                        result.project_name, result.inserted, result.updated
+                    );
+                    if result.skipped > 0 {
+                        message.push_str(&format!(", {} skipped", result.skipped));
+                    }
+                    window.push_notification(Notification::success(message), cx);
+                }
+                Ok(Err(err)) => window.push_notification(
+                    Notification::error(format!("Could not add the folder project: {err}")),
+                    cx,
+                ),
+                Err(err) => window.push_notification(
+                    Notification::error(format!("Folder import task failed: {err}")),
+                    cx,
+                ),
             })
             .ok();
         })

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Collapsible, Icon, IconName, Sizable,
+    ActiveTheme, Collapsible, ElementExt as _, Icon, IconName, Sizable,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::Input,
@@ -17,6 +17,18 @@ use super::content_item::SidebarContentItem;
 use super::drag::{SidebarDragInfo, SidebarDragKind};
 use super::event::SidebarEvent;
 use super::{SidebarView, action::*};
+use crate::app_settings::AppSettings;
+
+#[derive(Clone)]
+struct SidebarResizeDrag {
+    sidebar_id: EntityId,
+}
+
+impl Render for SidebarResizeDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 #[derive(Clone)]
 struct DraggableContentItem {
@@ -371,6 +383,71 @@ impl Focusable for SidebarView {
 }
 
 impl SidebarView {
+    fn render_resize_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar_id = cx.entity_id();
+        let drag = SidebarResizeDrag { sidebar_id };
+
+        div()
+            .id("sidebar-resize-handle")
+            .group("sidebar-resize-handle")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right(px(-4.))
+            .w(px(8.))
+            .flex()
+            .justify_center()
+            .cursor_col_resize()
+            .child(
+                div()
+                    .h_full()
+                    .w(px(1.))
+                    .bg(cx.theme().sidebar_border)
+                    .group_hover("sidebar-resize-handle", |this| {
+                        this.bg(cx.theme().drag_border)
+                    }),
+            )
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<SidebarResizeDrag>, _, cx| {
+                    if event.drag(cx).sidebar_id != cx.entity_id() {
+                        return;
+                    }
+                    this.resize_from_pointer(event.event.position.x, cx);
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.persist_width(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.persist_width(cx)),
+            )
+            .on_drag(drag, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            })
+    }
+
+    fn resize_from_pointer(&mut self, pointer_x: Pixels, cx: &mut Context<Self>) {
+        let Some(bounds) = self.bounds else {
+            return;
+        };
+        let width =
+            (pointer_x - bounds.left()).clamp(super::SIDEBAR_MIN_WIDTH, super::SIDEBAR_MAX_WIDTH);
+        if self.width != width {
+            self.width = width;
+            cx.emit(SidebarEvent::WidthChanged);
+            cx.notify();
+        }
+    }
+
+    fn persist_width(&self, cx: &mut Context<Self>) {
+        if AppSettings::sidebar_width(cx) != self.width {
+            AppSettings::set_sidebar_width(self.width, cx);
+        }
+    }
+
     fn render_content_item(
         &self,
         item: SidebarContentItem,
@@ -678,8 +755,17 @@ impl Render for SidebarView {
         let show_standalone = search_lower.is_empty() || !standalone_items.is_empty();
 
         div()
+            .relative()
             .h_full()
             .flex_shrink_0()
+            .on_prepaint({
+                let sidebar = cx.entity();
+                move |bounds, _, cx| {
+                    sidebar.update(cx, |this, _| {
+                        this.bounds = Some(bounds);
+                    });
+                }
+            })
             .on_action(cx.listener(Self::on_delete_board_action))
             .on_action(cx.listener(Self::on_edit_board_action))
             .on_action(cx.listener(Self::on_move_board_action))
@@ -694,7 +780,7 @@ impl Render for SidebarView {
             .on_action(cx.listener(Self::on_move_project_down_action))
             .child(
                 Sidebar::new("sidebar")
-                    .w(px(260.))
+                    .w(self.width)
                     .collapsible(SidebarCollapsible::Offcanvas)
                     .collapsed(self.collapsed)
                     .border_0()
@@ -763,41 +849,38 @@ impl Render for SidebarView {
                                         .border_color(theme.foreground)
                                         .into_any_element()
                                 } else {
-                                    div()
-                                        .id("add-project-btn-container")
-                                        .flex()
+                                    h_flex()
+                                        .id("add-project-actions")
                                         .w_full()
-                                        .justify_center()
-                                        .items_center()
-                                        .h_8()
-                                        .rounded(theme.radius)
-                                        .bg(theme.accent_foreground.opacity(0.15))
-                                        .hover(|this| {
-                                            this.bg(theme.accent_foreground.opacity(0.20))
-                                        })
-                                        .border_1()
-                                        .border_color(theme.accent_foreground.opacity(0.30))
+                                        .gap_1()
                                         .child(
-                                            h_flex()
-                                                .id("add-project-btn")
-                                                .w_full()
-                                                .justify_center()
-                                                .items_center()
-                                                .gap_1()
-                                                .text_sm()
-                                                .text_color(theme.accent_foreground)
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(IconName::Plus)
-                                                .child("Add Project"),
+                                            Button::new("add-project-btn")
+                                                .icon(IconName::Plus)
+                                                .label("New project")
+                                                .outline()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.is_adding_project = true;
+                                                    this.new_project_input.update(
+                                                        cx,
+                                                        |input, cx| {
+                                                            input.set_value("", window, cx);
+                                                            input.focus(window, cx);
+                                                        },
+                                                    );
+                                                    cx.notify();
+                                                })),
                                         )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.is_adding_project = true;
-                                            this.new_project_input.update(cx, |input, cx| {
-                                                input.set_value("", window, cx);
-                                                input.focus(window, cx);
-                                            });
-                                            cx.notify();
-                                        }))
+                                        .child(
+                                            Button::new("add-folder-project-btn")
+                                                .icon(IconName::FolderOpen)
+                                                .outline()
+                                                .tooltip("Add folder as project")
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.add_folder_project(window, cx);
+                                                })),
+                                        )
                                         .into_any_element()
                                 }
                             }),
@@ -933,5 +1016,6 @@ impl Render for SidebarView {
                             ),
                     ),
             )
+            .children((!self.collapsed).then(|| self.render_resize_handle(cx)))
     }
 }
