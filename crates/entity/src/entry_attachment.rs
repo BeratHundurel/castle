@@ -4,26 +4,20 @@ use sea_orm::entity::prelude::*;
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "entry")]
+#[sea_orm(table_name = "entry_attachment")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
-    pub title: String,
-    pub description: String,
-    pub card_id: i64,
-    pub position: i32,
-    pub due_on: Option<String>,
-    pub reminder_enabled: bool,
-    pub reminder_notified_for: Option<String>,
-    pub deleted_at: Option<i64>,
+    pub entry_id: i64,
+    pub file_name: String,
     #[sea_orm(
         belongs_to,
-        from = "card_id",
+        from = "entry_id",
         to = "id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    pub card: HasOne<super::card::Entity>,
+    pub entry: HasOne<super::entry::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

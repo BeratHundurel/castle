@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
     pub name: String,
+    pub folder_path: Option<String>,
     pub archived: bool,
     pub position: i32,
     pub deleted_at: Option<i64>,

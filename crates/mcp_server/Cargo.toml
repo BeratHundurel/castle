@@ -1,0 +1,23 @@
+[package]
+name = "castle-mcp"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[[bin]]
+name = "castle-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+entity = { path = "../entity" }
+migration = { path = "../migration" }
+rmcp.workspace = true
+schemars.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-async-rw"] }

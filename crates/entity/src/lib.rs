@@ -6,6 +6,7 @@ pub mod board;
 pub mod board_label;
 pub mod card;
 pub mod entry;
+pub mod entry_attachment;
 pub mod entry_checklist_item;
 pub mod entry_label;
 pub mod note;
