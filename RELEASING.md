@@ -1,6 +1,6 @@
 # Releasing Castle
 
-Castle releases are built by GitHub Actions for Windows x86-64 and ARM64. Each release contains a standalone executable, an MSI installer, and SHA-256 checksums.
+Castle releases are built by GitHub Actions for Windows x86-64 and ARM64. Each release contains standalone Castle and Castle MCP executables, an MSI installer, and SHA-256 checksums.
 
 ## Publish a release
 
@@ -9,7 +9,7 @@ Castle releases are built by GitHub Actions for Windows x86-64 and ARM64. Each r
 
    ```sh
    cargo check
-   cargo build --release --bin castle
+   cargo build --release --bin castle --bin castle-mcp
    ```
 
 3. Commit the version change:

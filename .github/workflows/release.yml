@@ -94,7 +94,7 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build Castle
-        run: cargo build --locked --release --bin castle --target ${{ matrix.target }}
+        run: cargo build --locked --release --bin castle --bin castle-mcp --target ${{ matrix.target }}
 
       - name: Install WiX Toolset
         run: dotnet tool install --tool-path .wix wix --version 5.0.2
@@ -105,15 +105,19 @@ jobs:
           $version = '${{ needs.metadata.outputs.version }}'
           $arch = '${{ matrix.arch }}'
           $sourceExe = (Resolve-Path 'target/${{ matrix.target }}/release/castle.exe').Path
+          $sourceMcpExe = (Resolve-Path 'target/${{ matrix.target }}/release/castle-mcp.exe').Path
           $dist = New-Item -ItemType Directory -Force dist
           $portableExe = Join-Path $dist "Castle-$version-windows-$arch.exe"
+          $portableMcpExe = Join-Path $dist "Castle-MCP-$version-windows-$arch.exe"
           $installer = Join-Path $dist "Castle-$version-windows-$arch.msi"
 
           Copy-Item -LiteralPath $sourceExe -Destination $portableExe
+          Copy-Item -LiteralPath $sourceMcpExe -Destination $portableMcpExe
           .\.wix\wix.exe build installer/Castle.wxs `
             -arch '${{ matrix.wix_arch }}' `
             -d "Version=$version" `
             -d "SourceExe=$sourceExe" `
+            -d "SourceMcpExe=$sourceMcpExe" `
             -d 'UpgradeCode=${{ matrix.upgrade_code }}' `
             -pdbtype none `
             -o $installer
