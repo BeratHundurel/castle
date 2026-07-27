@@ -94,7 +94,9 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build Castle
-        run: cargo build --locked --release --bin castle --bin castle-mcp --target ${{ matrix.target }}
+        run: |
+          cargo build --locked --release --package app --bin castle --target ${{ matrix.target }}
+          cargo build --locked --release --package castle-mcp --bin castle-mcp --target ${{ matrix.target }}
 
       - name: Install WiX Toolset
         run: dotnet tool install --tool-path .wix wix --version 5.0.2
