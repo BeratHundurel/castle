@@ -18,12 +18,15 @@ use app::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::args_os()
-        .nth(1)
-        .is_some_and(|argument| argument == "--register-mcp")
-    {
-        app::mcp_registration::register_installed()?;
-        return Ok(());
+    if let Some(argument) = std::env::args_os().nth(1) {
+        if argument == "--register-mcp" {
+            app::mcp_registration::register_installed()?;
+            return Ok(());
+        }
+        if argument == "--unregister-mcp" {
+            app::mcp_registration::unregister()?;
+            return Ok(());
+        }
     }
 
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);

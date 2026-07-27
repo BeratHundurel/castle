@@ -3,9 +3,12 @@ use gpui::{
     StyleRefinement, Styled, Subscription, Window, div, px, rems,
 };
 use gpui_component::{
-    ActiveTheme, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry, WindowExt as _,
+    ActiveTheme, Disableable as _, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry,
+    WindowExt as _,
+    button::Button,
     group_box::GroupBoxVariant,
     kbd::Kbd,
+    notification::Notification,
     searchable_list::{SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
@@ -15,7 +18,7 @@ use crate::app_settings::{AppSettings, scrollbar_show_key};
 use crate::document_editor::types::EditorMode;
 use crate::keymap::{humanize_identifier, shortcuts};
 
-use super::AppShell;
+use super::{AppShell, McpSetupState};
 
 const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
 const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
@@ -124,6 +127,87 @@ impl AppShell {
                     }
                 })
         });
+    }
+
+    pub(super) fn refresh_mcp_setup(&mut self, cx: &mut Context<Self>) {
+        self.mcp_setup_state = McpSetupState::Checking;
+        let status = cx
+            .background_executor()
+            .spawn(async { crate::mcp_registration::status() });
+
+        cx.spawn(async move |this, cx| {
+            let next_state = match status.await {
+                Ok(crate::mcp_registration::RegistrationStatus::Enabled) => McpSetupState::Enabled,
+                Ok(crate::mcp_registration::RegistrationStatus::Available) => {
+                    McpSetupState::Available
+                }
+                Ok(crate::mcp_registration::RegistrationStatus::ServerUnavailable) => {
+                    McpSetupState::ServerUnavailable
+                }
+                Err(error) => McpSetupState::Error(error.to_string().into()),
+            };
+            this.update(cx, |this, cx| {
+                this.mcp_setup_state = next_state;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn set_mcp_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.mcp_setup_state = if enabled {
+            McpSetupState::Enabling
+        } else {
+            McpSetupState::Disabling
+        };
+        cx.notify();
+
+        let operation = cx.background_executor().spawn(async move {
+            if enabled {
+                crate::mcp_registration::register_installed()?;
+            } else {
+                crate::mcp_registration::unregister()?;
+            }
+            crate::mcp_registration::status()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = operation.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(status) => {
+                        this.mcp_setup_state = match status {
+                            crate::mcp_registration::RegistrationStatus::Enabled => {
+                                McpSetupState::Enabled
+                            }
+                            crate::mcp_registration::RegistrationStatus::Available => {
+                                McpSetupState::Available
+                            }
+                            crate::mcp_registration::RegistrationStatus::ServerUnavailable => {
+                                McpSetupState::ServerUnavailable
+                            }
+                        };
+                        let message = if enabled {
+                            "MCP enabled. Restart open Codex clients to connect Castle."
+                        } else {
+                            "MCP disabled. Restart open Codex clients to disconnect Castle."
+                        };
+                        window.push_notification(Notification::success(message), cx);
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        this.mcp_setup_state = McpSetupState::Error(message.clone().into());
+                        window.push_notification(
+                            Notification::error(format!("Could not update MCP setup: {message}")),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -372,6 +456,15 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
             .description("Keyboard shortcuts currently registered by Castle.")
             .resettable(false)
             .groups(shortcut_groups(cx)),
+        SettingPage::new("Agent Access")
+            .icon(Icon::new(IconName::SquareTerminal))
+            .description("Let trusted local agents work with your Castle notes and boards.")
+            .resettable(false)
+            .group(
+                SettingGroup::new()
+                    .title("Model Context Protocol")
+                    .item(mcp_setup_item(app.clone())),
+            ),
         SettingPage::new("About")
             .icon(Icon::new(IconName::Info))
             .group(
@@ -402,6 +495,64 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                     })]),
             ),
     ]
+}
+
+fn mcp_setup_item(app: Entity<AppShell>) -> SettingItem {
+    SettingItem::render(move |options, _window, cx| {
+        let state = app.read(cx).mcp_setup_state.clone();
+        let (status, label, disabled, enable) = match &state {
+            McpSetupState::Checking => ("Checking setup…", "Checking…", true, true),
+            McpSetupState::Enabling => ("Adding Castle to Codex…", "Enabling…", true, true),
+            McpSetupState::Disabling => ("Removing Castle from Codex…", "Disabling…", true, false),
+            McpSetupState::Enabled => (
+                "Enabled for Codex clients on this computer.",
+                "Disable MCP",
+                false,
+                false,
+            ),
+            McpSetupState::Available => (
+                "Ready to enable. No agent configuration has been changed.",
+                "Enable MCP",
+                false,
+                true,
+            ),
+            McpSetupState::ServerUnavailable => (
+                "Place the matching Castle-MCP executable beside Castle to enable agent access.",
+                "Helper not found",
+                true,
+                true,
+            ),
+            McpSetupState::Error(message) => (message.as_ref(), "Try again", false, true),
+        };
+
+        gpui_component::h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .gap_4()
+            .child(
+                gpui_component::v_flex().gap_1().child("Castle MCP").child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(status.to_string()),
+                ),
+            )
+            .child(
+                Button::new("settings-mcp-toggle")
+                    .label(label)
+                    .outline()
+                    .with_size(options.size)
+                    .disabled(disabled)
+                    .on_click({
+                        let app = app.clone();
+                        move |_, window, cx| {
+                            app.update(cx, |app, cx| app.set_mcp_enabled(enable, window, cx));
+                        }
+                    }),
+            )
+            .into_any_element()
+    })
 }
 
 fn shortcut_groups(cx: &App) -> Vec<SettingGroup> {

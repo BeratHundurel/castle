@@ -49,23 +49,6 @@
 
     <StandardDirectory Id="ProgramMenuFolder" />
 
-    <CustomAction
-            Id="RegisterCastleMcp"
-            FileRef="CastleExe"
-            ExeCommand="--register-mcp"
-            Execute="deferred"
-            Impersonate="yes"
-            Return="ignore"
-        />
-
-    <InstallExecuteSequence>
-      <Custom
-                Action="RegisterCastleMcp"
-                After="InstallFiles"
-                Condition="NOT REMOVE"
-            />
-    </InstallExecuteSequence>
-
     <Feature Id="MainFeature" Title="Castle" Level="1">
       <ComponentRef Id="CastleExecutable" />
       <ComponentRef Id="CastleMcpExecutable" />

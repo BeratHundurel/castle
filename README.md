@@ -9,7 +9,7 @@ Download the latest Windows release from the repository's [Releases page](https:
 - Intel or AMD PC: choose the `windows-x86_64` file.
 - Windows on ARM PC: choose the `windows-arm64` file.
 - Use the `.msi` for a normal installation or the `.exe` as a standalone app.
-- Standalone users can download the matching `Castle-MCP` executable for agent access; the MSI already includes it.
+- MCP agent access is optional. The MSI includes the helper, while standalone users can download the matching `Castle-MCP` executable when they want it.
 
 Windows may show a SmartScreen warning because the current release artifacts are not code-signed.
 
@@ -31,9 +31,9 @@ Organize work visually with kanban boards, cards, labels, checklists, and due da
 
 Castle includes a local [Model Context Protocol](https://modelcontextprotocol.io/) server. Agents can read, search, create, update, and move notes and todos; build project/board/list hierarchies; rename workspace items; and manage todo labels, checklists, due dates, and reminders. Castle refreshes open boards and saved notes after external writes while preserving unsaved editor changes.
 
-The Castle MSI installs the server alongside the app and registers it automatically for the installing user's Codex clients. The ChatGPT desktop app, Codex CLI, and Codex IDE extension share this MCP configuration. If one of those clients was already open during installation, restart it once so it reloads the configuration.
+MCP access is off by default. Open **Settings → Agent Access** and choose **Enable MCP** to register Castle for the installing user's Codex clients. The ChatGPT desktop app, Codex CLI, and Codex IDE extension share this MCP configuration. Restart any client that was already open so it reloads the configuration.
 
-Standalone users can register the downloaded MCP executable manually, replacing the example path with the downloaded file's location:
+For a standalone install, place the matching `Castle-MCP` download beside the Castle executable and use the same **Enable MCP** button. You can also register it manually, replacing the example path with the downloaded file's location:
 
 ```powershell
 codex mcp add castle -- "C:\path\to\downloaded\Castle-MCP.exe"
