@@ -39,8 +39,26 @@ impl AppShell {
                         .gap_2()
                         .px_2()
                         .child(
-                            SidebarToggleButton::new()
-                                .collapsed(sidebar_collapsed)
+                            Button::new("collapse")
+                                .icon(
+                                    Icon::new(if sidebar_collapsed {
+                                        IconName::PanelLeftOpen
+                                    } else {
+                                        IconName::PanelLeftClose
+                                    })
+                                    .size_4(),
+                                )
+                                .ghost()
+                                .small()
+                                .tooltip_with_action(
+                                    if sidebar_collapsed {
+                                        "Show sidebar"
+                                    } else {
+                                        "Hide sidebar"
+                                    },
+                                    &ToggleSidebarAction,
+                                    Some("AppShell"),
+                                )
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     let visible = this.sidebar.read(cx).is_collapsed();
                                     this.set_sidebar_visible(visible, cx);

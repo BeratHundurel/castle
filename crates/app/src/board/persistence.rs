@@ -29,9 +29,6 @@ impl BoardView {
 
     pub(crate) fn reload_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
         self.board_id = Some(board_id);
-        self.cards.clear();
-        self.board_labels.clear();
-        self.attachment_preview_paths.clear();
         self.load_error = None;
         self.is_adding_list = false;
         self.next_checklist_item_position = 0;
@@ -59,6 +56,7 @@ impl BoardView {
                         Ok((cards, board_labels)) => {
                             this.cards = cards;
                             this.board_labels = board_labels;
+                            this.attachment_preview_paths.clear();
                             this.load_error = None;
                         }
                         Err(err) => {
@@ -69,6 +67,7 @@ impl BoardView {
                         }
                     }
                     cx.notify();
+                    cx.emit(super::BoardViewEvent::LoadFinished(board_id));
                 }
             })
             .ok();

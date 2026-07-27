@@ -22,7 +22,6 @@ use gpui_component::{
         MoveUp as InputMoveUp,
     },
     menu::ContextMenuExt as _,
-    sidebar::SidebarToggleButton,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -32,7 +31,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::DB;
 use crate::app_settings::{AppSettings, StoredTab};
-use crate::board::BoardView;
+use crate::board::{BoardView, BoardViewEvent};
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
 use crate::document_editor::{
     DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState, now_ts,
@@ -71,9 +70,27 @@ enum WorkspaceTitleTarget {
     Note(u32),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum McpSetupState {
+    Checking,
+    Enabling,
+    Disabling,
+    Enabled,
+    Available,
+    ServerUnavailable,
+    Error(SharedString),
+}
+
 struct PendingWorkspaceTitleSave {
     generation: u64,
     title: String,
+}
+
+struct PendingBoardOpen {
+    board_id: u32,
+    view: Entity<BoardView>,
+    tab_id: u64,
+    replaced_chooser_id: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -113,6 +130,7 @@ pub struct AppShell {
     pub(crate) active_project_id: Option<u32>,
     suppress_title_event: bool,
     settings_dialog_open: bool,
+    mcp_setup_state: McpSetupState,
     window_is_narrow: bool,
     home_state: WorkspaceHomeState,
     home_loaded: bool,
@@ -130,6 +148,7 @@ pub struct AppShell {
     workspace_refreshing: bool,
     workspace_refresh_pending: bool,
     pending_workspace_title_saves: HashMap<WorkspaceTitleTarget, PendingWorkspaceTitleSave>,
+    pending_board_open: Option<PendingBoardOpen>,
     workspace_title_save_lock: Arc<tokio::sync::Mutex<()>>,
     record_opened_generation: u64,
     tab_session_save_generation: u64,
@@ -259,6 +278,7 @@ impl AppShell {
 
                     this.command_palette.query = input.read(cx).text().to_string();
                     this.command_palette.selected_index = 0;
+                    this.command_palette.search_preview_scroll_pending.set(true);
                     this.command_palette.scroll_handle.scroll_to_item(0);
 
                     if this.command_palette.mode == CommandPaletteMode::Search {
@@ -430,6 +450,7 @@ impl AppShell {
             active_project_id: tab_session.active_project_id,
             suppress_title_event: false,
             settings_dialog_open: false,
+            mcp_setup_state: McpSetupState::Checking,
             window_is_narrow: false,
             home_state: WorkspaceHomeState::default(),
             home_loaded: false,
@@ -447,6 +468,7 @@ impl AppShell {
             workspace_refreshing: false,
             workspace_refresh_pending: false,
             pending_workspace_title_saves: HashMap::new(),
+            pending_board_open: None,
             workspace_title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
             record_opened_generation: 0,
             tab_session_save_generation: 0,
@@ -468,6 +490,7 @@ impl AppShell {
         cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx))
             .detach();
         this.start_external_change_watcher(window, cx);
+        this.refresh_mcp_setup(cx);
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);
         this.load_home(cx);

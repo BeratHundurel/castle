@@ -263,6 +263,20 @@ impl AppShell {
             search_result_preview_source(&result),
             &self.command_palette.query,
         );
+        let match_block_index = preview_blocks
+            .iter()
+            .position(|block| block.is_match)
+            .unwrap_or(0);
+
+        if self
+            .command_palette
+            .search_preview_scroll_pending
+            .replace(false)
+        {
+            self.command_palette
+                .search_preview_scroll_handle
+                .scroll_to_item(match_block_index);
+        }
 
         v_flex()
             .size_full()
@@ -291,25 +305,19 @@ impl AppShell {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.command_palette.search_preview_scroll_handle)
                     .p_4()
+                    .gap_2()
                     .text_size(px(13.))
                     .line_height(relative(1.55))
                     .text_color(theme.popover_foreground)
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .children(preview_blocks.into_iter().enumerate().map(
-                                |(block_index, block)| {
-                                    self.render_search_preview_block(
-                                        &result,
-                                        block_index,
-                                        block,
-                                        cx,
-                                    )
-                                },
-                            )),
-                    ),
+                    .children(preview_blocks.into_iter().enumerate().map(
+                        |(block_index, block)| {
+                            self.render_search_preview_block(&result, block_index, block, cx)
+                        },
+                    )),
             )
+            .vertical_scrollbar(&self.command_palette.search_preview_scroll_handle)
             .into_any_element()
     }
 

@@ -2,6 +2,22 @@ use super::*;
 use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
+    pub(super) fn cancel_pending_board_open(&mut self) {
+        let Some(pending) = self.pending_board_open.take() else {
+            return;
+        };
+        if let Some(index) = self
+            .open_tabs
+            .iter()
+            .position(|tab| tab.id == pending.tab_id)
+        {
+            self.open_tabs.remove(index);
+            if self.active_tab_index > index {
+                self.active_tab_index -= 1;
+            }
+        }
+    }
+
     pub(super) fn persist_tab_session(&mut self, cx: &mut Context<Self>) {
         self.tab_session_save_generation = self.tab_session_save_generation.saturating_add(1);
         let generation = self.tab_session_save_generation;
@@ -51,6 +67,7 @@ impl AppShell {
     }
 
     pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_pending_board_open();
         let index = self.open_tabs.len();
         let id = self.next_tab_id;
         self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -105,12 +122,32 @@ impl AppShell {
 
     pub(super) fn activate_tab(
         &mut self,
-        index: usize,
+        mut index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if index >= self.open_tabs.len() {
             return;
+        }
+
+        let target_tab_id = self.open_tabs[index].id;
+        if self
+            .pending_board_open
+            .as_ref()
+            .is_some_and(|pending| target_tab_id == pending.tab_id)
+        {
+            return;
+        }
+        if self.pending_board_open.is_some() {
+            self.cancel_pending_board_open();
+            let Some(updated_index) = self
+                .open_tabs
+                .iter()
+                .position(|tab| tab.id == target_tab_id)
+            else {
+                return;
+            };
+            index = updated_index;
         }
 
         self.active_tab_index = index;
@@ -147,6 +184,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_pending_board_open();
         self.active_project_id = Some(project_id);
 
         if matches!(
@@ -186,6 +224,14 @@ impl AppShell {
             return;
         }
 
+        let closing_tab_id = self.open_tabs[index].id;
+        if self
+            .pending_board_open
+            .as_ref()
+            .is_some_and(|pending| pending.tab_id == closing_tab_id)
+        {
+            self.pending_board_open = None;
+        }
         let was_active = self.active_tab_index == index;
         self.open_tabs.remove(index);
         if self.open_tabs.is_empty() {
@@ -271,6 +317,7 @@ impl AppShell {
     }
 
     pub(crate) fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_board_open = None;
         self.open_tabs.clear();
         self.open_tabs.push(OpenTab {
             id: self.next_tab_id,
@@ -462,27 +509,95 @@ impl AppShell {
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Entity<BoardView> {
         self.record_item_opened(crate::home::WorkspaceItemKind::Board, board_id, cx);
-        if let Some(index) = self.open_tabs.iter().position(
-            |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == board_id),
-        ) {
-            self.activate_tab(index, window, cx);
-            return;
+        if let Some(pending) = self
+            .pending_board_open
+            .as_ref()
+            .filter(|pending| pending.board_id == board_id)
+        {
+            return pending.view.clone();
         }
 
+        if let Some((index, view)) =
+            self.open_tabs
+                .iter()
+                .enumerate()
+                .find_map(|(index, tab)| match &tab.kind {
+                    OpenTabKind::Board {
+                        board_id: id, view, ..
+                    } if *id == board_id => Some((index, view.clone())),
+                    _ => None,
+                })
+        {
+            self.activate_tab(index, window, cx);
+            return view;
+        }
+
+        self.cancel_pending_board_open();
+
         let view = BoardView::view(window, cx);
-        view.update(cx, |board, cx| board.reload_board(board_id, cx));
-        self.replace_or_push_active(
-            OpenTabKind::Board {
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, loaded_view, event: &BoardViewEvent, window, cx| {
+                let BoardViewEvent::LoadFinished(board_id) = event;
+                let is_current = this.pending_board_open.as_ref().is_some_and(|pending| {
+                    pending.board_id == *board_id
+                        && pending.view.entity_id() == loaded_view.entity_id()
+                });
+                if is_current {
+                    this.finish_pending_board_open(window, cx);
+                }
+            },
+        )
+        .detach();
+        let replaced_chooser_id = self
+            .open_tabs
+            .get(self.active_tab_index)
+            .filter(|tab| matches!(tab.kind, OpenTabKind::Chooser))
+            .map(|tab| tab.id);
+        let tab_id = self.next_tab_id;
+        self.next_tab_id = self.next_tab_id.saturating_add(1);
+        self.open_tabs.push(OpenTab {
+            id: tab_id,
+            title,
+            kind: OpenTabKind::Board {
                 board_id,
                 project_id,
-                view,
+                view: view.clone(),
             },
-            title,
-            window,
-            cx,
-        );
+        });
+        self.pending_board_open = Some(PendingBoardOpen {
+            board_id,
+            view: view.clone(),
+            tab_id,
+            replaced_chooser_id,
+        });
+        cx.notify();
+        view.update(cx, |board, cx| board.reload_board(board_id, cx));
+        view
+    }
+
+    fn finish_pending_board_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_board_open.take() else {
+            return;
+        };
+        if let Some(chooser_id) = pending.replaced_chooser_id
+            && let Some(index) = self.open_tabs.iter().position(|tab| tab.id == chooser_id)
+        {
+            self.open_tabs.remove(index);
+            if self.active_tab_index > index {
+                self.active_tab_index -= 1;
+            }
+        }
+        if let Some(index) = self
+            .open_tabs
+            .iter()
+            .position(|tab| tab.id == pending.tab_id)
+        {
+            self.activate_tab(index, window, cx);
+        }
     }
 
     pub(crate) fn open_note_tab(
@@ -493,6 +608,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_pending_board_open();
         self.record_item_opened(crate::home::WorkspaceItemKind::Note, note_id, cx);
         if let Some(index) = self.open_tabs.iter().position(
             |tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == note_id),

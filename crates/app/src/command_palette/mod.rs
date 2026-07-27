@@ -7,6 +7,8 @@ mod search_render;
 
 pub(crate) use action::*;
 
+use std::cell::Cell;
+
 use gpui::{AppContext, Entity, ScrollHandle, SharedString, Task, Window};
 use gpui_component::{IconName, input::InputState};
 
@@ -67,6 +69,8 @@ pub(crate) struct CommandPalette {
     pub(crate) query: String,
     pub(crate) selected_index: usize,
     pub(crate) scroll_handle: ScrollHandle,
+    pub(crate) search_preview_scroll_handle: ScrollHandle,
+    pub(crate) search_preview_scroll_pending: Cell<bool>,
     pub(crate) suppress_input_event: bool,
     pub(crate) workspace_commands: Vec<SearchablePaletteCommand>,
     pub(crate) search_results: Vec<SearchResult>,
@@ -88,6 +92,8 @@ impl CommandPalette {
             query: String::new(),
             selected_index: 0,
             scroll_handle: ScrollHandle::new(),
+            search_preview_scroll_handle: ScrollHandle::new(),
+            search_preview_scroll_pending: Cell::new(true),
             suppress_input_event: false,
             workspace_commands: Vec::new(),
             search_results: Vec::new(),

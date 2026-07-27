@@ -55,6 +55,12 @@ pub(crate) struct BoardView {
     load_generation: u64,
 }
 
+pub(crate) enum BoardViewEvent {
+    LoadFinished(u32),
+}
+
+impl EventEmitter<BoardViewEvent> for BoardView {}
+
 impl BoardView {
     pub(crate) fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, cx))

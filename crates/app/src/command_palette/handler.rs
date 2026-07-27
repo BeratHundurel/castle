@@ -59,6 +59,7 @@ impl AppShell {
         self.command_palette.search_results.clear();
         self.command_palette.search_loading = true;
         self.command_palette.search_error = None;
+        self.command_palette.search_preview_scroll_pending.set(true);
         self.command_palette.scroll_handle.scroll_to_item(0);
         self.command_palette.suppress_input_event = true;
         self.command_palette.input.update(cx, |input, cx| {
@@ -272,6 +273,7 @@ impl AppShell {
                     Ok(Ok(results)) => {
                         this.command_palette.search_results = results;
                         this.command_palette.search_error = None;
+                        this.command_palette.search_preview_scroll_pending.set(true);
                     }
                     Ok(Err(err)) => {
                         this.command_palette.search_results.clear();
@@ -360,6 +362,10 @@ impl AppShell {
         } else {
             (current + 1) % len
         };
+
+        if self.command_palette.mode == CommandPaletteMode::Search {
+            self.command_palette.search_preview_scroll_pending.set(true);
+        }
 
         self.command_palette
             .scroll_handle

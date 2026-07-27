@@ -1,7 +1,8 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme as _, ElementExt as _, Icon, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, ElementExt as _, Icon, IconName, Selectable as _,
+    Sizable as _,
     animation::ease_in_out_cubic,
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
@@ -21,6 +22,12 @@ use crate::app_settings::AppSettings;
 #[derive(Clone)]
 struct OutlineResizeDrag {
     editor_id: EntityId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkdownPreviewVirtualization {
+    Blocks,
+    Sections,
 }
 
 impl Render for OutlineResizeDrag {
@@ -158,51 +165,95 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let font_size = px(AppSettings::markdown_preview_font_size(cx) as f32);
+        let font_size_value = AppSettings::markdown_preview_font_size(cx);
+        let font_size = px(font_size_value as f32);
         let sections = if self.outline.markdown_sections().is_empty() {
             vec![self.editor.read(cx).value()]
         } else {
             self.outline.markdown_sections().to_vec()
         };
+        let section_count = sections.len();
+        let virtualization = markdown_preview_virtualization(self.outline_rows.is_empty());
+        let outline_in_layout = self.outline_rendered && self.view_width >= px(760.);
+        let preview_width = self.view_width
+            - if outline_in_layout {
+                outline_width_for_view(self.outline_width, self.view_width)
+            } else {
+                px(0.)
+            };
+        let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
             cx.global::<DB>().data_dir.clone(),
             self.current_path.as_deref(),
         );
+        let preview_style = markdown_preview_style(font_size);
+
+        if self.preview_list_state.item_count() != section_count {
+            self.preview_list_state.reset(section_count);
+        }
+        if self
+            .preview_font_size_bits
+            .replace(font_size_value.to_bits())
+            != font_size_value.to_bits()
+        {
+            self.preview_list_state.remeasure();
+        }
+
+        let content = match virtualization {
+            MarkdownPreviewVirtualization::Blocks => TextView::markdown(
+                "markdown-preview-blocks",
+                sections.into_iter().next().unwrap_or_default(),
+            )
+            .plugin(local_image_plugin)
+            .style(preview_style)
+            .code_block_actions(|code_block, _window, _cx| {
+                Clipboard::new("copy-code").value(code_block.code().clone())
+            })
+            .size_full()
+            .px(horizontal_padding)
+            .py_6()
+            .text_size(font_size)
+            .scrollable(true)
+            .selectable(true)
+            .into_any_element(),
+            MarkdownPreviewVirtualization::Sections => list(self.preview_list_state.clone(), {
+                move |index, _window, _cx| {
+                    div()
+                        .w_full()
+                        .px(horizontal_padding)
+                        .when(index == 0, |this| this.pt_6())
+                        .when(index + 1 == section_count, |this| this.pb_6())
+                        .child(
+                            TextView::markdown(
+                                ("markdown-preview-section", index),
+                                sections[index].clone(),
+                            )
+                            .plugin(local_image_plugin.clone())
+                            .style(preview_style.clone())
+                            .code_block_actions(|code_block, _window, _cx| {
+                                Clipboard::new("copy-code").value(code_block.code().clone())
+                            })
+                            .text_size(font_size)
+                            .scrollable(false)
+                            .selectable(true),
+                        )
+                        .into_any_element()
+                }
+            })
+            .size_full()
+            .into_any_element(),
+        };
 
         div()
             .id("markdown-preview")
+            .relative()
             .size_full()
+            .overflow_hidden()
             .bg(cx.theme().background)
-            .child(
-                div()
-                    .id("markdown-preview-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.preview_scroll_handle)
-                    .child(
-                        div().w_full().flex().justify_center().child(
-                            v_flex().w_full().max_w(px(920.)).min_w_0().p_6().children(
-                                sections
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(move |(index, section)| {
-                                        TextView::markdown(
-                                            ("markdown-preview-section", index),
-                                            section,
-                                        )
-                                        .plugin(local_image_plugin.clone())
-                                        .style(markdown_preview_style(font_size))
-                                        .code_block_actions(|code_block, _window, _cx| {
-                                            Clipboard::new("copy-code")
-                                                .value(code_block.code().clone())
-                                        })
-                                        .text_size(font_size)
-                                        .scrollable(false)
-                                        .selectable(true)
-                                    }),
-                            ),
-                        ),
-                    ),
+            .child(content)
+            .when(
+                virtualization == MarkdownPreviewVirtualization::Sections,
+                |this| this.vertical_scrollbar(&self.preview_list_state),
             )
     }
 
@@ -212,6 +263,8 @@ impl DocumentEditorView {
         let kind = self.kind;
         let empty = rows.is_empty();
         let json_has_error = self.outline.json_has_error();
+        let can_expand_all = self.outline.can_expand_all();
+        let can_collapse_all = self.outline.can_collapse_all();
         let empty_message = if self.kind == DocumentKind::Json {
             "Add JSON properties or array items to navigate this document."
         } else {
@@ -257,14 +310,44 @@ impl DocumentEditorView {
                             })),
                     )
                     .child(
-                        Button::new("close-document-outline")
-                            .icon(IconName::Close)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("Hide outline (Ctrl+Shift+O)")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_outline(window, cx);
-                            })),
+                        h_flex()
+                            .gap_1()
+                            .children((kind == DocumentKind::Json).then(|| {
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Button::new("expand-all-json-outline")
+                                            .icon(IconName::ChevronDown)
+                                            .ghost()
+                                            .xsmall()
+                                            .disabled(!can_expand_all)
+                                            .tooltip("Expand all JSON nodes")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.set_all_outline_nodes_expanded(true, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("collapse-all-json-outline")
+                                            .icon(IconName::ChevronRight)
+                                            .ghost()
+                                            .xsmall()
+                                            .disabled(!can_collapse_all)
+                                            .tooltip("Collapse all JSON nodes")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.set_all_outline_nodes_expanded(false, cx);
+                                            })),
+                                    )
+                            }))
+                            .child(
+                                Button::new("close-document-outline")
+                                    .icon(IconName::Close)
+                                    .ghost()
+                                    .xsmall()
+                                    .tooltip("Hide outline (Ctrl+Shift+O)")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_outline(window, cx);
+                                    })),
+                            ),
                     ),
             )
             .when_else(
@@ -758,6 +841,21 @@ fn source_horizontal_padding(source_width: Pixels) -> Pixels {
     px(((source_width.as_f32() - EDITOR_MAX_WIDTH) / 2. + EDITOR_GUTTER).max(EDITOR_GUTTER))
 }
 
+fn markdown_preview_horizontal_padding(preview_width: Pixels) -> Pixels {
+    const PREVIEW_MAX_WIDTH: f32 = 920.;
+    const PREVIEW_GUTTER: f32 = 24.;
+
+    px(((preview_width.as_f32() - PREVIEW_MAX_WIDTH) / 2. + PREVIEW_GUTTER).max(PREVIEW_GUTTER))
+}
+
+fn markdown_preview_virtualization(outline_is_empty: bool) -> MarkdownPreviewVirtualization {
+    if outline_is_empty {
+        MarkdownPreviewVirtualization::Blocks
+    } else {
+        MarkdownPreviewVirtualization::Sections
+    }
+}
+
 fn outline_width_for_view(requested_width: Pixels, view_width: Pixels) -> Pixels {
     let available_width = (view_width - super::EDITOR_MIN_WIDTH_WITH_OUTLINE)
         .max(super::OUTLINE_MIN_WIDTH)
@@ -786,7 +884,9 @@ mod tests {
     use gpui::px;
 
     use super::{
-        DocumentKind, outline_row_left_padding, outline_width_for_view, reserves_disclosure_space,
+        DocumentKind, MarkdownPreviewVirtualization, markdown_preview_horizontal_padding,
+        markdown_preview_virtualization, outline_row_left_padding, outline_width_for_view,
+        reserves_disclosure_space,
     };
 
     #[test]
@@ -807,5 +907,23 @@ mod tests {
     fn nested_outline_rows_use_compact_indentation() {
         assert_eq!(outline_row_left_padding(0), px(8.));
         assert_eq!(outline_row_left_padding(3), px(32.));
+    }
+
+    #[test]
+    fn markdown_preview_keeps_reading_width_and_minimum_gutter() {
+        assert_eq!(markdown_preview_horizontal_padding(px(800.)), px(24.));
+        assert_eq!(markdown_preview_horizontal_padding(px(1_200.)), px(164.));
+    }
+
+    #[test]
+    fn markdown_preview_preserves_outline_navigation_with_section_virtualization() {
+        assert_eq!(
+            markdown_preview_virtualization(true),
+            MarkdownPreviewVirtualization::Blocks
+        );
+        assert_eq!(
+            markdown_preview_virtualization(false),
+            MarkdownPreviewVirtualization::Sections
+        );
     }
 }

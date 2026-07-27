@@ -97,8 +97,8 @@ pub(super) fn search_preview_blocks(value: &str, query: &str) -> Vec<SearchPrevi
 
     let selected_index = blocks
         .iter()
-        .position(|(_, exact_match, _)| *exact_match)
-        .or_else(|| blocks.iter().position(|(_, _, marker_match)| *marker_match));
+        .position(|(_, _, marker_match)| *marker_match)
+        .or_else(|| blocks.iter().position(|(_, exact_match, _)| *exact_match));
 
     blocks
         .into_iter()
@@ -383,5 +383,29 @@ pub(super) fn search_result_preview_source(result: &SearchResult) -> &str {
         search_result_snippet_source(result)
     } else {
         &result.preview
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_preview_blocks;
+
+    #[test]
+    fn marked_fts_match_wins_over_an_earlier_query_occurrence() {
+        let blocks = search_preview_blocks(
+            "An earlier search occurrence.\n\nThe selected \u{1}search\u{2} occurrence.",
+            "search",
+        );
+
+        assert!(!blocks[0].is_match);
+        assert!(blocks[1].is_match);
+    }
+
+    #[test]
+    fn exact_query_is_used_when_preview_has_no_fts_markers() {
+        let blocks = search_preview_blocks("First block.\n\nContains search here.", "search");
+
+        assert!(!blocks[0].is_match);
+        assert!(blocks[1].is_match);
     }
 }

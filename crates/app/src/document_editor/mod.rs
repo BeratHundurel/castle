@@ -18,6 +18,7 @@ use gpui_component::{
     input::{InputEvent, InputState, RopeExt as _, TabSize},
 };
 use std::{
+    cell::Cell,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -36,7 +37,6 @@ const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);
 const OUTLINE_SCROLL_LAYOUT_DELAY: Duration = Duration::from_millis(16);
 const OUTLINE_SCROLL_ATTEMPTS: usize = 4;
-const OUTLINE_SCROLL_TOP_INSET: Pixels = px(32.);
 const OUTLINE_TRANSITION_DURATION: Duration = Duration::from_millis(160);
 const OUTLINE_SOURCE_HIGHLIGHT_DURATION: Duration = Duration::from_millis(1_400);
 const OUTLINE_DEFAULT_WIDTH: Pixels = px(224.);
@@ -93,7 +93,8 @@ pub(crate) struct DocumentEditorView {
     outline_navigation_generation: u64,
     outline_source_highlight: Option<OutlineSourceHighlight>,
     _outline_source_highlight_task: Option<Task<()>>,
-    preview_scroll_handle: gpui::ScrollHandle,
+    preview_list_state: gpui::ListState,
+    preview_font_size_bits: Cell<u64>,
     outline_scroll_handle: UniformListScrollHandle,
     outline_focus_handle: FocusHandle,
     view_width: gpui::Pixels,
@@ -112,10 +113,12 @@ impl DocumentEditorView {
         let line_numbers = AppSettings::editor_line_numbers(cx);
         let soft_wrap = AppSettings::editor_soft_wrap(cx);
         let outline_visible = AppSettings::document_outline_visible(cx);
+        let preview_font_size_bits = AppSettings::markdown_preview_font_size(cx).to_bits();
 
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor(Language::Plain)
+                .scroll_beyond_last_line(Some(1))
                 .line_number(line_numbers)
                 .indent_guides(false)
                 .tab_size(TabSize {
@@ -186,7 +189,9 @@ impl DocumentEditorView {
             outline_navigation_generation: 0,
             outline_source_highlight: None,
             _outline_source_highlight_task: None,
-            preview_scroll_handle: gpui::ScrollHandle::new(),
+            preview_list_state: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2_048.))
+                .measure_all(),
+            preview_font_size_bits: Cell::new(preview_font_size_bits),
             outline_scroll_handle: UniformListScrollHandle::default(),
             outline_focus_handle,
             view_width: gpui::px(0.),
@@ -351,7 +356,10 @@ impl DocumentEditorView {
                 self.outline_source_highlight = None;
                 self._outline_source_highlight_task = None;
                 if let Some(section) = item.preview_section_index {
-                    self.preview_scroll_handle.scroll_to_item(section);
+                    self.preview_list_state.scroll_to(gpui::ListOffset {
+                        item_ix: section,
+                        offset_in_item: gpui::px(0.),
+                    });
                 }
             }
         }
@@ -407,6 +415,38 @@ impl DocumentEditorView {
         }
     }
 
+    fn set_all_outline_nodes_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        let selected_node = self
+            .outline_selected
+            .and_then(|index| self.outline_rows.get(index))
+            .and_then(|row| row.node_index);
+        let changed = if expanded {
+            self.outline.expand_all()
+        } else {
+            self.outline.collapse_all()
+        };
+        if !changed {
+            return;
+        }
+
+        let selected_node = selected_node.and_then(|node_index| {
+            expanded
+                .then_some(node_index)
+                .or_else(|| self.outline.root_node_index(node_index))
+        });
+        self.rebuild_outline_rows();
+        self.outline_selected = selected_node.and_then(|node_index| {
+            self.outline_rows
+                .iter()
+                .position(|row| row.node_index == Some(node_index))
+        });
+        if let Some(index) = self.outline_selected {
+            self.outline_scroll_handle
+                .scroll_to_item(index, gpui::ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
     fn rebuild_outline_rows(&mut self) {
         self.outline_rows = Arc::new(self.outline.rows());
         if self.outline_rows.is_empty() {
@@ -454,6 +494,7 @@ impl DocumentEditorView {
                 this.stats = analysis.stats;
                 this.outline = outline;
                 this.rebuild_outline_rows();
+                this.preview_list_state.remeasure();
                 let cursor_line = this.editor.read(cx).cursor_position().line as usize;
                 if this.kind == DocumentKind::Markdown {
                     this.outline_selected =
@@ -496,7 +537,7 @@ impl DocumentEditorView {
                             let current = editor.scroll_offset();
                             let cursor_offset = cursor_bounds.origin.y
                                 - source_bounds.origin.y
-                                - OUTLINE_SCROLL_TOP_INSET;
+                                - source_bounds.size.height / 2.;
                             editor
                                 .set_scroll_offset(point(current.x, current.y - cursor_offset), cx);
                             true

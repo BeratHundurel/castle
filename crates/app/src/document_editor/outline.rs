@@ -90,6 +90,35 @@ impl DocumentOutline {
         }
     }
 
+    pub(crate) fn expand_all(&mut self) -> bool {
+        match self {
+            Self::Json(outline) => outline.expand_all(),
+            Self::None | Self::Markdown(_) => false,
+        }
+    }
+
+    pub(crate) fn collapse_all(&mut self) -> bool {
+        match self {
+            Self::Json(outline) => outline.collapse_all(),
+            Self::None | Self::Markdown(_) => false,
+        }
+    }
+
+    pub(crate) fn can_expand_all(&self) -> bool {
+        matches!(self, Self::Json(outline) if outline.can_expand_all())
+    }
+
+    pub(crate) fn can_collapse_all(&self) -> bool {
+        matches!(self, Self::Json(outline) if !outline.expanded.is_empty())
+    }
+
+    pub(crate) fn root_node_index(&self, node_index: usize) -> Option<usize> {
+        match self {
+            Self::Json(outline) => outline.root_node_index(node_index),
+            Self::None | Self::Markdown(_) => None,
+        }
+    }
+
     pub(crate) fn parent_row_index(&self, node_index: usize) -> Option<usize> {
         match self {
             Self::Json(outline) => outline.parent_row_index(node_index),
@@ -392,6 +421,46 @@ impl JsonOutline {
         self.expanded.remove(&node_index)
     }
 
+    fn expand_all(&mut self) -> bool {
+        let expanded = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| (!node.children.is_empty()).then_some(index))
+            .collect::<HashSet<_>>();
+        if expanded == self.expanded {
+            return false;
+        }
+        self.expanded = expanded;
+        true
+    }
+
+    fn collapse_all(&mut self) -> bool {
+        if self.expanded.is_empty() {
+            return false;
+        }
+        self.expanded.clear();
+        true
+    }
+
+    fn can_expand_all(&self) -> bool {
+        self.nodes
+            .iter()
+            .enumerate()
+            .any(|(index, node)| !node.children.is_empty() && !self.expanded.contains(&index))
+    }
+
+    fn root_node_index(&self, node_index: usize) -> Option<usize> {
+        let mut current = node_index;
+        loop {
+            let node = self.nodes.get(current)?;
+            let Some(parent) = node.parent else {
+                return Some(current);
+            };
+            current = parent;
+        }
+    }
+
     fn parent_row_index(&self, node_index: usize) -> Option<usize> {
         let parent = self.nodes.get(node_index)?.parent?;
         self.rows()
@@ -590,6 +659,25 @@ mod tests {
         let expanded = outline.rows();
         assert_eq!(expanded.len(), 4);
         assert!(expanded[2].title.starts_with("[0]"));
+    }
+
+    #[test]
+    fn expands_and_collapses_all_json_containers() {
+        let mut outline = DocumentOutline::Json(JsonOutline::parse(
+            r#"{"items":[{"nested":[1,2]}],"meta":{"ready":true}}"#,
+        ));
+
+        assert!(outline.can_expand_all());
+        assert!(!outline.can_collapse_all());
+        assert!(outline.expand_all());
+        assert_eq!(outline.rows().len(), 7);
+        assert!(!outline.can_expand_all());
+        assert!(outline.can_collapse_all());
+
+        assert!(outline.collapse_all());
+        assert_eq!(outline.rows().len(), 2);
+        assert!(outline.can_expand_all());
+        assert!(!outline.can_collapse_all());
     }
 
     #[test]
