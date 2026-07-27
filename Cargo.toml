@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/app", "crates/migration", "crates/entity", "crates/mcp_server"]
+members = [
+    "crates/app",
+    "crates/storage",
+    "crates/migration",
+    "crates/entity",
+    "crates/mcp_server",
+]
 default-members = ["crates/app"]
 resolver = "2"
 

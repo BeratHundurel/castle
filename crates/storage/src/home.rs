@@ -3,44 +3,44 @@ use chrono::Local;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WorkspaceItemKind {
+pub enum WorkspaceItemKind {
     Note,
     Board,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkspaceHomeItem {
-    pub(crate) kind: WorkspaceItemKind,
-    pub(crate) id: u32,
-    pub(crate) title: String,
-    pub(crate) project_id: Option<u32>,
-    pub(crate) project_name: Option<String>,
-    pub(crate) is_pinned: bool,
-    pub(crate) last_opened_at: Option<i64>,
+pub struct WorkspaceHomeItem {
+    pub kind: WorkspaceItemKind,
+    pub id: u32,
+    pub title: String,
+    pub project_id: Option<u32>,
+    pub project_name: Option<String>,
+    pub is_pinned: bool,
+    pub last_opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TodayEntry {
-    pub(crate) entry_id: u32,
-    pub(crate) board_id: u32,
-    pub(crate) project_id: Option<u32>,
-    pub(crate) title: String,
-    pub(crate) board_title: String,
-    pub(crate) list_title: String,
-    pub(crate) due_on: String,
-    pub(crate) labels: Vec<String>,
-    pub(crate) checklist_checked: u32,
-    pub(crate) checklist_total: u32,
+pub struct TodayEntry {
+    pub entry_id: u32,
+    pub board_id: u32,
+    pub project_id: Option<u32>,
+    pub title: String,
+    pub board_title: String,
+    pub list_title: String,
+    pub due_on: String,
+    pub labels: Vec<String>,
+    pub checklist_checked: u32,
+    pub checklist_total: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WorkspaceHomeState {
-    pub(crate) today: Vec<TodayEntry>,
-    pub(crate) pinned: Vec<WorkspaceHomeItem>,
-    pub(crate) recent: Vec<WorkspaceHomeItem>,
+pub struct WorkspaceHomeState {
+    pub today: Vec<TodayEntry>,
+    pub pinned: Vec<WorkspaceHomeItem>,
+    pub recent: Vec<WorkspaceHomeItem>,
 }
 
-pub(crate) async fn load_home(db: &DatabaseConnection) -> Result<WorkspaceHomeState> {
+pub async fn load_home(db: &DatabaseConnection) -> Result<WorkspaceHomeState> {
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
@@ -156,7 +156,7 @@ async fn load_home_items(db: &DatabaseConnection) -> Result<Vec<WorkspaceHomeIte
     Ok(items)
 }
 
-pub(crate) async fn mark_opened(
+pub async fn mark_opened(
     db: &DatabaseConnection,
     kind: WorkspaceItemKind,
     id: u32,
@@ -175,7 +175,7 @@ pub(crate) async fn mark_opened(
     Ok(())
 }
 
-pub(crate) async fn set_pinned(
+pub async fn set_pinned(
     db: &DatabaseConnection,
     kind: WorkspaceItemKind,
     id: u32,

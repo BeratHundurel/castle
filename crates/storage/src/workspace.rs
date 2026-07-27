@@ -7,43 +7,41 @@ use sea_orm::{
     sea_query::{Query, SelectStatement},
 };
 
-#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(test)]
 static WORKSPACE_LOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ProjectRow {
-    pub(crate) id: u32,
-    pub(crate) name: String,
-    pub(crate) position: i32,
+pub struct ProjectRow {
+    pub id: u32,
+    pub name: String,
+    pub position: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BoardRow {
-    pub(crate) id: u32,
-    pub(crate) title: String,
-    pub(crate) project_id: Option<u32>,
-    pub(crate) is_pinned: bool,
-    pub(crate) last_opened_at: Option<i64>,
+pub struct BoardRow {
+    pub id: u32,
+    pub title: String,
+    pub project_id: Option<u32>,
+    pub is_pinned: bool,
+    pub last_opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NoteRow {
-    pub(crate) id: u32,
-    pub(crate) title: String,
-    pub(crate) project_id: Option<u32>,
-    pub(crate) file_path: Option<String>,
-    pub(crate) is_pinned: bool,
-    pub(crate) last_opened_at: Option<i64>,
+pub struct NoteRow {
+    pub id: u32,
+    pub title: String,
+    pub project_id: Option<u32>,
+    pub file_path: Option<String>,
+    pub is_pinned: bool,
+    pub last_opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkspaceRows {
-    pub(crate) projects: Vec<ProjectRow>,
-    pub(crate) boards: Vec<BoardRow>,
-    pub(crate) notes: Vec<NoteRow>,
+pub struct WorkspaceRows {
+    pub projects: Vec<ProjectRow>,
+    pub boards: Vec<BoardRow>,
+    pub notes: Vec<NoteRow>,
 }
 
 fn visible_project_ids_query() -> SelectStatement {
@@ -55,8 +53,7 @@ fn visible_project_ids_query() -> SelectStatement {
         .to_owned()
 }
 
-pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRows> {
-    #[cfg(test)]
+pub async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRows> {
     WORKSPACE_LOAD_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let projects: Vec<ProjectRow> = Project::find()
@@ -146,13 +143,11 @@ pub(crate) async fn load_workspace_rows(db: &DatabaseConnection) -> Result<Works
     })
 }
 
-#[cfg(test)]
-pub(crate) fn reset_workspace_load_count() {
+pub fn reset_workspace_load_count() {
     WORKSPACE_LOAD_COUNT.store(0, Ordering::Relaxed);
 }
 
-#[cfg(test)]
-pub(crate) fn workspace_load_count() -> usize {
+pub fn workspace_load_count() -> usize {
     WORKSPACE_LOAD_COUNT.load(Ordering::Relaxed)
 }
 

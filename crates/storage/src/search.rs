@@ -14,7 +14,7 @@ const SEARCH_INSERT_BODY_BUDGET: usize = 1024 * 1024;
 const SEARCH_INSERT_DOCUMENT_LIMIT: usize = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SearchResultKind {
+pub enum SearchResultKind {
     Note,
     Board,
     Card,
@@ -22,16 +22,16 @@ pub(crate) enum SearchResultKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SearchResult {
-    pub(crate) kind: SearchResultKind,
-    pub(crate) item_id: u32,
-    pub(crate) open_id: u32,
-    pub(crate) project_id: Option<u32>,
-    pub(crate) title: String,
-    pub(crate) parent_title: Option<String>,
-    pub(crate) highlighted_title: String,
-    pub(crate) snippet: String,
-    pub(crate) preview: String,
+pub struct SearchResult {
+    pub kind: SearchResultKind,
+    pub item_id: u32,
+    pub open_id: u32,
+    pub project_id: Option<u32>,
+    pub title: String,
+    pub parent_title: Option<String>,
+    pub highlighted_title: String,
+    pub snippet: String,
+    pub preview: String,
 }
 
 fn active_project_ids_query() -> SelectStatement {
@@ -64,7 +64,7 @@ fn active_card_ids_query() -> SelectStatement {
         .to_owned()
 }
 
-pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
     let notes = Note::find()
         .filter(note::Column::DeletedAt.is_null())
         .filter(
@@ -251,7 +251,7 @@ pub(crate) async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), 
     Ok(())
 }
 
-pub(crate) async fn search_workspace(
+pub async fn search_workspace(
     db: &DatabaseConnection,
     query: &str,
     limit: u32,
@@ -613,7 +613,7 @@ async fn insert_search_document_chunk(
 }
 
 #[allow(dead_code)]
-pub(crate) async fn delete_search_item(
+pub async fn delete_search_item(
     db: &DatabaseConnection,
     item_type: &str,
     item_id: u32,

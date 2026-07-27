@@ -1,0 +1,352 @@
+use super::*;
+
+impl BoardView {
+    pub(super) fn render_entry_detail_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let selected_entry = self.selected_entry();
+
+        div()
+            .id("entry-detail-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .flex()
+            .items_stretch()
+            .justify_end()
+            .bg(theme.overlay.opacity(0.72))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.close_entry_dialog(cx)),
+            )
+            .child(
+                v_flex()
+                    .id("entry-detail-panel")
+                    .w(px(640.))
+                    .min_w(px(420.))
+                    .max_w(relative(0.94))
+                    .h_full()
+                    .overflow_hidden()
+                    .rounded_none()
+                    .border_l_1()
+                    .border_color(theme.border.opacity(0.78))
+                    .bg(theme.popover)
+                    .text_color(theme.popover_foreground)
+                    .shadow_lg()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.render_entry_detail_header(selected_entry, cx))
+                    .child(self.render_entry_detail_body(selected_entry, cx))
+                    .when(self.entry_dialog.editing, |this| {
+                        this.child(self.render_entry_detail_footer(cx))
+                    }),
+            )
+    }
+
+    pub(super) fn render_entry_detail_header(
+        &self,
+        selected_entry: Option<(&str, &EntryDTO)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme().clone();
+
+        h_flex()
+            .flex_shrink_0()
+            .items_start()
+            .gap_4()
+            .px_5()
+            .py_4()
+            .border_b_1()
+            .border_color(theme.border.opacity(0.74))
+            .bg(theme.popover)
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.muted_foreground)
+                            .child(Icon::new(IconName::LayoutDashboard).xsmall())
+                            .child(match selected_entry {
+                                Some((card_title, _)) => SharedString::from(card_title.to_string()),
+                                None => SharedString::from("Card details"),
+                            }),
+                    )
+                    .when_else(
+                        self.entry_dialog.editing,
+                        |this| {
+                            this.child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .line_height(relative(1.15))
+                                    .child("Edit card"),
+                            )
+                        },
+                        |this| {
+                            this.child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .line_height(relative(1.15))
+                                    .whitespace_normal()
+                                    .child(match selected_entry {
+                                        Some((_, entry)) => entry.title.clone(),
+                                        None => SharedString::from("Card not found"),
+                                    }),
+                            )
+                        },
+                    ),
+            )
+            .child(self.render_entry_header_actions(cx))
+    }
+
+    pub(super) fn render_entry_header_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry_id = self.entry_dialog.entry_id;
+        let move_destinations = entry_id
+            .and_then(|entry_id| {
+                self.cards
+                    .iter()
+                    .find(|card| card.entries.iter().any(|entry| entry.id == entry_id))
+                    .map(|source_card| {
+                        self.cards
+                            .iter()
+                            .filter(|card| card.id != source_card.id)
+                            .map(|card| (card.id, card.title.clone()))
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .unwrap_or_default();
+
+        h_flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .when(!self.entry_dialog.editing, |this| {
+                this.child(
+                    Button::new("edit-entry")
+                        .icon(IconName::Replace)
+                        .ghost()
+                        .compact()
+                        .tooltip("Edit")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.start_editing_entry(window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("entry-actions")
+                        .icon(IconName::Ellipsis)
+                        .ghost()
+                        .compact()
+                        .tooltip("Card actions")
+                        .dropdown_menu_with_anchor(Anchor::LeftCenter, move |menu, window, cx| {
+                            let danger = cx.theme().danger;
+                            let menu = if let Some(entry_id) = entry_id
+                                && !move_destinations.is_empty()
+                            {
+                                let destinations = move_destinations.clone();
+                                menu.submenu("Move to list", window, cx, move |menu, _, _| {
+                                    destinations.iter().fold(
+                                        menu,
+                                        |menu, (target_card_id, title)| {
+                                            menu.menu(
+                                                title.clone(),
+                                                Box::new(MoveEntryAction {
+                                                    entry_id,
+                                                    target_card_id: *target_card_id,
+                                                }),
+                                            )
+                                        },
+                                    )
+                                })
+                                .separator()
+                            } else {
+                                menu
+                            };
+
+                            menu.menu_element(Box::new(DuplicateEntryAction), move |_, _| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .justify_between()
+                                    .child("Duplicate card")
+                                    .child(Icon::new(IconName::Copy).xsmall())
+                            })
+                            .menu_element(
+                                Box::new(DeleteEntryAction),
+                                move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .gap_2()
+                                        .items_center()
+                                        .justify_between()
+                                        .text_color(danger)
+                                        .child("Delete")
+                                        .child(Icon::new(IconName::Delete).xsmall())
+                                },
+                            )
+                        }),
+                )
+            })
+            .child(
+                Button::new("close-entry-detail")
+                    .icon(IconName::Close)
+                    .ghost()
+                    .xsmall()
+                    .tooltip("Close")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_entry_dialog(cx);
+                    })),
+            )
+    }
+
+    pub(super) fn render_entry_detail_body(
+        &self,
+        selected_entry: Option<(&str, &EntryDTO)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme().clone();
+
+        if self.entry_dialog.editing {
+            return div().flex_1().overflow_hidden().child(
+                v_flex()
+                    .id("entry-detail-edit-scroll")
+                    .size_full()
+                    .flex_1()
+                    .gap_4()
+                    .p_5()
+                    .overflow_y_scrollbar()
+                    .child(self.render_entry_edit_form(cx)),
+            );
+        }
+
+        div().flex_1().overflow_hidden().child(
+            v_flex()
+                .id("entry-detail-content-scroll")
+                .size_full()
+                .flex_1()
+                .gap_4()
+                .p_5()
+                .bg(theme.popover)
+                .overflow_y_scrollbar()
+                .child(
+                    v_flex()
+                        .gap_4()
+                        .child(self.render_entry_description(selected_entry, cx))
+                        .child(
+                            h_flex()
+                                .items_start()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    div()
+                                        .min_w(px(260.))
+                                        .flex_1()
+                                        .child(self.render_entry_labels(selected_entry, cx)),
+                                )
+                                .child(
+                                    div()
+                                        .min_w(px(260.))
+                                        .flex_1()
+                                        .child(self.render_entry_due_date(selected_entry, cx)),
+                                ),
+                        )
+                        .child(self.render_entry_checklist(selected_entry, cx)),
+                ),
+        )
+    }
+
+    pub(super) fn render_entry_due_date(
+        &self,
+        selected_entry: Option<(&str, &EntryDTO)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let due_on = selected_entry
+            .and_then(|(_, entry)| entry.due_on.as_deref())
+            .filter(|due_on| !due_on.trim().is_empty());
+        let reminder_enabled = selected_entry
+            .map(|(_, entry)| entry.reminder_enabled)
+            .unwrap_or(false);
+        let (status_label, status_color) = match due_on {
+            Some(due_on) => match due_date_status(due_on, Local::now().date_naive()) {
+                DueDateStatus::Overdue => ("Overdue", cx.theme().danger),
+                DueDateStatus::Today => ("Today", cx.theme().primary),
+                DueDateStatus::Future => ("Scheduled", cx.theme().success),
+                DueDateStatus::Invalid => ("Invalid", cx.theme().warning),
+            },
+            None => ("Unscheduled", cx.theme().muted_foreground),
+        };
+
+        v_flex()
+            .gap_3()
+            .min_h(px(132.))
+            .p_3()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border.opacity(0.48))
+            .bg(cx.theme().secondary.opacity(0.16))
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(Icon::new(IconName::Calendar).xsmall())
+                            .child("Due date"),
+                    )
+                    .child(
+                        div()
+                            .rounded(px(3.))
+                            .px_1p5()
+                            .py(px(2.))
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .bg(status_color.opacity(0.14))
+                            .text_color(status_color)
+                            .child(status_label),
+                    ),
+            )
+            .child(
+                DatePicker::new(&self.due_date_picker)
+                    .w_full()
+                    .cleanable(true)
+                    .placeholder("No due date")
+                    .number_of_months(1),
+            )
+            .child(
+                Button::new("toggle-card-reminder")
+                    .icon(IconName::Bell)
+                    .label(if reminder_enabled {
+                        "Reminder on"
+                    } else {
+                        "Remind me"
+                    })
+                    .outline()
+                    .small()
+                    .selected(reminder_enabled)
+                    .disabled(due_on.is_none())
+                    .tooltip(if due_on.is_some() {
+                        "Show a system notification when this card is due"
+                    } else {
+                        "Choose a due date first"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_selected_entry_reminder(!reminder_enabled, cx);
+                    })),
+            )
+    }
+}

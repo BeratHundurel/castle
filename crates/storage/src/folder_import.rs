@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, Result, bail};
@@ -36,14 +37,14 @@ const IGNORED_DIRECTORIES: &[&str] = &[
 ];
 
 #[derive(Debug)]
-pub(crate) struct FolderDocument {
+pub struct FolderDocument {
     title: String,
     path: PathBuf,
     content: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct FolderScan {
+pub struct FolderScan {
     root: PathBuf,
     project_name: String,
     documents: Vec<FolderDocument>,
@@ -51,12 +52,12 @@ pub(crate) struct FolderScan {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct FolderImportResult {
-    pub(crate) project_name: String,
-    pub(crate) inserted: usize,
-    pub(crate) updated: usize,
-    pub(crate) skipped: usize,
-    pub(crate) created_project: bool,
+pub struct FolderImportResult {
+    pub project_name: String,
+    pub inserted: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub created_project: bool,
 }
 
 fn has_supported_extension(path: &Path) -> bool {
@@ -75,7 +76,7 @@ fn should_ignore_directory(name: &str) -> bool {
     name.starts_with('.') || IGNORED_DIRECTORIES.contains(&lowercase_name.as_str())
 }
 
-pub(crate) fn scan_folder(root: &Path) -> Result<FolderScan> {
+pub fn scan_folder(root: &Path) -> Result<FolderScan> {
     let root = root
         .canonicalize()
         .with_context(|| format!("Could not resolve {}", root.display()))?;
@@ -175,7 +176,7 @@ pub(crate) fn scan_folder(root: &Path) -> Result<FolderScan> {
     })
 }
 
-pub(crate) async fn import_folder(
+pub async fn import_folder(
     db: &DatabaseConnection,
     scan: FolderScan,
 ) -> Result<FolderImportResult> {
@@ -242,14 +243,14 @@ pub(crate) async fn import_folder(
                             file_managed_by_app: Set(false),
                             cached_content: Set(document.content),
                             file_missing_since: Set(None),
-                            updated_at: Set(crate::document_editor::now_ts()),
+                            updated_at: Set(now_ts()),
                             ..Default::default()
                         }
                         .update(txn)
                         .await?;
                         updated_count = updated_count.saturating_add(1);
                     } else {
-                        let now = crate::document_editor::now_ts();
+                        let now = now_ts();
                         note::ActiveModel {
                             title: Set(document.title),
                             project_id: Set(Some(project_id)),
@@ -277,6 +278,13 @@ pub(crate) async fn import_folder(
             })
         })
         .await?)
+}
+
+fn now_ts() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

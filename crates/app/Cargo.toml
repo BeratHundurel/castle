@@ -24,6 +24,7 @@ image.workspace = true
 chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
+storage = { path = "../storage" }
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 dotenvy = "0.15"

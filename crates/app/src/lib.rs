@@ -5,16 +5,13 @@ pub mod board;
 pub(crate) mod color_contrast;
 pub(crate) mod command_palette;
 pub mod document_editor;
-pub(crate) mod folder_import;
-pub(crate) mod home;
 pub mod keymap;
 pub mod mcp_registration;
-pub mod search;
 pub mod sidebar;
 pub mod system_notifications;
-pub(crate) mod trash;
 pub mod tray;
-pub(crate) mod workspace_data;
+
+pub(crate) use storage::{folder_import, home, search, trash, workspace as workspace_data};
 
 #[cfg(test)]
 mod test_alloc;
