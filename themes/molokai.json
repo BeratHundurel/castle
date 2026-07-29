@@ -179,102 +179,112 @@
         "base.cyan": "#07807e"
       },
       "highlight": {
-        "editor.foreground": "#DDDDDD",
-        "editor.background": "#000000",
-        "editor.active_line.background": "#131313",
-        "editor.line_number": "#8F8F8F",
-        "editor.active_line_number": "#DDDDDD",
-        "editor.invisible": "#76767666",
-        "conflict": "#D2602D",
-        "created": "#3f72e2",
+        "editor.foreground": "#f8f8f2",
+        "editor.background": "#1b1d1e",
+        "editor.active_line.background": "#292c2e",
+        "editor.line_number": "#5b5a54",
+        "editor.active_line_number": "#f8f8f2",
+        "editor.invisible": "#5b5a5466",
+        "conflict": "#f92672",
+        "created": "#a6e22e",
         "created.background": "#0C4619",
+        "deleted": "#f92672",
         "deleted.background": "#46190C",
+        "error": "#f92672",
         "error.background": "#46190C",
         "error.border": "#802207",
-        "hidden": "#9E9E9E",
-        "hint": "#b283f8",
+        "hidden": "#5b5a54",
+        "hint": "#66d9ef",
         "hint.background": "#250c4b",
         "hint.border": "#3f0891",
+        "ignored": "#5b5a54",
+        "info": "#66d9ef",
         "info.background": "#0C194D",
         "info.border": "#082190",
-        "modified": "#B0A878",
+        "modified": "#fd971f",
         "modified.background": "#3A310E",
-        "predictive": "#5D5945",
+        "predictive": "#75715e",
+        "renamed": "#66d9ef",
+        "success": "#a6e22e",
         "success.background": "#0C4619",
+        "unreachable": "#5b5a54",
+        "warning": "#e6db74",
         "warning.background": "#3A310E",
         "warning.border": "#7B6508",
         "syntax": {
           "attribute": {
-            "color": "#be9a52"
+            "color": "#a6e22e"
           },
           "boolean": {
-            "color": "#E1D797"
+            "color": "#ae81ff"
           },
           "comment": {
-            "color": "#9E9E9E"
+            "color": "#75715e",
+            "font_style": "italic"
           },
           "comment.doc": {
-            "color": "#9E9E9E"
+            "color": "#75715e",
+            "font_style": "italic"
           },
           "constant": {
-            "color": "#E1D797"
+            "color": "#ae81ff"
           },
           "constructor": {
-            "color": "#b5af9a"
+            "color": "#a6e22e"
           },
           "embedded": {
-            "color": "#CACCCA"
+            "color": "#f8f8f2"
           },
           "function": {
-            "color": "#E1D797"
+            "color": "#a6e22e"
           },
           "keyword": {
-            "color": "#E19773"
+            "color": "#f92672"
           },
           "link_text": {
-            "color": "#A86D3B",
-            "font_style": "normal"
+            "color": "#66d9ef",
+            "font_style": "underline"
           },
           "link_uri": {
-            "color": "#6F6D66",
+            "color": "#ae81ff",
             "font_style": "italic"
           },
           "number": {
-            "color": "#E19773"
+            "color": "#ae81ff"
           },
           "string": {
-            "color": "#76BA53"
+            "color": "#e6db74"
           },
           "string.escape": {
-            "color": "#76BA53"
+            "color": "#ae81ff"
           },
           "string.regex": {
-            "color": "#76BA53"
+            "color": "#e6db74"
           },
           "string.special": {
-            "color": "#E1D797"
+            "color": "#fd971f"
           },
           "string.special.symbol": {
-            "color": "#E1D797"
+            "color": "#ae81ff"
           },
           "tag": {
-            "color": "#b5af9a"
+            "color": "#f92672"
           },
           "text.literal": {
-            "color": "#E1D797"
+            "color": "#e6db74"
           },
           "title": {
-            "color": "#A76D3B",
+            "color": "#66d9ef",
             "font_weight": 600
           },
           "type": {
-            "color": "#A86D3B"
+            "color": "#66d9ef"
           },
           "property": {
-            "color": "#CACCCA"
+            "color": "#a6e22e"
           },
           "variable.special": {
-            "color": "#E19773"
+            "color": "#f92672"
           }
         }
       }

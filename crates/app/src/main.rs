@@ -170,3 +170,76 @@ fn apply_default_theme(cx: &mut App) {
         Theme::global_mut(cx).apply_config(&theme);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct ThemeSet {
+        themes: Vec<ThemeConfig>,
+    }
+
+    #[derive(Deserialize)]
+    struct ThemeConfig {
+        name: String,
+        highlight: HighlightConfig,
+    }
+
+    #[derive(Deserialize)]
+    struct HighlightConfig {
+        syntax: serde_json::Value,
+    }
+
+    #[test]
+    fn syntax_palettes_are_not_copied_across_theme_families() {
+        let theme_files = [
+            ("ayu", include_str!("../../../themes/ayu.json")),
+            (
+                "catppuccin",
+                include_str!("../../../themes/catppuccin.json"),
+            ),
+            (
+                "everforest",
+                include_str!("../../../themes/everforest.json"),
+            ),
+            ("gruvbox", include_str!("../../../themes/gruvbox.json")),
+            ("harper", include_str!("../../../themes/harper.json")),
+            (
+                "jellybeans",
+                include_str!("../../../themes/jellybeans.json"),
+            ),
+            ("molokai", include_str!("../../../themes/molokai.json")),
+            (
+                "tokyonight",
+                include_str!("../../../themes/tokyonight.json"),
+            ),
+            ("twilight", include_str!("../../../themes/twilight.json")),
+            ("spaceduck", include_str!("../../../themes/spaceduck.json")),
+            ("sick", include_str!("../../../themes/sick.json")),
+        ];
+        let mut palettes = HashMap::<String, (&str, String)>::new();
+
+        for (family, contents) in theme_files {
+            let theme_set: ThemeSet = serde_json::from_str(contents)
+                .unwrap_or_else(|err| panic!("failed to parse {family} theme: {err}"));
+
+            for theme in theme_set.themes {
+                let palette = serde_json::to_string(&theme.highlight.syntax)
+                    .unwrap_or_else(|err| panic!("failed to serialize {}: {err}", theme.name));
+
+                if let Some((other_family, other_theme)) =
+                    palettes.insert(palette, (family, theme.name.clone()))
+                {
+                    assert_eq!(
+                        family, other_family,
+                        "{} and {} unexpectedly share a syntax palette",
+                        theme.name, other_theme
+                    );
+                }
+            }
+        }
+    }
+}
