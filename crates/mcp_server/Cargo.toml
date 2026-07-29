@@ -9,10 +9,11 @@ name = "castle-mcp"
 path = "src/main.rs"
 
 [dependencies]
-anyhow.workspace = true
-chrono.workspace = true
 entity = { path = "../entity" }
 migration = { path = "../migration" }
+storage = { path = "../storage" }
+anyhow.workspace = true
+chrono.workspace = true
 rmcp.workspace = true
 schemars.workspace = true
 sea-orm.workspace = true

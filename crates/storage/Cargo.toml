@@ -5,10 +5,12 @@ publish = false
 edition.workspace = true
 
 [dependencies]
+entity = { path = "../entity" }
 anyhow.workspace = true
 chrono.workspace = true
-entity = { path = "../entity" }
 sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 migration = { path = "../migration" }

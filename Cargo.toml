@@ -32,6 +32,7 @@ rmcp = { version = "2.2.0", features = ["server", "transport-io"] }
 schemars = "1.2"
 toml_edit = "0.25"
 image = "0.25.10"
+lsp-types = { version = "0.97.0", features = ["proposed"] }
 
 [profile.dev]
 lto = false
