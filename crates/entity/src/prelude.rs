@@ -2,10 +2,17 @@
 
 pub use super::board::Entity as Board;
 pub use super::board_label::Entity as BoardLabel;
+pub use super::board_property::Entity as BoardProperty;
+pub use super::board_property_option::Entity as BoardPropertyOption;
 pub use super::card::Entity as Card;
 pub use super::entry::Entity as Entry;
 pub use super::entry_attachment::Entity as EntryAttachment;
 pub use super::entry_checklist_item::Entity as EntryChecklistItem;
 pub use super::entry_label::Entity as EntryLabel;
+pub use super::entry_property_value::Entity as EntryPropertyValue;
 pub use super::note::Entity as Note;
+pub use super::note_alias::Entity as NoteAlias;
+pub use super::note_link::Entity as NoteLink;
+pub use super::note_link_index_state::Entity as NoteLinkIndexState;
 pub use super::project::Entity as Project;
+pub use super::saved_board_view::Entity as SavedBoardView;

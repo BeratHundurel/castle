@@ -16,6 +16,8 @@ mod m20260723_000013_entry_attachments_and_reminders;
 mod m20260723_000014_mcp_change_domains;
 mod m20260723_000015_external_change_revisions;
 mod m20260723_000016_project_folder_path;
+mod m20260727_000017_note_links;
+mod m20260727_000018_board_properties_and_views;
 
 pub struct Migrator;
 
@@ -39,6 +41,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260723_000014_mcp_change_domains::Migration),
             Box::new(m20260723_000015_external_change_revisions::Migration),
             Box::new(m20260723_000016_project_folder_path::Migration),
+            Box::new(m20260727_000017_note_links::Migration),
+            Box::new(m20260727_000018_board_properties_and_views::Migration),
         ]
     }
 }

@@ -4,10 +4,17 @@ pub mod prelude;
 
 pub mod board;
 pub mod board_label;
+pub mod board_property;
+pub mod board_property_option;
 pub mod card;
 pub mod entry;
 pub mod entry_attachment;
 pub mod entry_checklist_item;
 pub mod entry_label;
+pub mod entry_property_value;
 pub mod note;
+pub mod note_alias;
+pub mod note_link;
+pub mod note_link_index_state;
 pub mod project;
+pub mod saved_board_view;

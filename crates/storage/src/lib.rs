@@ -1,5 +1,7 @@
+pub mod board_properties;
 pub mod folder_import;
 pub mod home;
+pub mod note_links;
 pub mod search;
 pub mod trash;
 pub mod workspace;
