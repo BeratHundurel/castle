@@ -21,12 +21,16 @@ use sea_orm::{
 };
 
 use crate::types::{
-    AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardSummary, ChecklistItemDetail,
-    CreateBoardInput, CreateBoardLabelInput, CreateListInput, CreateNoteInput, CreateProjectInput,
-    CreateTodoInput, LabelDetail, ListDetail, MoveNoteInput, MoveTodoInput, NoteDetail,
-    NoteSummary, ProjectSummary, RenameBoardInput, RenameListInput, RenameProjectInput,
-    SearchNotesInput, SearchTodosInput, SetTodoLabelInput, SetTodoReminderInput, TodoDetail,
-    UpdateChecklistItemInput, UpdateNoteInput, UpdateTodoInput,
+    AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardPropertiesDetail,
+    BoardPropertyDefinitionDetail, BoardPropertyKindInput, BoardPropertyOptionDetail,
+    BoardPropertyValueDetail, BoardSummary, ChecklistItemDetail, ClearEntryPropertyInput,
+    CreateBoardInput, CreateBoardLabelInput, CreateBoardPropertyInput,
+    CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput, CreateNoteInput,
+    CreateProjectInput, EntryDetail, EntryPropertyValueDetail, LabelDetail, ListDetail,
+    MoveEntryInput, MoveNoteInput, NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary,
+    ProjectSummary, RenameBoardInput, RenameListInput, RenameProjectInput, SearchEntriesInput,
+    SearchNotesInput, SetEntryLabelInput, SetEntryPropertyInput, SetEntryReminderInput,
+    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput,
 };
 
 #[derive(Clone)]
@@ -44,6 +48,82 @@ pub(crate) enum ChangeDomain {
 impl CastleStore {
     pub(crate) fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    pub(crate) async fn board_properties(&self, board_id: i64) -> Result<BoardPropertiesDetail> {
+        let properties =
+            storage::board_properties::load_board_properties(&self.db, board_id).await?;
+        Ok(BoardPropertiesDetail {
+            definitions: properties
+                .definitions
+                .into_iter()
+                .map(property_definition_detail)
+                .collect(),
+            values: properties
+                .values
+                .into_iter()
+                .map(|value| EntryPropertyValueDetail {
+                    entry_id: value.entry_id,
+                    property_id: value.property_id,
+                    value: property_value_detail(value.value),
+                })
+                .collect(),
+        })
+    }
+
+    pub(crate) async fn create_board_property(
+        &self,
+        input: CreateBoardPropertyInput,
+    ) -> Result<BoardPropertyDefinitionDetail> {
+        let kind = match input.kind {
+            BoardPropertyKindInput::Text => storage::board_properties::PropertyKind::Text,
+            BoardPropertyKindInput::Number => storage::board_properties::PropertyKind::Number,
+            BoardPropertyKindInput::Checkbox => storage::board_properties::PropertyKind::Checkbox,
+            BoardPropertyKindInput::Date => storage::board_properties::PropertyKind::Date,
+            BoardPropertyKindInput::Select => storage::board_properties::PropertyKind::Select,
+            BoardPropertyKindInput::Url => storage::board_properties::PropertyKind::Url,
+        };
+        storage::board_properties::create_property(&self.db, input.board_id, input.name, kind)
+            .await
+            .map(property_definition_detail)
+    }
+
+    pub(crate) async fn create_board_property_option(
+        &self,
+        input: CreateBoardPropertyOptionInput,
+    ) -> Result<BoardPropertyOptionDetail> {
+        storage::board_properties::create_property_option(
+            &self.db,
+            input.property_id,
+            input.name,
+            input.color,
+        )
+        .await
+        .map(property_option_detail)
+    }
+
+    pub(crate) async fn set_entry_property(
+        &self,
+        input: SetEntryPropertyInput,
+    ) -> Result<EntryPropertyValueDetail> {
+        let value = storage_property_value(input.value);
+        storage::board_properties::set_entry_property(
+            &self.db,
+            input.entry_id,
+            input.property_id,
+            value,
+        )
+        .await
+        .map(|value| EntryPropertyValueDetail {
+            entry_id: value.entry_id,
+            property_id: value.property_id,
+            value: property_value_detail(value.value),
+        })
+    }
+
+    pub(crate) async fn clear_entry_property(&self, input: ClearEntryPropertyInput) -> Result<()> {
+        storage::board_properties::clear_entry_property(&self.db, input.entry_id, input.property_id)
+            .await
     }
 
     pub(crate) async fn record_external_change(&self, domain: ChangeDomain) -> Result<()> {
@@ -160,6 +240,15 @@ impl CastleStore {
         self.note_detail(note).await
     }
 
+    pub(crate) async fn get_note_links(&self, note_id: i64) -> Result<NoteLinksDetail> {
+        let links = storage::note_links::load_note_links(&self.db, note_id).await?;
+        Ok(NoteLinksDetail {
+            inbound: links.inbound.into_iter().map(note_link_detail).collect(),
+            outbound: links.outbound.into_iter().map(note_link_detail).collect(),
+            unresolved: links.unresolved.into_iter().map(note_link_detail).collect(),
+        })
+    }
+
     pub(crate) async fn search_notes(&self, input: SearchNotesInput) -> Result<Vec<NoteSummary>> {
         let query_text = input.query.trim();
         if query_text.is_empty() {
@@ -217,6 +306,8 @@ impl CastleStore {
         }
         .insert(&self.db)
         .await?;
+        storage::note_links::index_note_links(&self.db, note.id, &input.content, note.updated_at)
+            .await?;
         Ok(NoteDetail {
             id: note.id,
             title: note.title,
@@ -258,10 +349,22 @@ impl CastleStore {
             tokio::fs::write(path, content).await?;
         }
 
+        let new_title = input
+            .title
+            .map(|title| required_text(title, "note title"))
+            .transpose()?;
+        if new_title
+            .as_deref()
+            .is_some_and(|title| title != note.title)
+        {
+            storage::note_links::record_note_alias(&self.db, note.id, &note.title, now_ts())
+                .await?;
+        }
+        let content_for_index = input.content.clone();
         let current_updated_at = note.updated_at;
         let mut active: note::ActiveModel = note.into();
-        if let Some(title) = input.title {
-            active.title = Set(required_text(title, "note title")?);
+        if let Some(title) = new_title {
+            active.title = Set(title);
         }
         if let Some(content) = input.content {
             active.cached_content = Set(content);
@@ -272,6 +375,10 @@ impl CastleStore {
         }
         active.updated_at = Set(next_updated_at(current_updated_at));
         let note = active.update(&self.db).await?;
+        if let Some(content) = content_for_index {
+            storage::note_links::index_note_links(&self.db, note.id, &content, note.updated_at)
+                .await?;
+        }
         self.note_detail(note).await
     }
 
@@ -316,7 +423,7 @@ impl CastleStore {
 
         let mut details = Vec::with_capacity(lists.len());
         for list in lists {
-            let todo_models = Entry::find()
+            let entry_models = Entry::find()
                 .filter(entry::Column::CardId.eq(list.id))
                 .filter(entry::Column::DeletedAt.is_null())
                 .order_by_asc(entry::Column::Position)
@@ -324,10 +431,10 @@ impl CastleStore {
                 .all(&self.db)
                 .await?;
 
-            let mut todos = Vec::with_capacity(todo_models.len());
-            for todo in todo_models {
-                todos.push(
-                    self.todo_detail_with_context(todo, &list, &board, project_name.clone())
+            let mut entries = Vec::with_capacity(entry_models.len());
+            for entry in entry_models {
+                entries.push(
+                    self.entry_detail_with_context(entry, &list, &board, project_name.clone())
                         .await?,
                 );
             }
@@ -335,7 +442,7 @@ impl CastleStore {
                 id: list.id,
                 title: list.title,
                 position: list.position,
-                todos,
+                entries,
             });
         }
 
@@ -349,17 +456,20 @@ impl CastleStore {
         })
     }
 
-    pub(crate) async fn get_todo(&self, todo_id: i64) -> Result<TodoDetail> {
-        let todo = Entry::find_by_id(todo_id)
+    pub(crate) async fn get_entry(&self, entry_id: i64) -> Result<EntryDetail> {
+        let entry = Entry::find_by_id(entry_id)
             .filter(entry::Column::DeletedAt.is_null())
             .one(&self.db)
             .await?
-            .with_context(|| format!("active todo {todo_id} was not found"))?;
+            .with_context(|| format!("active board entry {entry_id} was not found"))?;
 
-        self.todo_detail(todo).await
+        self.entry_detail(entry).await
     }
 
-    pub(crate) async fn search_todos(&self, input: SearchTodosInput) -> Result<Vec<TodoDetail>> {
+    pub(crate) async fn search_entries(
+        &self,
+        input: SearchEntriesInput,
+    ) -> Result<Vec<EntryDetail>> {
         let query = input.query.trim();
         if query.is_empty() {
             bail!("query must not be empty");
@@ -402,7 +512,7 @@ impl CastleStore {
         if list_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let todos = Entry::find()
+        let entries = Entry::find()
             .filter(entry::Column::DeletedAt.is_null())
             .filter(entry::Column::CardId.is_in(list_ids))
             .filter(
@@ -415,9 +525,9 @@ impl CastleStore {
             .all(&self.db)
             .await?;
 
-        let mut details = Vec::with_capacity(todos.len());
-        for todo in todos {
-            details.push(self.todo_detail(todo).await?);
+        let mut details = Vec::with_capacity(entries.len());
+        for entry in entries {
+            details.push(self.entry_detail(entry).await?);
         }
         Ok(details)
     }
@@ -519,7 +629,7 @@ impl CastleStore {
             id: list.id,
             title: list.title,
             position: list.position,
-            todos: Vec::new(),
+            entries: Vec::new(),
         })
     }
 
@@ -540,8 +650,8 @@ impl CastleStore {
             .with_context(|| format!("renamed list {} was not found", list.id))
     }
 
-    pub(crate) async fn create_todo(&self, input: CreateTodoInput) -> Result<TodoDetail> {
-        let title = required_text(input.title, "todo title")?;
+    pub(crate) async fn create_entry(&self, input: CreateEntryInput) -> Result<EntryDetail> {
+        let title = required_text(input.title, "entry title")?;
         validate_due_on(input.due_on.as_deref())?;
         self.active_list(input.list_id).await?;
         let position = Entry::find()
@@ -549,7 +659,7 @@ impl CastleStore {
             .filter(entry::Column::DeletedAt.is_null())
             .count(&self.db)
             .await? as i32;
-        let todo = entry::ActiveModel {
+        let entry = entry::ActiveModel {
             title: Set(title),
             description: Set(input.description),
             card_id: Set(input.list_id),
@@ -559,22 +669,22 @@ impl CastleStore {
         }
         .insert(&self.db)
         .await?;
-        self.todo_detail(todo).await
+        self.entry_detail(entry).await
     }
 
-    pub(crate) async fn update_todo(&self, input: UpdateTodoInput) -> Result<TodoDetail> {
+    pub(crate) async fn update_entry(&self, input: UpdateEntryInput) -> Result<EntryDetail> {
         if input.clear_due_on && input.due_on.is_some() {
             bail!("due_on and clear_due_on cannot be used together");
         }
         validate_due_on(input.due_on.as_deref())?;
-        let todo = Entry::find_by_id(input.todo_id)
+        let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
             .one(&self.db)
             .await?
-            .with_context(|| format!("active todo {} was not found", input.todo_id))?;
-        let mut active: entry::ActiveModel = todo.into();
+            .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
+        let mut active: entry::ActiveModel = entry.into();
         if let Some(title) = input.title {
-            active.title = Set(required_text(title, "todo title")?);
+            active.title = Set(required_text(title, "entry title")?);
         }
         if let Some(description) = input.description {
             active.description = Set(description);
@@ -584,45 +694,45 @@ impl CastleStore {
         } else if let Some(due_on) = input.due_on {
             active.due_on = Set(Some(due_on));
         }
-        let todo = active.update(&self.db).await?;
-        self.todo_detail(todo).await
+        let entry = active.update(&self.db).await?;
+        self.entry_detail(entry).await
     }
 
-    pub(crate) async fn set_todo_reminder(
+    pub(crate) async fn set_entry_reminder(
         &self,
-        input: SetTodoReminderInput,
-    ) -> Result<TodoDetail> {
-        let todo = Entry::find_by_id(input.todo_id)
+        input: SetEntryReminderInput,
+    ) -> Result<EntryDetail> {
+        let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
             .one(&self.db)
             .await?
-            .with_context(|| format!("active todo {} was not found", input.todo_id))?;
-        self.active_list(todo.card_id).await?;
-        if input.enabled && todo.due_on.is_none() {
-            bail!("a todo needs a due date before its reminder can be enabled");
+            .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
+        self.active_list(entry.card_id).await?;
+        if input.enabled && entry.due_on.is_none() {
+            bail!("a board entry needs a due date before its reminder can be enabled");
         }
-        let todo = entry::ActiveModel {
-            id: Set(todo.id),
+        let entry = entry::ActiveModel {
+            id: Set(entry.id),
             reminder_enabled: Set(input.enabled),
             reminder_notified_for: Set(None),
             ..Default::default()
         }
         .update(&self.db)
         .await?;
-        self.todo_detail(todo).await
+        self.entry_detail(entry).await
     }
 
     pub(crate) async fn add_checklist_item(
         &self,
         input: AddChecklistItemInput,
     ) -> Result<ChecklistItemDetail> {
-        self.get_todo(input.todo_id).await?;
+        self.get_entry(input.entry_id).await?;
         let position = EntryChecklistItem::find()
-            .filter(entry_checklist_item::Column::EntryId.eq(input.todo_id))
+            .filter(entry_checklist_item::Column::EntryId.eq(input.entry_id))
             .count(&self.db)
             .await? as i32;
         let item = entry_checklist_item::ActiveModel {
-            entry_id: Set(input.todo_id),
+            entry_id: Set(input.entry_id),
             title: Set(required_text(input.title, "checklist item title")?),
             checked: Set(false),
             position: Set(position),
@@ -649,7 +759,7 @@ impl CastleStore {
             .one(&self.db)
             .await?
             .with_context(|| format!("checklist item {} was not found", input.item_id))?;
-        self.get_todo(item.entry_id).await?;
+        self.get_entry(item.entry_id).await?;
         let mut active: entry_checklist_item::ActiveModel = item.into();
         if let Some(title) = input.title {
             active.title = Set(required_text(title, "checklist item title")?);
@@ -682,30 +792,30 @@ impl CastleStore {
         Ok(label_detail(label))
     }
 
-    pub(crate) async fn set_todo_label(&self, input: SetTodoLabelInput) -> Result<TodoDetail> {
-        let todo = self.get_todo(input.todo_id).await?;
+    pub(crate) async fn set_entry_label(&self, input: SetEntryLabelInput) -> Result<EntryDetail> {
+        let entry = self.get_entry(input.entry_id).await?;
         let label = BoardLabel::find_by_id(input.label_id)
             .one(&self.db)
             .await?
             .with_context(|| format!("board label {} was not found", input.label_id))?;
-        if label.board_id != todo.board_id {
+        if label.board_id != entry.board_id {
             bail!(
-                "label {} belongs to board {}, but todo {} belongs to board {}",
+                "label {} belongs to board {}, but entry {} belongs to board {}",
                 label.id,
                 label.board_id,
-                todo.id,
-                todo.board_id
+                entry.id,
+                entry.board_id
             );
         }
         let existing = EntryLabel::find()
-            .filter(entry_label::Column::EntryId.eq(input.todo_id))
+            .filter(entry_label::Column::EntryId.eq(input.entry_id))
             .filter(entry_label::Column::BoardLabelId.eq(input.label_id))
             .one(&self.db)
             .await?;
         match (input.assigned, existing) {
             (true, None) => {
                 entry_label::ActiveModel {
-                    entry_id: Set(input.todo_id),
+                    entry_id: Set(input.entry_id),
                     board_label_id: Set(input.label_id),
                     ..Default::default()
                 }
@@ -719,18 +829,18 @@ impl CastleStore {
             }
             _ => {}
         }
-        self.get_todo(input.todo_id).await
+        self.get_entry(input.entry_id).await
     }
 
-    pub(crate) async fn move_todo(&self, input: MoveTodoInput) -> Result<TodoDetail> {
+    pub(crate) async fn move_entry(&self, input: MoveEntryInput) -> Result<EntryDetail> {
         self.active_list(input.list_id).await?;
-        let todo = Entry::find_by_id(input.todo_id)
+        let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
             .one(&self.db)
             .await?
-            .with_context(|| format!("active todo {} was not found", input.todo_id))?;
-        if todo.card_id == input.list_id {
-            return self.todo_detail(todo).await;
+            .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
+        if entry.card_id == input.list_id {
+            return self.entry_detail(entry).await;
         }
 
         let transaction = self.db.begin().await?;
@@ -739,8 +849,8 @@ impl CastleStore {
                 entry::Column::Position,
                 Expr::col(entry::Column::Position).sub(1),
             )
-            .filter(entry::Column::CardId.eq(todo.card_id))
-            .filter(entry::Column::Position.gt(todo.position))
+            .filter(entry::Column::CardId.eq(entry.card_id))
+            .filter(entry::Column::Position.gt(entry.position))
             .exec(&transaction)
             .await?;
         let position = Entry::find()
@@ -749,7 +859,7 @@ impl CastleStore {
             .count(&transaction)
             .await? as i32;
         let moved = entry::ActiveModel {
-            id: Set(todo.id),
+            id: Set(entry.id),
             card_id: Set(input.list_id),
             position: Set(position),
             ..Default::default()
@@ -757,7 +867,7 @@ impl CastleStore {
         .update(&transaction)
         .await?;
         transaction.commit().await?;
-        self.todo_detail(moved).await
+        self.entry_detail(moved).await
     }
 
     async fn active_note(&self, note_id: i64) -> Result<note::Model> {
@@ -841,26 +951,26 @@ impl CastleStore {
         Ok(list)
     }
 
-    async fn todo_detail(&self, todo: entry::Model) -> Result<TodoDetail> {
-        let list = self.active_list(todo.card_id).await?;
+    async fn entry_detail(&self, entry: entry::Model) -> Result<EntryDetail> {
+        let list = self.active_list(entry.card_id).await?;
         let board = self.active_board(list.board_id).await?;
         let project_name = match board.project_id {
             Some(project_id) => Some(self.active_project(project_id).await?.name),
             None => None,
         };
-        self.todo_detail_with_context(todo, &list, &board, project_name)
+        self.entry_detail_with_context(entry, &list, &board, project_name)
             .await
     }
 
-    async fn todo_detail_with_context(
+    async fn entry_detail_with_context(
         &self,
-        todo: entry::Model,
+        entry: entry::Model,
         list: &card::Model,
         board: &board::Model,
         project_name: Option<String>,
-    ) -> Result<TodoDetail> {
+    ) -> Result<EntryDetail> {
         let checklist_items = EntryChecklistItem::find()
-            .filter(entry_checklist_item::Column::EntryId.eq(todo.id))
+            .filter(entry_checklist_item::Column::EntryId.eq(entry.id))
             .order_by_asc(entry_checklist_item::Column::Position)
             .order_by_asc(entry_checklist_item::Column::Id)
             .all(&self.db)
@@ -874,7 +984,7 @@ impl CastleStore {
             })
             .collect();
         let label_ids = EntryLabel::find()
-            .filter(entry_label::Column::EntryId.eq(todo.id))
+            .filter(entry_label::Column::EntryId.eq(entry.id))
             .all(&self.db)
             .await?
             .into_iter()
@@ -893,7 +1003,7 @@ impl CastleStore {
                 .collect()
         };
         let attachments = EntryAttachment::find()
-            .filter(entry_attachment::Column::EntryId.eq(todo.id))
+            .filter(entry_attachment::Column::EntryId.eq(entry.id))
             .order_by_asc(entry_attachment::Column::Id)
             .all(&self.db)
             .await?
@@ -903,13 +1013,13 @@ impl CastleStore {
                 file_name: attachment.file_name,
             })
             .collect();
-        Ok(TodoDetail {
-            id: todo.id,
-            title: todo.title,
-            description: todo.description,
-            due_on: todo.due_on,
-            reminder_enabled: todo.reminder_enabled,
-            position: todo.position,
+        Ok(EntryDetail {
+            id: entry.id,
+            title: entry.title,
+            description: entry.description,
+            due_on: entry.due_on,
+            reminder_enabled: entry.reminder_enabled,
+            position: entry.position,
             list_id: list.id,
             list_title: list.title.clone(),
             board_id: board.id,
@@ -961,6 +1071,98 @@ fn label_detail(label: board_label::Model) -> LabelDetail {
     }
 }
 
+fn property_definition_detail(
+    property: storage::board_properties::PropertyDefinition,
+) -> BoardPropertyDefinitionDetail {
+    BoardPropertyDefinitionDetail {
+        id: property.id,
+        board_id: property.board_id,
+        name: property.name,
+        kind: property.kind.as_str().to_string(),
+        position: property.position,
+        options: property
+            .options
+            .into_iter()
+            .map(property_option_detail)
+            .collect(),
+    }
+}
+
+fn property_option_detail(
+    option: storage::board_properties::PropertyOption,
+) -> BoardPropertyOptionDetail {
+    BoardPropertyOptionDetail {
+        id: option.id,
+        name: option.name,
+        color: option.color,
+        position: option.position,
+    }
+}
+
+fn property_value_detail(
+    value: storage::board_properties::PropertyValue,
+) -> BoardPropertyValueDetail {
+    match value {
+        storage::board_properties::PropertyValue::Text(value) => {
+            BoardPropertyValueDetail::Text(value)
+        }
+        storage::board_properties::PropertyValue::Number(value) => {
+            BoardPropertyValueDetail::Number(value)
+        }
+        storage::board_properties::PropertyValue::Checkbox(value) => {
+            BoardPropertyValueDetail::Checkbox(value)
+        }
+        storage::board_properties::PropertyValue::Date(value) => {
+            BoardPropertyValueDetail::Date(value)
+        }
+        storage::board_properties::PropertyValue::Select(value) => {
+            BoardPropertyValueDetail::Select(value)
+        }
+        storage::board_properties::PropertyValue::Url(value) => {
+            BoardPropertyValueDetail::Url(value)
+        }
+    }
+}
+
+fn storage_property_value(
+    value: BoardPropertyValueDetail,
+) -> storage::board_properties::PropertyValue {
+    match value {
+        BoardPropertyValueDetail::Text(value) => {
+            storage::board_properties::PropertyValue::Text(value)
+        }
+        BoardPropertyValueDetail::Number(value) => {
+            storage::board_properties::PropertyValue::Number(value)
+        }
+        BoardPropertyValueDetail::Checkbox(value) => {
+            storage::board_properties::PropertyValue::Checkbox(value)
+        }
+        BoardPropertyValueDetail::Date(value) => {
+            storage::board_properties::PropertyValue::Date(value)
+        }
+        BoardPropertyValueDetail::Select(value) => {
+            storage::board_properties::PropertyValue::Select(value)
+        }
+        BoardPropertyValueDetail::Url(value) => {
+            storage::board_properties::PropertyValue::Url(value)
+        }
+    }
+}
+
+fn note_link_detail(link: storage::note_links::NoteLinkReference) -> NoteLinkDetail {
+    NoteLinkDetail {
+        source_note_id: link.source_note_id,
+        source_title: link.source_title,
+        source_project_name: link.source_project_name,
+        target_note_id: link.target_note_id,
+        target_title: link.target_title,
+        target_project_name: link.target_project_name,
+        raw_target: link.raw_target,
+        display_text: link.display_text,
+        line_number: link.line_number,
+    }
+}
+
 fn now_ts() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -998,36 +1200,36 @@ mod tests {
                 project_id: Some(project.id),
             })
             .await?;
-        let todo_list = store
+        let first_list = store
             .create_list(CreateListInput {
                 board_id: board.id,
-                title: "Todo".to_string(),
+                title: "Ideas".to_string(),
             })
             .await?;
-        let done_list = store
+        let second_list = store
             .create_list(CreateListInput {
                 board_id: board.id,
-                title: "Done".to_string(),
+                title: "Selected".to_string(),
             })
             .await?;
-        let todo = store
-            .create_todo(CreateTodoInput {
-                list_id: todo_list.id,
+        let entry = store
+            .create_entry(CreateEntryInput {
+                list_id: first_list.id,
                 title: "Write MCP tests".to_string(),
                 description: "Cover the full hierarchy".to_string(),
                 due_on: Some("2026-07-24".to_string()),
             })
             .await?;
         let reminder = store
-            .set_todo_reminder(SetTodoReminderInput {
-                todo_id: todo.id,
+            .set_entry_reminder(SetEntryReminderInput {
+                entry_id: entry.id,
                 enabled: true,
             })
             .await?;
         assert!(reminder.reminder_enabled);
         let checklist_item = store
             .add_checklist_item(AddChecklistItemInput {
-                todo_id: todo.id,
+                entry_id: entry.id,
                 title: "Run the suite".to_string(),
             })
             .await?;
@@ -1046,15 +1248,35 @@ mod tests {
             })
             .await?;
         store
-            .set_todo_label(SetTodoLabelInput {
-                todo_id: todo.id,
+            .set_entry_label(SetEntryLabelInput {
+                entry_id: entry.id,
                 label_id: label.id,
                 assigned: true,
             })
             .await?;
+        let property = store
+            .create_board_property(CreateBoardPropertyInput {
+                board_id: board.id,
+                name: "Estimate".to_string(),
+                kind: BoardPropertyKindInput::Number,
+            })
+            .await?;
+        store
+            .set_entry_property(SetEntryPropertyInput {
+                entry_id: entry.id,
+                property_id: property.id,
+                value: BoardPropertyValueDetail::Number(3.5),
+            })
+            .await?;
+        let properties = store.board_properties(board.id).await?;
+        assert_eq!(properties.definitions[0].name, "Estimate");
+        assert!(matches!(
+            properties.values[0].value,
+            BoardPropertyValueDetail::Number(value) if value == 3.5
+        ));
 
         let matches = store
-            .search_todos(SearchTodosInput {
+            .search_entries(SearchEntriesInput {
                 query: "MCP".to_string(),
                 project_id: Some(project.id),
                 board_id: None,
@@ -1062,19 +1284,19 @@ mod tests {
             })
             .await?;
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, todo.id);
+        assert_eq!(matches[0].id, entry.id);
         assert_eq!(matches[0].checklist_items.len(), 1);
         assert!(matches[0].checklist_items[0].checked);
         assert_eq!(matches[0].labels[0].name, "Agent");
 
         let moved = store
-            .move_todo(MoveTodoInput {
-                todo_id: todo.id,
-                list_id: done_list.id,
+            .move_entry(MoveEntryInput {
+                entry_id: entry.id,
+                list_id: second_list.id,
             })
             .await?;
-        assert_eq!(moved.list_title, "Done");
-        assert_eq!(store.get_board(board.id).await?.lists[1].todos.len(), 1);
+        assert_eq!(moved.list_title, "Selected");
+        assert_eq!(store.get_board(board.id).await?.lists[1].entries.len(), 1);
         Ok(())
     }
 

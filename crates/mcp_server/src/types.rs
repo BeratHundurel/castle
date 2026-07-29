@@ -46,13 +46,13 @@ pub(crate) struct CreateBoardInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateListInput {
     pub board_id: i64,
-    #[schemars(description = "Kanban list name, for example Todo, Doing, or Done")]
+    #[schemars(description = "Name of the list within the board")]
     pub title: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateTodoInput {
-    #[schemars(description = "ID of the list that will contain the todo")]
+pub(crate) struct CreateEntryInput {
+    #[schemars(description = "ID of the list that will contain the entry")]
     pub list_id: i64,
     pub title: String,
     #[serde(default)]
@@ -73,13 +73,15 @@ pub(crate) struct BoardInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct TodoInput {
-    pub todo_id: i64,
+pub(crate) struct EntryInput {
+    pub entry_id: i64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SearchTodosInput {
-    #[schemars(description = "Case-insensitive text matched against todo titles and descriptions")]
+pub(crate) struct SearchEntriesInput {
+    #[schemars(
+        description = "Case-insensitive text matched against board entry titles and descriptions"
+    )]
     pub query: String,
     pub project_id: Option<i64>,
     pub board_id: Option<i64>,
@@ -88,8 +90,8 @@ pub(crate) struct SearchTodosInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct UpdateTodoInput {
-    pub todo_id: i64,
+pub(crate) struct UpdateEntryInput {
+    pub entry_id: i64,
     #[schemars(description = "Replacement title; omit to keep the current title")]
     pub title: Option<String>,
     #[schemars(description = "Replacement description; omit to keep the current description")]
@@ -97,14 +99,14 @@ pub(crate) struct UpdateTodoInput {
     #[schemars(description = "Replacement due date in YYYY-MM-DD format")]
     pub due_on: Option<String>,
     #[serde(default)]
-    #[schemars(description = "Set true to remove the todo's due date")]
+    #[schemars(description = "Set true to remove the entry's due date")]
     pub clear_due_on: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MoveTodoInput {
-    pub todo_id: i64,
-    #[schemars(description = "Destination list ID, commonly a Doing or Done list")]
+pub(crate) struct MoveEntryInput {
+    pub entry_id: i64,
+    #[schemars(description = "Destination list ID")]
     pub list_id: i64,
 }
 
@@ -178,14 +180,14 @@ pub(crate) struct RenameListInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SetTodoReminderInput {
-    pub todo_id: i64,
+pub(crate) struct SetEntryReminderInput {
+    pub entry_id: i64,
     pub enabled: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AddChecklistItemInput {
-    pub todo_id: i64,
+    pub entry_id: i64,
     pub title: String,
 }
 
@@ -205,10 +207,60 @@ pub(crate) struct CreateBoardLabelInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SetTodoLabelInput {
-    pub todo_id: i64,
+pub(crate) struct SetEntryLabelInput {
+    pub entry_id: i64,
     pub label_id: i64,
     pub assigned: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BoardPropertyKindInput {
+    Text,
+    Number,
+    Checkbox,
+    Date,
+    Select,
+    Url,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CreateBoardPropertyInput {
+    pub board_id: i64,
+    pub name: String,
+    pub kind: BoardPropertyKindInput,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CreateBoardPropertyOptionInput {
+    pub property_id: i64,
+    pub name: String,
+    #[schemars(description = "Presentation color name; Castle does not infer meaning from it")]
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub(crate) enum BoardPropertyValueDetail {
+    Text(String),
+    Number(f64),
+    Checkbox(bool),
+    Date(String),
+    Select(i64),
+    Url(String),
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SetEntryPropertyInput {
+    pub entry_id: i64,
+    pub property_id: i64,
+    pub value: BoardPropertyValueDetail,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ClearEntryPropertyInput {
+    pub entry_id: i64,
+    pub property_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -232,7 +284,7 @@ pub(crate) struct ListDetail {
     pub id: i64,
     pub title: String,
     pub position: i32,
-    pub todos: Vec<TodoDetail>,
+    pub entries: Vec<EntryDetail>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -246,7 +298,7 @@ pub(crate) struct BoardDetail {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct TodoDetail {
+pub(crate) struct EntryDetail {
     pub id: i64,
     pub title: String,
     pub description: String,
@@ -290,6 +342,26 @@ pub(crate) struct NoteDetail {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct NoteLinksDetail {
+    pub inbound: Vec<NoteLinkDetail>,
+    pub outbound: Vec<NoteLinkDetail>,
+    pub unresolved: Vec<NoteLinkDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct NoteLinkDetail {
+    pub source_note_id: i64,
+    pub source_title: String,
+    pub source_project_name: Option<String>,
+    pub target_note_id: Option<i64>,
+    pub target_title: Option<String>,
+    pub target_project_name: Option<String>,
+    pub raw_target: String,
+    pub display_text: Option<String>,
+    pub line_number: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct ChecklistItemDetail {
     pub id: i64,
     pub title: String,
@@ -309,4 +381,35 @@ pub(crate) struct LabelDetail {
 pub(crate) struct AttachmentDetail {
     pub id: i64,
     pub file_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct BoardPropertyOptionDetail {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub position: i32,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct BoardPropertyDefinitionDetail {
+    pub id: i64,
+    pub board_id: i64,
+    pub name: String,
+    pub kind: String,
+    pub position: i32,
+    pub options: Vec<BoardPropertyOptionDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct EntryPropertyValueDetail {
+    pub entry_id: i64,
+    pub property_id: i64,
+    pub value: BoardPropertyValueDetail,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct BoardPropertiesDetail {
+    pub definitions: Vec<BoardPropertyDefinitionDetail>,
+    pub values: Vec<EntryPropertyValueDetail>,
 }

@@ -44,7 +44,7 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Read a complete Castle board including its lists and todos",
+        description = "Read a complete Castle board including its lists and entries",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_board(
@@ -55,25 +55,108 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Read one Castle todo with its project, board, and list context",
+        description = "Read a board's custom property definitions, select options, and assigned entry values",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    async fn get_todo(
+    async fn get_board_properties(
         &self,
-        Parameters(input): Parameters<TodoInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
-        response(self.store.get_todo(input.todo_id).await)
+        Parameters(input): Parameters<BoardInput>,
+    ) -> Json<ToolResponse<BoardPropertiesDetail>> {
+        response(self.store.board_properties(input.board_id).await)
     }
 
     #[tool(
-        description = "Search active Castle todos by title or description and return full context",
+        description = "Create a typed custom property on a Castle board without assigning workflow meaning",
+        annotations(destructive_hint = false, open_world_hint = false)
+    )]
+    async fn create_board_property(
+        &self,
+        Parameters(input): Parameters<CreateBoardPropertyInput>,
+    ) -> Json<ToolResponse<BoardPropertyDefinitionDetail>> {
+        mutation_response(
+            &self.store,
+            self.store.create_board_property(input).await,
+            ChangeDomain::Board,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Create an explicit option for a select-type board property",
+        annotations(destructive_hint = false, open_world_hint = false)
+    )]
+    async fn create_board_property_option(
+        &self,
+        Parameters(input): Parameters<CreateBoardPropertyOptionInput>,
+    ) -> Json<ToolResponse<BoardPropertyOptionDetail>> {
+        mutation_response(
+            &self.store,
+            self.store.create_board_property_option(input).await,
+            ChangeDomain::Board,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Set a typed custom property value on a board entry",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_entry_property(
+        &self,
+        Parameters(input): Parameters<SetEntryPropertyInput>,
+    ) -> Json<ToolResponse<EntryPropertyValueDetail>> {
+        mutation_response(
+            &self.store,
+            self.store.set_entry_property(input).await,
+            ChangeDomain::Board,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Clear one custom property value from a board entry",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn clear_entry_property(
+        &self,
+        Parameters(input): Parameters<ClearEntryPropertyInput>,
+    ) -> Json<ToolResponse<()>> {
+        mutation_response(
+            &self.store,
+            self.store.clear_entry_property(input).await,
+            ChangeDomain::Board,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Read one Castle board entry with its project, board, and list context",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    async fn search_todos(
+    async fn get_entry(
         &self,
-        Parameters(input): Parameters<SearchTodosInput>,
-    ) -> Json<ToolResponse<Vec<TodoDetail>>> {
-        response(self.store.search_todos(input).await)
+        Parameters(input): Parameters<EntryInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
+        response(self.store.get_entry(input.entry_id).await)
+    }
+
+    #[tool(
+        description = "Search active Castle board entries by title or description and return full context",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn search_entries(
+        &self,
+        Parameters(input): Parameters<SearchEntriesInput>,
+    ) -> Json<ToolResponse<Vec<EntryDetail>>> {
+        response(self.store.search_entries(input).await)
     }
 
     #[tool(
@@ -109,7 +192,7 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Create a kanban list such as Todo, Doing, or Done on a Castle board",
+        description = "Create a named list on a Castle board without assigning workflow semantics",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn create_list(
@@ -125,56 +208,56 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Create a todo in a Castle board list",
+        description = "Create an entry in a Castle board list",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
-    async fn create_todo(
+    async fn create_entry(
         &self,
-        Parameters(input): Parameters<CreateTodoInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
+        Parameters(input): Parameters<CreateEntryInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
         mutation_response(
             &self.store,
-            self.store.create_todo(input).await,
+            self.store.create_entry(input).await,
             ChangeDomain::Board,
         )
         .await
     }
 
     #[tool(
-        description = "Update a Castle todo's title, description, or due date",
+        description = "Update a Castle board entry's title, description, or optional due date",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
             open_world_hint = false
         )
     )]
-    async fn update_todo(
+    async fn update_entry(
         &self,
-        Parameters(input): Parameters<UpdateTodoInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
+        Parameters(input): Parameters<UpdateEntryInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
         mutation_response(
             &self.store,
-            self.store.update_todo(input).await,
+            self.store.update_entry(input).await,
             ChangeDomain::Board,
         )
         .await
     }
 
     #[tool(
-        description = "Move a Castle todo to another list, for example from Todo to Doing or Done",
+        description = "Move a Castle board entry to another list without interpreting either list's meaning",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
             open_world_hint = false
         )
     )]
-    async fn move_todo(
+    async fn move_entry(
         &self,
-        Parameters(input): Parameters<MoveTodoInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
+        Parameters(input): Parameters<MoveEntryInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
         mutation_response(
             &self.store,
-            self.store.move_todo(input).await,
+            self.store.move_entry(input).await,
             ChangeDomain::Board,
         )
         .await
@@ -200,6 +283,17 @@ impl CastleServer {
         Parameters(input): Parameters<NoteInput>,
     ) -> Json<ToolResponse<NoteDetail>> {
         response(self.store.get_note(input.note_id).await)
+    }
+
+    #[tool(
+        description = "Read inbound, outbound, and unresolved wikilinks for a Castle note",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_note_links(
+        &self,
+        Parameters(input): Parameters<NoteInput>,
+    ) -> Json<ToolResponse<NoteLinksDetail>> {
+        response(self.store.get_note_links(input.note_id).await)
     }
 
     #[tool(
@@ -330,27 +424,27 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Enable or disable the system reminder for a Castle todo with a due date",
+        description = "Enable or disable the system reminder for a board entry with a due date",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
             open_world_hint = false
         )
     )]
-    async fn set_todo_reminder(
+    async fn set_entry_reminder(
         &self,
-        Parameters(input): Parameters<SetTodoReminderInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
+        Parameters(input): Parameters<SetEntryReminderInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
         mutation_response(
             &self.store,
-            self.store.set_todo_reminder(input).await,
+            self.store.set_entry_reminder(input).await,
             ChangeDomain::Board,
         )
         .await
     }
 
     #[tool(
-        description = "Add an unchecked checklist item to a Castle todo",
+        description = "Add an unchecked checklist item to a Castle board entry",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn add_checklist_item(
@@ -366,7 +460,7 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Rename or check/uncheck a Castle todo checklist item",
+        description = "Rename or check/uncheck a Castle board entry checklist item",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -402,20 +496,20 @@ impl CastleServer {
     }
 
     #[tool(
-        description = "Assign or unassign a board label on a Castle todo",
+        description = "Assign or unassign a board label on a Castle board entry",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
             open_world_hint = false
         )
     )]
-    async fn set_todo_label(
+    async fn set_entry_label(
         &self,
-        Parameters(input): Parameters<SetTodoLabelInput>,
-    ) -> Json<ToolResponse<TodoDetail>> {
+        Parameters(input): Parameters<SetEntryLabelInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
         mutation_response(
             &self.store,
-            self.store.set_todo_label(input).await,
+            self.store.set_entry_label(input).await,
             ChangeDomain::Board,
         )
         .await
@@ -475,16 +569,18 @@ mod tests {
             "list_projects",
             "list_boards",
             "get_board",
-            "get_todo",
-            "search_todos",
+            "get_board_properties",
+            "get_entry",
+            "search_entries",
             "create_project",
             "create_board",
             "create_list",
-            "create_todo",
-            "update_todo",
-            "move_todo",
+            "create_entry",
+            "update_entry",
+            "move_entry",
             "list_notes",
             "get_note",
+            "get_note_links",
             "search_notes",
             "create_note",
             "update_note",
@@ -492,11 +588,15 @@ mod tests {
             "rename_project",
             "rename_board",
             "rename_list",
-            "set_todo_reminder",
+            "set_entry_reminder",
             "add_checklist_item",
             "update_checklist_item",
             "create_board_label",
-            "set_todo_label",
+            "set_entry_label",
+            "create_board_property",
+            "create_board_property_option",
+            "set_entry_property",
+            "clear_entry_property",
         ] {
             assert!(tool_names.contains(expected), "missing MCP tool {expected}");
         }
