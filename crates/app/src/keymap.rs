@@ -8,7 +8,8 @@ use crate::command_palette::{
 use crate::document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
     OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious, OutlineRight,
-    SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline, ToggleDocumentPreview,
+    SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline, ToggleDocumentPreview, VimKey,
+    VimKeyAction,
 };
 
 #[derive(Clone)]
@@ -31,6 +32,7 @@ pub fn init(cx: &mut App) {
 
     let shortcuts = bindings
         .iter()
+        .filter(|binding| !binding.action().as_any().is::<VimKeyAction>())
         .map(|binding| ShortcutReference {
             action: shortcut_action_name(binding),
             context: binding
@@ -50,7 +52,7 @@ pub fn init(cx: &mut App) {
 }
 
 fn default_bindings() -> Vec<KeyBinding> {
-    vec![
+    let mut bindings = vec![
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
@@ -243,7 +245,146 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("right", OutlineRight, Some("DocumentOutline")),
         KeyBinding::new("enter", OutlineOpen, Some("DocumentOutline")),
         KeyBinding::new("escape", OutlineClose, Some("DocumentOutline")),
-    ]
+    ];
+
+    const VIM_CONTEXT: &str = "vim_mode == normal || vim_mode == visual";
+    bindings.extend([
+        KeyBinding::new("0", VimKeyAction(VimKey::Digit(0)), Some(VIM_CONTEXT)),
+        KeyBinding::new("1", VimKeyAction(VimKey::Digit(1)), Some(VIM_CONTEXT)),
+        KeyBinding::new("2", VimKeyAction(VimKey::Digit(2)), Some(VIM_CONTEXT)),
+        KeyBinding::new("3", VimKeyAction(VimKey::Digit(3)), Some(VIM_CONTEXT)),
+        KeyBinding::new("4", VimKeyAction(VimKey::Digit(4)), Some(VIM_CONTEXT)),
+        KeyBinding::new("5", VimKeyAction(VimKey::Digit(5)), Some(VIM_CONTEXT)),
+        KeyBinding::new("6", VimKeyAction(VimKey::Digit(6)), Some(VIM_CONTEXT)),
+        KeyBinding::new("7", VimKeyAction(VimKey::Digit(7)), Some(VIM_CONTEXT)),
+        KeyBinding::new("8", VimKeyAction(VimKey::Digit(8)), Some(VIM_CONTEXT)),
+        KeyBinding::new("9", VimKeyAction(VimKey::Digit(9)), Some(VIM_CONTEXT)),
+        KeyBinding::new("h", VimKeyAction(VimKey::Left), Some(VIM_CONTEXT)),
+        KeyBinding::new("left", VimKeyAction(VimKey::Left), Some(VIM_CONTEXT)),
+        KeyBinding::new("j", VimKeyAction(VimKey::Down), Some(VIM_CONTEXT)),
+        KeyBinding::new("down", VimKeyAction(VimKey::Down), Some(VIM_CONTEXT)),
+        KeyBinding::new("k", VimKeyAction(VimKey::Up), Some(VIM_CONTEXT)),
+        KeyBinding::new("up", VimKeyAction(VimKey::Up), Some(VIM_CONTEXT)),
+        KeyBinding::new("l", VimKeyAction(VimKey::Right), Some(VIM_CONTEXT)),
+        KeyBinding::new("right", VimKeyAction(VimKey::Right), Some(VIM_CONTEXT)),
+        KeyBinding::new("w", VimKeyAction(VimKey::WordForward), Some(VIM_CONTEXT)),
+        KeyBinding::new("b", VimKeyAction(VimKey::WordBackward), Some(VIM_CONTEXT)),
+        KeyBinding::new("e", VimKeyAction(VimKey::WordEnd), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-w",
+            VimKeyAction(VimKey::BigWordForward),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "shift-b",
+            VimKeyAction(VimKey::BigWordBackward),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "shift-e",
+            VimKeyAction(VimKey::BigWordEnd),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("^", VimKeyAction(VimKey::FirstNonBlank), Some(VIM_CONTEXT)),
+        KeyBinding::new("$", VimKeyAction(VimKey::LineEnd), Some(VIM_CONTEXT)),
+        KeyBinding::new("g", VimKeyAction(VimKey::Go), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-g",
+            VimKeyAction(VimKey::DocumentEnd),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("i", VimKeyAction(VimKey::Insert), Some(VIM_CONTEXT)),
+        KeyBinding::new("a", VimKeyAction(VimKey::Append), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-i",
+            VimKeyAction(VimKey::InsertLineStart),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "shift-a",
+            VimKeyAction(VimKey::AppendLineEnd),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("o", VimKeyAction(VimKey::OpenBelow), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-o",
+            VimKeyAction(VimKey::OpenAbove),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("v", VimKeyAction(VimKey::Visual), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-v",
+            VimKeyAction(VimKey::VisualLine),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("\"", VimKeyAction(VimKey::DoubleQuote), Some(VIM_CONTEXT)),
+        KeyBinding::new("'", VimKeyAction(VimKey::SingleQuote), Some(VIM_CONTEXT)),
+        KeyBinding::new("`", VimKeyAction(VimKey::Backtick), Some(VIM_CONTEXT)),
+        KeyBinding::new("(", VimKeyAction(VimKey::Parenthesis), Some(VIM_CONTEXT)),
+        KeyBinding::new(")", VimKeyAction(VimKey::Parenthesis), Some(VIM_CONTEXT)),
+        KeyBinding::new("[", VimKeyAction(VimKey::Bracket), Some(VIM_CONTEXT)),
+        KeyBinding::new("]", VimKeyAction(VimKey::Bracket), Some(VIM_CONTEXT)),
+        KeyBinding::new("{", VimKeyAction(VimKey::Brace), Some(VIM_CONTEXT)),
+        KeyBinding::new("}", VimKeyAction(VimKey::Brace), Some(VIM_CONTEXT)),
+        KeyBinding::new("x", VimKeyAction(VimKey::DeleteChar), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-x",
+            VimKeyAction(VimKey::DeletePreviousChar),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("s", VimKeyAction(VimKey::SubstituteChar), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-s",
+            VimKeyAction(VimKey::SubstituteLine),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("d", VimKeyAction(VimKey::Delete), Some(VIM_CONTEXT)),
+        KeyBinding::new("y", VimKeyAction(VimKey::Yank), Some(VIM_CONTEXT)),
+        KeyBinding::new("shift-y", VimKeyAction(VimKey::YankLine), Some(VIM_CONTEXT)),
+        KeyBinding::new("c", VimKeyAction(VimKey::Change), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-j",
+            VimKeyAction(VimKey::JoinLines),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "shift-d",
+            VimKeyAction(VimKey::DeleteToLineEnd),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "shift-c",
+            VimKeyAction(VimKey::ChangeToLineEnd),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("p", VimKeyAction(VimKey::PasteAfter), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-p",
+            VimKeyAction(VimKey::PasteBefore),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("u", VimKeyAction(VimKey::Undo), Some(VIM_CONTEXT)),
+        KeyBinding::new("ctrl-r", VimKeyAction(VimKey::Redo), Some(VIM_CONTEXT)),
+        KeyBinding::new("escape", VimKeyAction(VimKey::Escape), Some(VIM_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-z", VimKeyAction(VimKey::Undo), Some(VIM_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-z", VimKeyAction(VimKey::Undo), Some(VIM_CONTEXT)),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-z", VimKeyAction(VimKey::Redo), Some(VIM_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-z",
+            VimKeyAction(VimKey::Redo),
+            Some(VIM_CONTEXT),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-f", VimKeyAction(VimKey::Search), Some(VIM_CONTEXT)),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-f", VimKeyAction(VimKey::Search), Some(VIM_CONTEXT)),
+    ]);
+
+    bindings
 }
 
 fn shortcut_action_name(binding: &KeyBinding) -> SharedString {

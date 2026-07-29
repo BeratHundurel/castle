@@ -1,6 +1,6 @@
 use entity::{note, note::Entity as Note};
 use gpui::{Context, SharedString, Task, Window};
-use gpui_component::{WindowExt as _, notification::Notification};
+use gpui_component::{WindowExt as _, input::RopeExt as _, notification::Notification};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use std::{
     fs::read_to_string,
@@ -92,15 +92,23 @@ impl DocumentEditorView {
                         let update_content = content.clone();
                         let _ = runtime
                             .spawn(async move {
-                                note::ActiveModel {
+                                let updated = note::ActiveModel {
                                     id: Set(note_id as i64),
-                                    cached_content: Set(update_content),
+                                    cached_content: Set(update_content.clone()),
                                     file_missing_since: Set(None),
                                     updated_at: Set(now_ts()),
                                     ..Default::default()
                                 }
                                 .update(&*update_db)
-                                .await
+                                .await?;
+                                storage::note_links::index_note_links(
+                                    update_db.as_ref(),
+                                    note_id as i64,
+                                    &update_content,
+                                    updated.updated_at,
+                                )
+                                .await?;
+                                Ok::<(), anyhow::Error>(())
                             })
                             .await;
                     }
@@ -168,9 +176,16 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) {
         self.title = model.title.into();
+        self.project_id = model.project_id;
         self.current_path = model.file_path.map(PathBuf::from);
         let current_path = self.current_path.clone();
         self.apply_document_kind(current_path.as_deref(), cx);
+        self.wikilink_completion_provider.update(
+            self.note_id as i64,
+            self.project_id,
+            self.kind == DocumentKind::Markdown,
+            self.note_link_catalog.clone(),
+        );
         self.file_managed_by_app = model.file_managed_by_app;
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = is_loading;
@@ -188,11 +203,18 @@ impl DocumentEditorView {
         self.rebuild_outline_rows();
 
         self.suppress_editor_events = true;
+        let pending_navigation_offset = self.pending_navigation_offset.take();
         self.editor.update(cx, |editor, cx| {
             editor.set_value(content.as_str(), window, cx);
-            editor.focus(window, cx);
+            if let Some(offset) = pending_navigation_offset {
+                let offset = offset.min(editor.text().len());
+                let position = editor.text().offset_to_position(offset);
+                editor.set_cursor_position(position, window, cx);
+            }
         });
         self.suppress_editor_events = false;
+        self.reset_vim_command();
+        self.focus_source_mode(window, cx);
         self.schedule_document_analysis(false, cx);
 
         cx.notify();
@@ -294,7 +316,7 @@ impl DocumentEditorView {
                         let save_db = db.clone();
                         match runtime
                             .spawn(async move {
-                                note::ActiveModel {
+                                let updated = note::ActiveModel {
                                     id: Set(note_id as i64),
                                     cached_content: Set(persisted_content.to_string()),
                                     file_missing_since: Set(None),
@@ -302,7 +324,15 @@ impl DocumentEditorView {
                                     ..Default::default()
                                 }
                                 .update(&*save_db)
-                                .await
+                                .await?;
+                                storage::note_links::index_note_links(
+                                    save_db.as_ref(),
+                                    note_id as i64,
+                                    persisted_content.as_ref(),
+                                    updated.updated_at,
+                                )
+                                .await?;
+                                Ok::<(), anyhow::Error>(())
                             })
                             .await
                         {
@@ -317,14 +347,22 @@ impl DocumentEditorView {
                 let persisted_content = content.clone();
                 match runtime
                     .spawn(async move {
-                        note::ActiveModel {
+                        let updated = note::ActiveModel {
                             id: Set(note_id as i64),
                             cached_content: Set(persisted_content.to_string()),
                             updated_at: Set(now_ts()),
                             ..Default::default()
                         }
                         .update(&*db)
-                        .await
+                        .await?;
+                        storage::note_links::index_note_links(
+                            db.as_ref(),
+                            note_id as i64,
+                            persisted_content.as_ref(),
+                            updated.updated_at,
+                        )
+                        .await?;
+                        Ok::<(), anyhow::Error>(())
                     })
                     .await
                 {
@@ -339,6 +377,7 @@ impl DocumentEditorView {
                     this.update(cx, |this, cx| {
                         this.save_state = this.resolve_save_state(&content, cx);
                         if this.save_state == SaveState::Saved {
+                            this.refresh_note_links(cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                         }
                     })
@@ -485,7 +524,7 @@ impl DocumentEditorView {
                     let persisted_content = content.clone();
                     match runtime
                         .spawn(async move {
-                            note::ActiveModel {
+                            let updated = note::ActiveModel {
                                 id: Set(note_id as i64),
                                 file_path: Set(Some(path_string)),
                                 file_managed_by_app: Set(file_managed_by_app),
@@ -495,7 +534,15 @@ impl DocumentEditorView {
                                 ..Default::default()
                             }
                             .update(&*db)
-                            .await
+                            .await?;
+                            storage::note_links::index_note_links(
+                                db.as_ref(),
+                                note_id as i64,
+                                persisted_content.as_ref(),
+                                updated.updated_at,
+                            )
+                            .await?;
+                            Ok::<(), anyhow::Error>(())
                         })
                         .await
                     {
@@ -529,6 +576,7 @@ impl DocumentEditorView {
                         this.is_loading = false;
                         this.save_state = this.resolve_save_state(&content, cx);
                         if this.save_state == SaveState::Saved {
+                            this.refresh_note_links(cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                         }
                         let path = this.current_path.clone();

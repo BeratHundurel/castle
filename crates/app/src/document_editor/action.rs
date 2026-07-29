@@ -26,6 +26,61 @@ pub(crate) struct EmmetCancelWrap;
 #[action(namespace = document_editor, no_json)]
 pub(crate) struct ToggleDocumentOutline;
 
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = document_editor, no_json)]
+pub(crate) struct VimKeyAction(pub(crate) VimKey);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub(crate) enum VimKey {
+    Digit(u8),
+    Left,
+    Down,
+    Up,
+    Right,
+    WordForward,
+    WordBackward,
+    WordEnd,
+    BigWordForward,
+    BigWordBackward,
+    BigWordEnd,
+    LineStart,
+    FirstNonBlank,
+    LineEnd,
+    Go,
+    DocumentEnd,
+    Insert,
+    Append,
+    InsertLineStart,
+    AppendLineEnd,
+    OpenBelow,
+    OpenAbove,
+    Visual,
+    VisualLine,
+    DoubleQuote,
+    SingleQuote,
+    Backtick,
+    Parenthesis,
+    Bracket,
+    Brace,
+    DeleteChar,
+    DeletePreviousChar,
+    SubstituteChar,
+    SubstituteLine,
+    YankLine,
+    JoinLines,
+    Delete,
+    Yank,
+    Change,
+    DeleteToLineEnd,
+    ChangeToLineEnd,
+    PasteAfter,
+    PasteBefore,
+    Undo,
+    Redo,
+    Search,
+    Escape,
+}
+
 gpui::actions!(
     document_outline,
     [

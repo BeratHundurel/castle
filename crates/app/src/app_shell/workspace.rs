@@ -9,6 +9,32 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
 const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
 
 impl AppShell {
+    pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |_, _| {
+            let result = runtime
+                .spawn(async move {
+                    loop {
+                        let indexed =
+                            storage::note_links::reindex_stale_notes(db.as_ref(), 32).await?;
+                        if indexed < 32 {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await;
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => eprintln!("Failed to index note links: {error}"),
+                Err(error) => eprintln!("Failed to join note-link indexing task: {error}"),
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn start_external_change_watcher(
         &mut self,
         window: &mut Window,

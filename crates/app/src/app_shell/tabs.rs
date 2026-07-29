@@ -621,7 +621,7 @@ impl AppShell {
             view.clone()
         } else {
             let view = DocumentEditorView::view(note_id, window, cx);
-            Self::observe_document_editor(&view, cx);
+            Self::observe_document_editor(&view, window, cx);
             self.note_views.insert(note_id, view.clone());
             view
         };
@@ -695,6 +695,15 @@ async fn persist_workspace_title(
             .await?;
         }
         WorkspaceTitleTarget::Note(note_id) => {
+            let current = Note::find_by_id(note_id as i64)
+                .one(db)
+                .await?
+                .ok_or_else(|| sea_orm::DbErr::Custom(format!("note {note_id} was not found")))?;
+            if current.title != title {
+                storage::note_links::record_note_alias(db, current.id, &current.title, now_ts())
+                    .await
+                    .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
+            }
             note::ActiveModel {
                 id: Set(note_id as i64),
                 title: Set(title),

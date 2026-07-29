@@ -25,6 +25,7 @@ const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
 const DEFAULT_EDITOR_STATUS_LINE_VISIBLE: bool = true;
 const DEFAULT_EDITOR_LINE_NUMBERS: bool = false;
 const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
+const DEFAULT_EDITOR_VIM_MODE: bool = false;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
@@ -80,6 +81,7 @@ struct StoredSettings {
     editor_line_numbers: bool,
     #[serde(alias = "markdown_soft_wrap")]
     editor_soft_wrap: bool,
+    editor_vim_mode: bool,
     #[serde(alias = "markdown_outline_visible")]
     document_outline_visible: bool,
     close_to_tray: bool,
@@ -104,6 +106,7 @@ impl Default for StoredSettings {
             editor_status_line_visible: DEFAULT_EDITOR_STATUS_LINE_VISIBLE,
             editor_line_numbers: DEFAULT_EDITOR_LINE_NUMBERS,
             editor_soft_wrap: DEFAULT_EDITOR_SOFT_WRAP,
+            editor_vim_mode: DEFAULT_EDITOR_VIM_MODE,
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
@@ -277,6 +280,10 @@ impl AppSettings {
         cx.global::<Self>().values.editor_soft_wrap
     }
 
+    pub(crate) fn editor_vim_mode(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_vim_mode
+    }
+
     pub(crate) fn set_markdown_editor_mode(value: SharedString, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_editor_mode = value.to_string();
@@ -300,6 +307,13 @@ impl AppSettings {
         Self::update(cx, |settings| {
             settings.values.editor_soft_wrap = enabled;
         });
+    }
+
+    pub(crate) fn set_editor_vim_mode(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.editor_vim_mode = enabled;
+        });
+        cx.refresh_windows();
     }
 
     pub(crate) fn document_outline_visible(cx: &App) -> bool {
@@ -498,6 +512,7 @@ mod tests {
         );
         assert_eq!(settings.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
         assert!(settings.editor_status_line_visible);
+        assert!(!settings.editor_vim_mode);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
     }

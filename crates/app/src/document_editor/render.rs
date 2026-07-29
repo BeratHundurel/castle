@@ -7,7 +7,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
-    input::{Input, RopeExt as _},
+    input::{Input, InputState, RopeExt as _},
     scroll::ScrollableElement,
     text::{TextView, TextViewStyle},
     v_flex,
@@ -15,7 +15,8 @@ use gpui_component::{
 use std::ops::Range;
 
 use super::types::*;
-use super::{DocumentEditorView, DocumentKind};
+use super::vim::VimMode;
+use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
 use crate::DB;
 use crate::app_settings::AppSettings;
 
@@ -55,6 +56,7 @@ impl DocumentEditorView {
                 px(0.)
             };
         let navigation_highlight = self.render_outline_source_highlight(source_width, cx);
+        let vim_overlays = self.render_vim_overlays(cx);
         let source_context = if self.kind == DocumentKind::Markdown {
             "MarkdownSource"
         } else {
@@ -103,17 +105,67 @@ impl DocumentEditorView {
             .relative()
             .opacity(if source_is_ready { 1. } else { 0. })
             .bg(cx.theme().background)
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_vim_mouse_down))
             .on_prepaint(move |bounds, _, cx| {
                 view.update(cx, |this, cx| {
-                    let first_layout = this.source_bounds.is_none();
-                    this.source_bounds = Some(bounds);
-                    if first_layout {
+                    if this.source_bounds != Some(bounds) {
+                        this.source_bounds = Some(bounds);
                         cx.notify();
                     }
                 });
             })
             .child(div().size_full().min_w_0().py_4().child(input))
             .children(navigation_highlight)
+            .children(vim_overlays)
+    }
+
+    fn render_vim_overlays(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if !self.vim_is_enabled() || self.vim_mode() == VimMode::Insert {
+            return Vec::new();
+        }
+        let Some(source_bounds) = self.source_bounds else {
+            return Vec::new();
+        };
+
+        let mut overlays = Vec::new();
+        let visual_range = self.vim_visual_range(cx);
+        let editor = self.editor.read(cx);
+        if let Some(selection) = visual_range
+            && let Some(visible_rows) = editor.visible_row_range()
+        {
+            for row in visible_rows {
+                let line_start = editor.text().line_start_offset(row);
+                let line_end = if row + 1 < editor.text().lines_len() {
+                    editor.text().line_start_offset(row + 1)
+                } else {
+                    editor.text().len()
+                };
+                let start = selection.start.max(line_start);
+                let end = selection.end.min(line_end);
+                if start >= end {
+                    continue;
+                }
+                for bounds in vim_selection_bounds(editor, start..end, source_bounds) {
+                    overlays.push(
+                        vim_overlay(
+                            bounds,
+                            source_bounds,
+                            cx.theme().selection.opacity(0.55),
+                            false,
+                        )
+                        .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        if let Some(bounds) = vim_cursor_bounds(editor, editor.cursor()) {
+            overlays.push(
+                vim_overlay(bounds, source_bounds, cx.theme().caret.opacity(0.58), true)
+                    .into_any_element(),
+            );
+        }
+        overlays
     }
 
     fn render_outline_source_highlight(
@@ -125,6 +177,9 @@ impl DocumentEditorView {
         let source_bounds = self.source_bounds?;
         let editor = self.editor.read(cx);
         let row = editor.text().offset_to_point(highlight.source_offset).row;
+        if !super::row_is_in_visible_layout(editor.visible_row_range(), row) {
+            return None;
+        }
         let line_range = editor.text().line_start_offset(row)..editor.text().line_end_offset(row);
         let line_bounds = editor.range_to_bounds(&line_range)?;
         let top = line_bounds.top() - source_bounds.top();
@@ -167,12 +222,14 @@ impl DocumentEditorView {
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size_value = AppSettings::markdown_preview_font_size(cx);
         let font_size = px(font_size_value as f32);
+
         let sections = if self.outline.markdown_sections().is_empty() {
             vec![self.editor.read(cx).value()]
         } else {
             self.outline.markdown_sections().to_vec()
         };
         let section_count = sections.len();
+
         let virtualization = markdown_preview_virtualization(self.outline_rows.is_empty());
         let outline_in_layout = self.outline_rendered && self.view_width >= px(760.);
         let preview_width = self.view_width
@@ -181,10 +238,17 @@ impl DocumentEditorView {
             } else {
                 px(0.)
             };
+
         let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
             cx.global::<DB>().data_dir.clone(),
             self.current_path.as_deref(),
+        );
+        let wikilink_plugin = super::links::WikiLinkPreviewPlugin::new(
+            cx.entity(),
+            self.project_id,
+            self.note_link_catalog.clone(),
+            self.note_links.clone(),
         );
         let preview_style = markdown_preview_style(font_size);
 
@@ -205,6 +269,7 @@ impl DocumentEditorView {
                 sections.into_iter().next().unwrap_or_default(),
             )
             .plugin(local_image_plugin)
+            .plugin(wikilink_plugin)
             .style(preview_style)
             .code_block_actions(|code_block, _window, _cx| {
                 Clipboard::new("copy-code").value(code_block.code().clone())
@@ -221,6 +286,7 @@ impl DocumentEditorView {
                     div()
                         .w_full()
                         .px(horizontal_padding)
+                        .pt(markdown_preview_section_top_padding(index))
                         .when(index == 0, |this| this.pt_6())
                         .when(index + 1 == section_count, |this| this.pb_6())
                         .child(
@@ -229,6 +295,7 @@ impl DocumentEditorView {
                                 sections[index].clone(),
                             )
                             .plugin(local_image_plugin.clone())
+                            .plugin(wikilink_plugin.clone())
                             .style(preview_style.clone())
                             .code_block_actions(|code_block, _window, _cx| {
                                 Clipboard::new("copy-code").value(code_block.code().clone())
@@ -257,12 +324,14 @@ impl DocumentEditorView {
             )
     }
 
-    fn render_outline(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_outline(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.inspector_tab == DocumentInspectorTab::Links {
+            return self.render_links_inspector(cx).into_any_element();
+        }
         let selected = self.outline_selected;
         let rows = self.outline_rows.clone();
         let kind = self.kind;
         let empty = rows.is_empty();
-        let json_has_error = self.outline.json_has_error();
         let can_expand_all = self.outline.can_expand_all();
         let can_collapse_all = self.outline.can_collapse_all();
         let empty_message = if self.kind == DocumentKind::Json {
@@ -297,18 +366,7 @@ impl DocumentEditorView {
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().border.opacity(0.7))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Outline")
-                            .children(json_has_error.then(|| {
-                                Icon::new(IconName::TriangleAlert)
-                                    .xsmall()
-                                    .text_color(cx.theme().warning)
-                            })),
-                    )
+                    .child(self.render_inspector_tabs(cx))
                     .child(
                         h_flex()
                             .gap_1()
@@ -467,6 +525,7 @@ impl DocumentEditorView {
             )
             .child(self.render_outline_resize_handle(cx))
             .vertical_scrollbar(&self.outline_scroll_handle)
+            .into_any_element()
     }
 
     fn render_outline_resize_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -605,6 +664,10 @@ impl DocumentEditorView {
                     .items_center()
                     .gap_2()
                     .child(Icon::new(IconName::File).xsmall())
+                    .children(
+                        (self.vim_is_enabled() && self.mode == EditorMode::Source)
+                            .then(|| self.render_vim_mode_indicator(cx)),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -668,6 +731,196 @@ impl DocumentEditorView {
                             )),
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_inspector_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_1()
+            .child(
+                Button::new("document-inspector-outline")
+                    .label("Outline")
+                    .ghost()
+                    .small()
+                    .selected(self.inspector_tab == DocumentInspectorTab::Outline)
+                    .on_click(cx.listener(|this, _, _, cx| this.show_outline_inspector(cx))),
+            )
+            .children(
+                (self.kind == DocumentKind::Json && self.outline.json_has_error()).then(|| {
+                    Icon::new(IconName::TriangleAlert)
+                        .xsmall()
+                        .text_color(cx.theme().warning)
+                }),
+            )
+            .children((self.kind == DocumentKind::Markdown).then(|| {
+                Button::new("document-inspector-links")
+                    .label("Links")
+                    .ghost()
+                    .small()
+                    .selected(self.inspector_tab == DocumentInspectorTab::Links)
+                    .on_click(cx.listener(|this, _, _, cx| this.show_links_inspector(cx)))
+            }))
+    }
+
+    fn render_links_inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let outline_width = outline_width_for_view(self.outline_width, self.view_width);
+        let inbound = self.note_links.inbound.clone();
+        let outbound = self.note_links.outbound.clone();
+        let inbound_rows = if inbound.is_empty() {
+            vec![link_empty_state("No notes link here yet", cx).into_any_element()]
+        } else {
+            inbound
+                .iter()
+                .enumerate()
+                .map(|(index, link)| {
+                    self.render_note_link_row("inbound-note-link", index, link, true, cx)
+                })
+                .collect()
+        };
+        let outbound_rows = if outbound.is_empty() {
+            vec![link_empty_state("This note has no links", cx).into_any_element()]
+        } else {
+            outbound
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, link)| match (link.target_note_id, link.target_title.as_deref()) {
+                        (Some(_), Some(_)) => {
+                            self.render_note_link_row("outbound-note-link", index, link, false, cx)
+                        }
+                        _ => h_flex()
+                            .id(("unresolved-note-link", index))
+                            .min_h_9()
+                            .px_3()
+                            .gap_2()
+                            .text_sm()
+                            .text_color(cx.theme().warning)
+                            .child(Icon::new(IconName::TriangleAlert).xsmall())
+                            .child(div().min_w_0().truncate().child(link.raw_target.clone()))
+                            .into_any_element(),
+                    },
+                )
+                .collect()
+        };
+
+        v_flex()
+            .id("document-links")
+            .relative()
+            .w(outline_width)
+            .h_full()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().sidebar.opacity(0.72))
+            .child(
+                h_flex()
+                    .h_10()
+                    .px_3()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().border.opacity(0.7))
+                    .child(self.render_inspector_tabs(cx))
+                    .child(
+                        Button::new("close-document-links")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .tooltip("Hide inspector (Ctrl+Shift+O)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_outline(window, cx);
+                            })),
+                    ),
+            )
+            .when(self.note_links_loading, |this| {
+                this.child(
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Loading links…"),
+                )
+            })
+            .when_some(self.note_links_error.clone(), |this, error| {
+                this.child(
+                    v_flex()
+                        .p_4()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child("Could not load note links")
+                        .child(div().text_xs().child(error)),
+                )
+            })
+            .when(
+                !self.note_links_loading && self.note_links_error.is_none(),
+                |this| {
+                    this.child(
+                        v_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scrollbar()
+                            .child(link_section_title("Links to this note", cx))
+                            .children(inbound_rows)
+                            .child(link_section_title("Links from this note", cx))
+                            .children(outbound_rows),
+                    )
+                },
+            )
+    }
+
+    fn render_note_link_row(
+        &self,
+        id: &'static str,
+        index: usize,
+        link: &storage::note_links::NoteLinkReference,
+        inbound: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (note_id, title, project_name, source_offset) = if inbound {
+            (
+                link.source_note_id as u32,
+                link.source_title.as_str(),
+                link.source_project_name.as_deref(),
+                Some(link.start_byte),
+            )
+        } else {
+            (
+                link.target_note_id.unwrap_or_default() as u32,
+                link.target_title.as_deref().unwrap_or(&link.raw_target),
+                link.target_project_name.as_deref(),
+                None,
+            )
+        };
+
+        h_flex()
+            .id((id, index))
+            .min_h_10()
+            .px_3()
+            .py_1()
+            .gap_2()
+            .cursor_pointer()
+            .hover(|this| this.bg(cx.theme().accent.opacity(0.38)))
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(super::DocumentEditorEvent::OpenNote {
+                    note_id,
+                    source_offset,
+                });
+            }))
+            .child(Icon::new(IconName::File).xsmall())
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .child(div().text_sm().truncate().child(title.to_string()))
+                    .children(project_name.map(|project| {
+                        div()
+                            .text_xs()
+                            .truncate()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(project.to_string())
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_mode_switcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -720,16 +973,20 @@ impl DocumentEditorView {
 }
 
 impl Render for DocumentEditorView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_vim_setting(window, cx);
+        self.sync_vim_search_focus(window, cx);
         let theme_background = cx.theme().background;
         let theme_border = cx.theme().border;
         let theme_input = cx.theme().input;
         let status_line_visible = AppSettings::editor_status_line_visible(cx);
+        let vim_context = self.vim_context();
 
         v_flex()
             .id("document-editor-window")
-            .key_context("DocumentEditor")
+            .key_context(vim_context.as_str())
             .track_focus(&self.focus_handle)
+            .relative()
             .size_full()
             .w_full()
             .min_w_0()
@@ -742,6 +999,8 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
             .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
             .on_action(cx.listener(Self::apply_format))
+            .on_action(cx.listener(Self::on_action_vim_key))
+            .capture_action(cx.listener(Self::on_action_vim_insert_escape))
             .child(
                 div()
                     .flex_1()
@@ -779,6 +1038,18 @@ impl Render for DocumentEditorView {
             )
             .children(status_line_visible.then(|| self.render_status_bar(cx)))
             .children(
+                (!status_line_visible && self.vim_is_enabled() && self.mode == EditorMode::Source)
+                    .then(|| {
+                        div()
+                            .id("vim-mode-overlay")
+                            .debug_selector(|| "vim-mode-overlay".to_string())
+                            .absolute()
+                            .bottom(px(8.))
+                            .left(px(8.))
+                            .child(self.render_vim_mode_indicator(cx))
+                    }),
+            )
+            .children(
                 (self.kind == DocumentKind::Markdown && self.show_emmet_input).then(|| {
                     div()
                         .key_context("EmmetInput")
@@ -803,6 +1074,161 @@ impl Render for DocumentEditorView {
                 }),
             )
     }
+}
+
+impl DocumentEditorView {
+    fn render_vim_mode_indicator(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (label, color) = match self.vim_mode() {
+            VimMode::Normal => ("NORMAL", cx.theme().accent_foreground),
+            VimMode::Insert => ("INSERT", cx.theme().success),
+            VimMode::Visual => ("VISUAL", cx.theme().warning),
+            VimMode::VisualLine => ("VISUAL LINE", cx.theme().warning),
+        };
+        let command = self.vim.command_text();
+        h_flex()
+            .id("vim-mode-indicator")
+            .h_5()
+            .px_2()
+            .gap_1()
+            .items_center()
+            .rounded_sm()
+            .bg(color.opacity(0.14))
+            .text_color(color)
+            .text_xs()
+            .child(label)
+            .children(
+                (!command.is_empty())
+                    .then(|| div().text_color(cx.theme().muted_foreground).child(command)),
+            )
+            .into_any_element()
+    }
+}
+
+fn vim_overlay(
+    bounds: Bounds<Pixels>,
+    source_bounds: Bounds<Pixels>,
+    color: Hsla,
+    cursor: bool,
+) -> impl IntoElement {
+    let left = bounds.origin.x - source_bounds.origin.x;
+    let top = bounds.origin.y - source_bounds.origin.y;
+    let width = if cursor {
+        bounds.size.width.max(px(7.))
+    } else {
+        bounds.size.width.max(px(2.))
+    };
+    div()
+        .absolute()
+        .left(left)
+        .top(top)
+        .w(width)
+        .h(bounds.size.height)
+        .bg(color)
+}
+
+pub(super) fn vim_selection_bounds(
+    editor: &InputState,
+    range: Range<usize>,
+    source_bounds: Bounds<Pixels>,
+) -> Vec<Bounds<Pixels>> {
+    if range.end.saturating_sub(range.start) <= 2
+        && editor
+            .text()
+            .slice(range.clone())
+            .chars()
+            .all(|ch| matches!(ch, '\r' | '\n'))
+    {
+        return vim_cursor_bounds(editor, range.start).into_iter().collect();
+    }
+    let (Some(start), Some(end)) = (
+        editor.range_to_bounds(&(range.start..range.start)),
+        editor.range_to_bounds(&(range.end..range.end)),
+    ) else {
+        return editor.range_to_bounds(&range).into_iter().collect();
+    };
+    let line_height = editor.line_height().unwrap_or(start.size.height);
+    let visible_top = source_bounds.top();
+    let visible_bottom = source_bounds.bottom();
+    let is_visible =
+        |origin_y: Pixels| origin_y < visible_bottom && origin_y + line_height > visible_top;
+    if end.origin.y == start.origin.y {
+        if !is_visible(start.origin.y) {
+            return Vec::new();
+        }
+        return vec![Bounds::new(
+            start.origin,
+            size((end.origin.x - start.origin.x).max(px(2.)), line_height),
+        )];
+    }
+
+    let padding = source_horizontal_padding(source_bounds.size.width);
+    let content_left = source_bounds.origin.x + padding;
+    let content_right = source_bounds.origin.x + source_bounds.size.width - padding;
+    let mut bounds = Vec::new();
+    if is_visible(start.origin.y) {
+        bounds.push(Bounds::new(
+            start.origin,
+            size((content_right - start.origin.x).max(px(2.)), line_height),
+        ));
+    }
+    let mut y = start.origin.y + line_height;
+    if y < visible_top {
+        let hidden_rows = ((visible_top - y) / line_height).floor();
+        y += line_height * hidden_rows;
+        while y + line_height <= visible_top {
+            y += line_height;
+        }
+    }
+    let full_row_end = end.origin.y.min(visible_bottom);
+    while y + px(0.5) < full_row_end {
+        bounds.push(Bounds::new(
+            point(content_left, y),
+            size((content_right - content_left).max(px(2.)), line_height),
+        ));
+        y += line_height;
+    }
+    if let Some(tail_width) = vim_selection_tail_width(content_left, end.origin.x)
+        && is_visible(end.origin.y)
+    {
+        bounds.push(Bounds::new(
+            point(content_left, end.origin.y),
+            size(tail_width, line_height),
+        ));
+    }
+    bounds
+}
+
+fn vim_selection_tail_width(content_left: Pixels, end_x: Pixels) -> Option<Pixels> {
+    let width = end_x - content_left;
+    (width > px(0.5)).then_some(width)
+}
+
+pub(super) fn vim_cursor_bounds(editor: &InputState, cursor: usize) -> Option<Bounds<Pixels>> {
+    let caret = editor.range_to_bounds(&(cursor..cursor))?;
+    let line_height = editor.line_height().unwrap_or(caret.size.height);
+    let character = match editor.text().char_at(cursor) {
+        Some('\r' | '\n') | None => caret,
+        Some(ch) => editor
+            .range_to_bounds(&(cursor..cursor + ch.len_utf8()))
+            .unwrap_or(caret),
+    };
+    Some(normalize_vim_cursor_bounds(character, caret, line_height))
+}
+
+fn normalize_vim_cursor_bounds(
+    character: Bounds<Pixels>,
+    caret: Bounds<Pixels>,
+    line_height: Pixels,
+) -> Bounds<Pixels> {
+    let bounds = if character.size.height > line_height + px(0.5) {
+        caret
+    } else {
+        character
+    };
+    Bounds::new(
+        bounds.origin,
+        size(bounds.size.width.max(px(7.)), line_height),
+    )
 }
 
 fn save_state_status(
@@ -856,6 +1282,18 @@ fn markdown_preview_virtualization(outline_is_empty: bool) -> MarkdownPreviewVir
     }
 }
 
+fn markdown_preview_block_gap() -> Rems {
+    rems(1.)
+}
+
+fn markdown_preview_section_top_padding(index: usize) -> Rems {
+    if index == 0 {
+        rems(0.)
+    } else {
+        markdown_preview_block_gap()
+    }
+}
+
 fn outline_width_for_view(requested_width: Pixels, view_width: Pixels) -> Pixels {
     let available_width = (view_width - super::EDITOR_MIN_WIDTH_WITH_OUTLINE)
         .max(super::OUTLINE_MIN_WIDTH)
@@ -875,18 +1313,39 @@ fn markdown_preview_style(font_size: Pixels) -> TextViewStyle {
     }
 }
 
+fn link_section_title(label: &str, cx: &App) -> impl IntoElement {
+    h_flex()
+        .h_9()
+        .px_3()
+        .mt_1()
+        .text_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(cx.theme().muted_foreground)
+        .child(label.to_string())
+}
+
+fn link_empty_state(label: &str, cx: &App) -> impl IntoElement {
+    div()
+        .px_3()
+        .pb_3()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(label.to_string())
+}
+
 fn reserves_disclosure_space(kind: DocumentKind, has_children: bool) -> bool {
     kind == DocumentKind::Json && !has_children
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::px;
+    use gpui::{Bounds, point, px, rems, size};
 
     use super::{
-        DocumentKind, MarkdownPreviewVirtualization, markdown_preview_horizontal_padding,
-        markdown_preview_virtualization, outline_row_left_padding, outline_width_for_view,
-        reserves_disclosure_space,
+        DocumentKind, MarkdownPreviewVirtualization, markdown_preview_block_gap,
+        markdown_preview_horizontal_padding, markdown_preview_section_top_padding,
+        markdown_preview_virtualization, normalize_vim_cursor_bounds, outline_row_left_padding,
+        outline_width_for_view, reserves_disclosure_space, vim_selection_tail_width,
     };
 
     #[test]
@@ -925,5 +1384,32 @@ mod tests {
             markdown_preview_virtualization(false),
             MarkdownPreviewVirtualization::Sections
         );
+    }
+
+    #[test]
+    fn markdown_preview_restores_block_spacing_between_virtualized_sections() {
+        assert_eq!(markdown_preview_section_top_padding(0), rems(0.));
+        assert_eq!(
+            markdown_preview_section_top_padding(1),
+            markdown_preview_block_gap()
+        );
+    }
+
+    #[test]
+    fn vim_cursor_uses_single_row_caret_geometry_for_cross_row_ranges() {
+        let line_height = px(18.);
+        let caret = Bounds::new(point(px(10.), px(20.)), size(px(0.), line_height));
+        let cross_row = Bounds::new(point(px(10.), px(20.)), size(px(80.), px(36.)));
+        let normalized = normalize_vim_cursor_bounds(cross_row, caret, line_height);
+
+        assert_eq!(normalized.origin, caret.origin);
+        assert_eq!(normalized.size, size(px(7.), line_height));
+    }
+
+    #[test]
+    fn vim_selection_does_not_paint_a_sliver_at_an_exclusive_row_boundary() {
+        assert_eq!(vim_selection_tail_width(px(40.), px(40.)), None);
+        assert_eq!(vim_selection_tail_width(px(40.), px(40.4)), None);
+        assert_eq!(vim_selection_tail_width(px(40.), px(52.)), Some(px(12.)));
     }
 }

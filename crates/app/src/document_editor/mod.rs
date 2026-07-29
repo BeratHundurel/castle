@@ -3,11 +3,13 @@ mod attachments;
 mod emmet;
 mod formatting;
 mod handlers;
+mod links;
 mod outline;
 mod persistence;
 mod render;
 pub mod types;
 mod util;
+mod vim;
 
 use gpui::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString,
@@ -28,6 +30,7 @@ use std::{
 use crate::app_settings::AppSettings;
 use outline::{DocumentOutline, JsonOutline, MarkdownOutline, OutlineRow};
 use types::*;
+use vim::VimState;
 
 pub use types::DocumentStats;
 pub(crate) use types::{DEFAULT_NOTE, DocumentKind, SaveState};
@@ -60,6 +63,17 @@ struct OutlineSourceHighlight {
 pub(crate) enum DocumentEditorEvent {
     PathChanged,
     Saved(u32),
+    OpenNote {
+        note_id: u32,
+        source_offset: Option<usize>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DocumentInspectorTab {
+    #[default]
+    Outline,
+    Links,
 }
 
 pub(crate) struct DocumentEditorView {
@@ -69,6 +83,8 @@ pub(crate) struct DocumentEditorView {
     editor: Entity<InputState>,
     kind: DocumentKind,
     mode: EditorMode,
+    vim: VimState,
+    vim_search_active: bool,
     current_path: Option<PathBuf>,
     file_managed_by_app: bool,
     save_state: SaveState,
@@ -97,6 +113,16 @@ pub(crate) struct DocumentEditorView {
     preview_font_size_bits: Cell<u64>,
     outline_scroll_handle: UniformListScrollHandle,
     outline_focus_handle: FocusHandle,
+    inspector_tab: DocumentInspectorTab,
+    note_links: Arc<storage::note_links::NoteLinkSet>,
+    note_link_catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
+    project_id: Option<i64>,
+    wikilink_completion_provider: links::WikiLinkCompletionProvider,
+    note_links_loading: bool,
+    note_links_error: Option<SharedString>,
+    note_links_generation: u64,
+    _note_links_task: Option<Task<()>>,
+    pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
     outline_width: Pixels,
@@ -114,9 +140,12 @@ impl DocumentEditorView {
         let soft_wrap = AppSettings::editor_soft_wrap(cx);
         let outline_visible = AppSettings::document_outline_visible(cx);
         let preview_font_size_bits = AppSettings::markdown_preview_font_size(cx).to_bits();
+        let vim_enabled = AppSettings::editor_vim_mode(cx);
+        let wikilink_completion_provider = links::WikiLinkCompletionProvider::new(note_id as i64);
+        let input_completion_provider = std::rc::Rc::new(wikilink_completion_provider.clone());
 
         let editor = cx.new(|cx| {
-            InputState::new(window, cx)
+            let mut editor = InputState::new(window, cx)
                 .code_editor(Language::Plain)
                 .scroll_beyond_last_line(Some(1))
                 .line_number(line_numbers)
@@ -128,7 +157,9 @@ impl DocumentEditorView {
                 .soft_wrap(soft_wrap)
                 .searchable(true)
                 .placeholder("Start typing...")
-                .default_value("")
+                .default_value("");
+            editor.lsp.completion_provider = Some(input_completion_provider);
+            editor
         });
 
         let emmet_input = cx.new(|cx| {
@@ -138,7 +169,6 @@ impl DocumentEditorView {
 
         let focus_handle = cx.focus_handle();
         let outline_focus_handle = cx.focus_handle();
-
         cx.subscribe_in(
             &editor,
             window,
@@ -157,6 +187,7 @@ impl DocumentEditorView {
         .detach();
 
         Self::load_note_async(note_id, window, cx).detach();
+        Self::load_note_links_async(note_id, 1, cx).detach();
 
         Self {
             note_id,
@@ -165,6 +196,8 @@ impl DocumentEditorView {
             editor,
             kind: DocumentKind::PlainText,
             mode: EditorMode::Source,
+            vim: VimState::new(vim_enabled),
+            vim_search_active: false,
             current_path: None,
             file_managed_by_app: false,
             save_state: SaveState::Saved,
@@ -194,6 +227,16 @@ impl DocumentEditorView {
             preview_font_size_bits: Cell::new(preview_font_size_bits),
             outline_scroll_handle: UniformListScrollHandle::default(),
             outline_focus_handle,
+            inspector_tab: DocumentInspectorTab::Outline,
+            note_links: Arc::new(storage::note_links::NoteLinkSet::default()),
+            note_link_catalog: Arc::new(Vec::new()),
+            project_id: None,
+            wikilink_completion_provider,
+            note_links_loading: true,
+            note_links_error: None,
+            note_links_generation: 1,
+            _note_links_task: None,
+            pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
             outline_width: OUTLINE_DEFAULT_WIDTH,
@@ -216,6 +259,7 @@ impl DocumentEditorView {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = true;
         Self::load_note_async(self.note_id, window, cx).detach();
+        self.refresh_note_links(cx);
         cx.notify();
     }
 
@@ -252,11 +296,31 @@ impl DocumentEditorView {
         cx.notify();
     }
 
+    pub(crate) fn navigate_to_offset(
+        &mut self,
+        offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_loading {
+            self.pending_navigation_offset = Some(offset);
+            return;
+        }
+        self.editor.update(cx, |editor, cx| {
+            let offset = offset.min(editor.text().len());
+            let position = editor.text().offset_to_position(offset);
+            editor.set_cursor_position(position, window, cx);
+        });
+    }
+
     fn set_mode(&mut self, mode: EditorMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.kind != DocumentKind::Markdown {
             return;
         }
         self.mode = mode;
+        if mode == EditorMode::Preview {
+            self.reset_vim_command();
+        }
         self.focus_active_mode(window, cx);
         cx.notify();
     }
@@ -269,16 +333,16 @@ impl DocumentEditorView {
             EditorMode::Source => EditorMode::Preview,
             EditorMode::Preview => EditorMode::Source,
         };
+        if self.mode == EditorMode::Preview {
+            self.reset_vim_command();
+        }
         self.focus_active_mode(window, cx);
         cx.notify();
     }
 
     fn focus_active_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
         match self.mode {
-            EditorMode::Source => {
-                self.editor
-                    .update(cx, |editor, cx| editor.focus(window, cx));
-            }
+            EditorMode::Source => self.focus_source_mode(window, cx),
             EditorMode::Preview => {
                 self.focus_handle.focus(window, cx);
             }
@@ -345,12 +409,27 @@ impl DocumentEditorView {
         let navigation_generation = self.outline_navigation_generation;
         match self.mode {
             EditorMode::Source => {
-                self.editor.update(cx, |editor, cx| {
+                let source_bounds = self.source_bounds;
+                let centered_at_document_start = self.editor.update(cx, |editor, cx| {
                     let position = editor.text().offset_to_position(item.source_offset);
+                    let centers_at_document_start = source_bounds.is_some_and(|source_bounds| {
+                        source_row_centers_at_document_start(
+                            editor.line_height(),
+                            source_bounds.size.height,
+                            position.line as usize,
+                        )
+                    });
                     editor.set_cursor_position(position, window, cx);
+                    if centers_at_document_start {
+                        let current = editor.scroll_offset();
+                        editor.set_scroll_offset(point(current.x, px(0.)), cx);
+                    }
+                    centers_at_document_start
                 });
                 self.show_outline_source_highlight(item.source_offset, navigation_generation, cx);
-                self.align_source_heading_after_layout(navigation_generation, cx);
+                if !centered_at_document_start {
+                    self.align_source_heading_after_layout(navigation_generation, cx);
+                }
             }
             EditorMode::Preview => {
                 self.outline_source_highlight = None;
@@ -529,6 +608,10 @@ impl DocumentEditorView {
 
                         this.editor.update(cx, |editor, cx| {
                             let cursor = editor.cursor();
+                            let cursor_row = editor.text().offset_to_point(cursor).row;
+                            if !row_is_in_visible_layout(editor.visible_row_range(), cursor_row) {
+                                return false;
+                            }
                             let Some(cursor_bounds) = editor.range_to_bounds(&(cursor..cursor))
                             else {
                                 return false;
@@ -589,10 +672,26 @@ fn analysis_is_current(
     current_generation == analysis_generation && current_kind == analysis_kind
 }
 
+fn row_is_in_visible_layout(visible_rows: Option<Range<usize>>, row: usize) -> bool {
+    visible_rows.is_some_and(|visible_rows| visible_rows.contains(&row))
+}
+
+fn source_row_centers_at_document_start(
+    line_height: Option<Pixels>,
+    viewport_height: Pixels,
+    row: usize,
+) -> bool {
+    line_height.is_some_and(|line_height| {
+        line_height * row.saturating_add(1) as f32 <= viewport_height / 2.
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DocumentEditorView, DocumentKind, DocumentOutline, analysis_is_current, analyze_document,
+        DocumentEditorView, DocumentKind, DocumentOutline, JsonOutline,
+        OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document,
+        row_is_in_visible_layout, source_row_centers_at_document_start,
     };
     use crate::{DB, test_alloc};
     use entity::note;
@@ -739,5 +838,140 @@ mod tests {
             4,
             DocumentKind::Json
         ));
+    }
+
+    #[test]
+    fn outline_navigation_waits_for_the_destination_row_layout() {
+        assert!(!row_is_in_visible_layout(Some(20..40), 5));
+        assert!(row_is_in_visible_layout(Some(20..40), 20));
+        assert!(row_is_in_visible_layout(Some(20..40), 39));
+        assert!(!row_is_in_visible_layout(Some(20..40), 40));
+        assert!(!row_is_in_visible_layout(None, 20));
+    }
+
+    #[test]
+    fn source_rows_in_the_top_half_viewport_clamp_to_document_start() {
+        assert!(source_row_centers_at_document_start(
+            Some(gpui::px(20.)),
+            gpui::px(400.),
+            8
+        ));
+        assert!(source_row_centers_at_document_start(
+            Some(gpui::px(20.)),
+            gpui::px(400.),
+            9
+        ));
+        assert!(!source_row_centers_at_document_start(
+            Some(gpui::px(20.)),
+            gpui::px(400.),
+            10
+        ));
+        assert!(!source_row_centers_at_document_start(
+            None,
+            gpui::px(400.),
+            0
+        ));
+    }
+
+    #[gpui::test]
+    fn outline_navigation_to_document_start_has_no_intermediate_scroll_frame(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let content = include_str!("../../../../themes/sick.json");
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("JSON outline navigation".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(None),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set(content.to_string()),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("outline test database should initialize");
+        let settings_dir =
+            std::env::temp_dir().join(format!("castle-outline-navigation-{}", std::process::id()));
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(DB {
+                conn: Arc::new(db),
+                data_dir: PathBuf::new(),
+            });
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("outline test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.kind = DocumentKind::Json;
+                editor.outline = DocumentOutline::Json(JsonOutline::parse(content));
+                editor.outline.expand_all();
+                editor.rebuild_outline_rows();
+                editor.editor.update(cx, |input, cx| {
+                    input.set_cursor_position(
+                        gpui_component::input::Position::new(350, 0),
+                        window,
+                        cx,
+                    );
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let target_index = view
+            .read_with(&cx, |editor, _| {
+                editor
+                    .outline_rows
+                    .iter()
+                    .position(|row| row.title.starts_with("colors  ·"))
+            })
+            .expect("the colors node should be present");
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.select_outline_item(target_index, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        let first_frame_offset =
+            view.read_with(&cx, |editor, cx| editor.editor.read(cx).scroll_offset().y);
+
+        cx.executor().advance_clock(OUTLINE_SCROLL_LAYOUT_DELAY);
+        cx.run_until_parked();
+        let centered_offset =
+            view.read_with(&cx, |editor, cx| editor.editor.read(cx).scroll_offset().y);
+
+        assert_eq!(
+            first_frame_offset, centered_offset,
+            "outline navigation must not paint an intermediate scroll position"
+        );
     }
 }

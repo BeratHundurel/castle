@@ -17,7 +17,12 @@ impl DocumentEditorView {
             return;
         }
 
-        let selected = self.editor.read(cx).selected_value().to_string();
+        let vim_range = self.vim_visual_range(cx);
+        let selected = if let Some(range) = vim_range.as_ref() {
+            self.editor.read(cx).text().slice(range.clone()).to_string()
+        } else {
+            self.editor.read(cx).selected_value().to_string()
+        };
         let replacement = match action.0 {
             MarkdownFormat::HeadingOne => Self::prefix_block(&selected, "# ", "Heading"),
             MarkdownFormat::HeadingTwo => Self::prefix_block(&selected, "## ", "Heading"),
@@ -32,10 +37,25 @@ impl DocumentEditorView {
             MarkdownFormat::CodeBlock => Self::code_block(&selected),
         };
 
-        self.editor.update(cx, |editor, cx| {
-            editor.replace(replacement, window, cx);
-            editor.focus(window, cx);
-        });
+        if let Some(range) = vim_range {
+            self.editor.update(cx, |editor, cx| {
+                let start = editor.text().offset_to_offset_utf16(range.start);
+                let end = editor.text().offset_to_offset_utf16(range.end);
+                EntityInputHandler::replace_text_in_range(
+                    editor,
+                    Some(start..end),
+                    &replacement,
+                    window,
+                    cx,
+                );
+            });
+            self.finish_vim_visual_edit(range.start, window, cx);
+        } else {
+            self.editor.update(cx, |editor, cx| {
+                editor.replace(replacement, window, cx);
+                editor.focus(window, cx);
+            });
+        }
     }
 
     pub(super) fn wrap_inline(
@@ -206,6 +226,16 @@ fn markdown_line_continuation(line: &str) -> Option<MarkdownLineContinuation> {
     }
 
     None
+}
+
+pub(super) fn markdown_newline_prefix(line: &str) -> String {
+    match markdown_line_continuation(line.trim_end_matches(['\r', '\n'])) {
+        Some(MarkdownLineContinuation::Continue(prefix)) => prefix,
+        Some(MarkdownLineContinuation::Exit { .. }) | None => line
+            .chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .collect(),
+    }
 }
 
 fn markdown_indent_end(line: &str) -> usize {

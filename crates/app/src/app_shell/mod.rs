@@ -163,10 +163,15 @@ impl AppShell {
         cx.new(|cx| Self::new(window, cx))
     }
 
-    fn observe_document_editor(view: &Entity<DocumentEditorView>, cx: &mut Context<Self>) {
-        cx.subscribe(
+    fn observe_document_editor(
+        view: &Entity<DocumentEditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
             view,
-            |this, _, event: &DocumentEditorEvent, cx| match event {
+            window,
+            |this, _, event: &DocumentEditorEvent, window, cx| match event {
                 DocumentEditorEvent::PathChanged => this.refresh_workspace(cx),
                 DocumentEditorEvent::Saved(note_id) => {
                     if !this.open_tabs.iter().any(|tab| {
@@ -179,6 +184,23 @@ impl AppShell {
                         )
                     }) {
                         this.note_views.remove(note_id);
+                    }
+                }
+                DocumentEditorEvent::OpenNote {
+                    note_id,
+                    source_offset,
+                } => {
+                    if let Some(note) = this.notes.iter().find(|note| note.id == *note_id) {
+                        let project_id = note.project_id;
+                        let title = note.title.clone();
+                        this.open_note_tab(*note_id, project_id, title, window, cx);
+                        if let Some(offset) = source_offset
+                            && let Some(view) = this.note_views.get(note_id)
+                        {
+                            view.update(cx, |editor, cx| {
+                                editor.navigate_to_offset(*offset, window, cx)
+                            });
+                        }
                     }
                 }
             },
@@ -218,7 +240,7 @@ impl AppShell {
                     title,
                 } => {
                     let view = DocumentEditorView::view(note_id, window, cx);
-                    Self::observe_document_editor(&view, cx);
+                    Self::observe_document_editor(&view, window, cx);
                     note_views.insert(note_id, view.clone());
                     (
                         SharedString::from(title),
@@ -490,6 +512,7 @@ impl AppShell {
         cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx))
             .detach();
         this.start_external_change_watcher(window, cx);
+        this.start_note_link_reindex(cx);
         this.refresh_mcp_setup(cx);
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);

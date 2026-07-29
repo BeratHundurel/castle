@@ -421,6 +421,17 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                     .default_value(true),
                 )
                 .description("Wrap long lines in newly opened document editors."),
+                SettingItem::new(
+                    "Vim Mode",
+                    SettingField::switch(
+                        AppSettings::editor_vim_mode,
+                        AppSettings::set_editor_vim_mode,
+                    )
+                    .default_value(false),
+                )
+                .description(
+                    "Use opt-in Normal, Insert, and Visual modes in document source editors.",
+                ),
             ]))
             .group(SettingGroup::new().title("Markdown").items(vec![
                 SettingItem::new(

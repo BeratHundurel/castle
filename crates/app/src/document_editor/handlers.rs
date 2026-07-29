@@ -153,7 +153,9 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kind != DocumentKind::Markdown {
+        if self.kind != DocumentKind::Markdown
+            || (self.vim_is_enabled() && self.vim_mode() != super::vim::VimMode::Insert)
+        {
             return;
         }
         let selected = self.editor.read(cx).selected_value().to_string();
