@@ -9,6 +9,33 @@ use super::filters::DueDateFilter;
 use super::{BoardView, action::*};
 
 impl BoardView {
+    pub(super) fn on_rename_board_view_action(
+        &mut self,
+        action: &RenameBoardViewAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_view_rename(action.0, window, cx);
+    }
+
+    pub(super) fn on_set_default_board_view_action(
+        &mut self,
+        action: &SetDefaultBoardViewAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_default_view(action.0, cx);
+    }
+
+    pub(super) fn on_delete_board_view_action(
+        &mut self,
+        action: &DeleteBoardViewAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_saved_view(action.0, cx);
+    }
+
     pub(super) fn start_adding_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.is_adding_list = true;
         self.new_list_input.update(cx, |input, cx| {
@@ -73,6 +100,8 @@ impl BoardView {
         } else {
             self.filters.label_ids.remove(&label_id);
         }
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
         cx.notify();
     }
 
@@ -87,11 +116,29 @@ impl BoardView {
         } else {
             self.filters.due_dates.remove(&filter);
         }
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn clear_filters(&mut self, cx: &mut Context<Self>) {
         self.filters.clear();
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
+        cx.notify();
+    }
+
+    pub(super) fn clear_due_date_filters(&mut self, cx: &mut Context<Self>) {
+        self.filters.due_dates.clear();
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
+        cx.notify();
+    }
+
+    pub(super) fn clear_label_filters(&mut self, cx: &mut Context<Self>) {
+        self.filters.label_ids.clear();
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
         cx.notify();
     }
 

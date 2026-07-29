@@ -8,9 +8,14 @@ mod filters;
 mod handlers;
 mod interactions;
 mod persistence;
+mod properties;
 mod render;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use dto::*;
 use gpui::*;
@@ -24,6 +29,43 @@ pub(crate) struct BoardView {
     board_id: Option<u32>,
     cards: Vec<CardDTO>,
     board_labels: Vec<BoardLabelDTO>,
+    board_properties: storage::board_properties::BoardProperties,
+    property_values: HashMap<(i64, i64), storage::board_properties::PropertyValue>,
+    saved_views: Vec<storage::board_properties::BoardView>,
+    active_view_id: Option<i64>,
+    active_view_config: storage::board_properties::BoardViewConfig,
+    view_config_dirty: bool,
+    view_load_warnings: Vec<SharedString>,
+    property_update_error: Option<SharedString>,
+    property_field_errors: HashMap<(i64, i64), SharedString>,
+    saving_property_values: HashSet<(i64, i64)>,
+    property_panel_open: bool,
+    property_form_open: bool,
+    fields_panel_open: bool,
+    view_panel_open: bool,
+    new_view_form_open: bool,
+    sort_panel_open: bool,
+    new_property_kind: storage::board_properties::PropertyKind,
+    new_property_input: Entity<InputState>,
+    rename_property_input: Entity<InputState>,
+    renaming_property_id: Option<i64>,
+    new_property_option_input: Entity<InputState>,
+    rename_property_option_input: Entity<InputState>,
+    renaming_property_option_id: Option<i64>,
+    adding_property_option_id: Option<i64>,
+    property_value_input: Entity<InputState>,
+    property_date_picker: Entity<DatePickerState>,
+    editing_property_id: Option<i64>,
+    property_select_search_input: Entity<InputState>,
+    selecting_property_id: Option<i64>,
+    new_view_input: Entity<InputState>,
+    rename_view_input: Entity<InputState>,
+    renaming_view_id: Option<i64>,
+    filter_value_input: Entity<InputState>,
+    editing_filter_property_id: Option<i64>,
+    next_property_update_revision: u64,
+    property_update_revisions: HashMap<(i64, i64), u64>,
+    persisted_property_revisions: Arc<tokio::sync::Mutex<HashMap<(i64, i64), u64>>>,
     load_error: Option<SharedString>,
     is_adding_list: bool,
     is_entry_open: bool,
@@ -100,6 +142,23 @@ impl BoardView {
             cx.new(|cx| InputState::new(window, cx).placeholder("Checklist item"));
 
         let card_edit_input = cx.new(|cx| InputState::new(window, cx).placeholder("Edit title..."));
+        let new_property_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Property name"));
+        let rename_property_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Property name"));
+        let new_property_option_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Option name"));
+        let rename_property_option_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Option name"));
+        let property_value_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Property value"));
+        let property_date_picker = cx.new(|cx| DatePickerState::new(window, cx));
+        let property_select_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search options"));
+        let new_view_input = cx.new(|cx| InputState::new(window, cx).placeholder("View name"));
+        let rename_view_input = cx.new(|cx| InputState::new(window, cx).placeholder("View name"));
+        let filter_value_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter value"));
 
         let entry_dialog = EntryDialog::new();
 
@@ -250,10 +309,180 @@ impl BoardView {
         )
         .detach();
 
+        cx.subscribe_in(
+            &new_property_input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    let name = input.read(cx).value().trim().to_string();
+                    if !name.is_empty() {
+                        this.create_board_property(name, cx);
+                    }
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &new_property_option_input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    let name = input.read(cx).value().trim().to_string();
+                    if !name.is_empty() {
+                        this.create_board_property_option(name, cx);
+                    }
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &property_value_input,
+            |this: &mut Self, input, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => {
+                    let value = input.read(cx).value().to_string();
+                    this.commit_property_value(value, cx);
+                }
+                InputEvent::Blur if this.editing_property_id.is_some() => {
+                    let value = input.read(cx).value().to_string();
+                    this.commit_property_value(value, cx);
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &property_date_picker,
+            window,
+            |this: &mut Self, _, event: &DatePickerEvent, _, cx| {
+                if let DatePickerEvent::Change(Date::Single(date)) = event
+                    && let (Some(entry_id), Some(property_id)) =
+                        (this.entry_dialog.entry_id, this.editing_property_id)
+                {
+                    this.set_entry_property_value(
+                        i64::from(entry_id),
+                        property_id,
+                        date.map(|date| {
+                            storage::board_properties::PropertyValue::Date(
+                                date.format("%Y-%m-%d").to_string(),
+                            )
+                        }),
+                        cx,
+                    );
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &property_select_search_input,
+            |_: &mut Self, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &rename_property_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.commit_property_rename(input.read(cx).value().to_string(), cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &rename_property_option_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.commit_property_option_rename(input.read(cx).value().to_string(), cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &new_view_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.create_saved_view(input.read(cx).value().to_string(), cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &rename_view_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.commit_view_rename(input.read(cx).value().to_string(), cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &filter_value_input,
+            |this: &mut Self, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.commit_custom_filter(input.read(cx).value().to_string(), cx);
+                }
+            },
+        )
+        .detach();
+
         Self {
             board_id: None,
             cards: vec![],
             board_labels: vec![],
+            board_properties: storage::board_properties::BoardProperties::default(),
+            property_values: HashMap::new(),
+            saved_views: vec![],
+            active_view_id: None,
+            active_view_config: storage::board_properties::BoardViewConfig {
+                visible_properties: vec![
+                    storage::board_properties::PropertyKey::Labels,
+                    storage::board_properties::PropertyKey::DueDate,
+                ],
+                ..Default::default()
+            },
+            view_config_dirty: false,
+            view_load_warnings: vec![],
+            property_update_error: None,
+            property_field_errors: HashMap::new(),
+            saving_property_values: HashSet::new(),
+            property_panel_open: false,
+            property_form_open: false,
+            fields_panel_open: false,
+            view_panel_open: false,
+            new_view_form_open: false,
+            sort_panel_open: false,
+            new_property_kind: storage::board_properties::PropertyKind::Text,
+            new_property_input,
+            rename_property_input,
+            renaming_property_id: None,
+            new_property_option_input,
+            rename_property_option_input,
+            renaming_property_option_id: None,
+            adding_property_option_id: None,
+            property_value_input,
+            property_date_picker,
+            editing_property_id: None,
+            property_select_search_input,
+            selecting_property_id: None,
+            new_view_input,
+            rename_view_input,
+            renaming_view_id: None,
+            filter_value_input,
+            editing_filter_property_id: None,
+            next_property_update_revision: 0,
+            property_update_revisions: HashMap::new(),
+            persisted_property_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             load_error: None,
             is_adding_list: false,
             is_entry_open: false,

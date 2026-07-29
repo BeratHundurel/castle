@@ -11,14 +11,20 @@ impl BoardView {
         let card_id = card.id;
         let card_drag_info =
             CardDragInfo::new(card_id, board_id, card.title.clone(), card.entries.len());
-        let cards_are_filterable = self.filters.is_active();
+        let cards_are_filterable =
+            self.filters.is_active() || self.active_view_config.sort.is_some();
         let mut entries = Vec::new();
-
-        for entry in card
+        let mut matching_entries = card
             .entries
             .iter()
             .filter(|entry| self.entry_matches_filters(entry))
-        {
+            .collect::<Vec<_>>();
+        if self.active_view_config.sort.is_some() {
+            matching_entries
+                .sort_by(|left, right| self.compare_entries_for_active_sort(left, right));
+        }
+
+        for entry in matching_entries {
             entries.push(
                 self.render_entry_card(entry, board_id, card_id, !cards_are_filterable, cx)
                     .into_any_element(),
@@ -160,11 +166,23 @@ impl BoardView {
     ) -> impl IntoElement {
         let entry_id = entry.id;
         let drag_info = DragInfo::new(entry.id, board_id, card_id, entry.title.clone());
+        let show_labels = self
+            .active_view_config
+            .visible_properties
+            .contains(&storage::board_properties::PropertyKey::Labels);
+        let show_due_date = self
+            .active_view_config
+            .visible_properties
+            .contains(&storage::board_properties::PropertyKey::DueDate);
+        let compact = self.active_view_config.compact_cards;
 
         div()
             .id(entry.id as usize)
-            .px_3()
-            .py_2p5()
+            .when_else(
+                compact,
+                |this| this.px_2().py_1p5(),
+                |this| this.px_3().py_2p5(),
+            )
             .bg(cx.theme().primary)
             .text_color(cx.theme().primary_foreground)
             .rounded(cx.theme().radius)
@@ -184,7 +202,7 @@ impl BoardView {
                 v_flex()
                     .w_full()
                     .min_w_0()
-                    .gap_1p5()
+                    .gap(if compact { px(4.) } else { px(6.) })
                     .child(
                         div()
                             .w_full()
@@ -194,14 +212,15 @@ impl BoardView {
                             .font_weight(FontWeight::NORMAL)
                             .child(entry.title.clone()),
                     )
-                    .when(!entry.labels.is_empty(), |this| {
+                    .when(show_labels && !entry.labels.is_empty(), |this| {
                         this.child(self.render_card_label_chips(entry, cx))
                     })
+                    .child(self.render_card_property_values(entry, cx))
                     .when(
-                        entry.due_on.is_some()
+                        (show_due_date && entry.due_on.is_some())
                             || !entry.checklist_items.is_empty()
                             || !entry.attachments.is_empty(),
-                        |this| this.child(self.render_card_metadata(entry, cx)),
+                        |this| this.child(self.render_card_metadata(entry, show_due_date, cx)),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {

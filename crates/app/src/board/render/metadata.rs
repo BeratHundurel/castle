@@ -1,4 +1,6 @@
 use super::*;
+use std::cmp::Ordering;
+use storage::board_properties::{PropertyKey, PropertyValue, SortDirection};
 
 impl BoardView {
     pub(super) fn selected_entry(&self) -> Option<(&str, &EntryDTO)> {
@@ -18,7 +20,76 @@ impl BoardView {
             entry.due_on.as_deref(),
             &self.filters,
             Local::now().date_naive(),
+        ) && matches_custom_filters(
+            i64::from(entry.id),
+            &self.filters.custom,
+            &self.property_values,
+            &self.board_properties.definitions,
         )
+    }
+
+    pub(super) fn compare_entries_for_active_sort(
+        &self,
+        left: &EntryDTO,
+        right: &EntryDTO,
+    ) -> Ordering {
+        let Some(sort) = self.active_view_config.sort.as_ref() else {
+            return Ordering::Equal;
+        };
+        let left_value = self.sort_value(left, &sort.property);
+        let right_value = self.sort_value(right, &sort.property);
+        let ordering = match (left_value, right_value) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(left), Some(right)) => compare_sort_values(&left, &right),
+        };
+        if matches!(sort.direction, SortDirection::Descending)
+            && left_value_is_present(left, &sort.property, self)
+            && left_value_is_present(right, &sort.property, self)
+        {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    }
+
+    fn sort_value(&self, entry: &EntryDTO, property: &PropertyKey) -> Option<SortValue> {
+        match property {
+            PropertyKey::DueDate => entry
+                .due_on
+                .as_ref()
+                .map(|value| SortValue::Text(value.to_lowercase())),
+            PropertyKey::Labels => (!entry.labels.is_empty()).then(|| {
+                SortValue::Text(
+                    entry
+                        .labels
+                        .iter()
+                        .map(|label| label.name.to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join("\u{0}"),
+                )
+            }),
+            PropertyKey::Custom(property_id) => self
+                .property_values
+                .get(&(i64::from(entry.id), *property_id))
+                .map(|value| match value {
+                    PropertyValue::Number(value) => SortValue::Number(*value),
+                    PropertyValue::Checkbox(value) => SortValue::Bool(*value),
+                    PropertyValue::Text(value)
+                    | PropertyValue::Date(value)
+                    | PropertyValue::Url(value) => SortValue::Text(value.to_lowercase()),
+                    PropertyValue::Select(option_id) => SortValue::Text(
+                        self.board_properties
+                            .definitions
+                            .iter()
+                            .flat_map(|property| property.options.iter())
+                            .find(|option| option.id == *option_id)
+                            .map(|option| option.name.to_lowercase())
+                            .unwrap_or_default(),
+                    ),
+                }),
+        }
     }
 
     pub(super) fn label_marker_color(&self, color: &str, cx: &Context<Self>) -> Hsla {
@@ -82,6 +153,7 @@ impl BoardView {
     pub(super) fn render_card_metadata(
         &self,
         entry: &EntryDTO,
+        show_due_date: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         h_flex()
@@ -90,9 +162,10 @@ impl BoardView {
             .h_5()
             .gap_3()
             .items_center()
-            .when_some(entry.due_on.as_ref(), |this, due_on| {
-                this.child(self.render_card_due_date(due_on, cx))
-            })
+            .when_some(
+                show_due_date.then_some(entry.due_on.as_ref()).flatten(),
+                |this, due_on| this.child(self.render_card_due_date(due_on, cx)),
+            )
             .when(!entry.checklist_items.is_empty(), |this| {
                 this.child(self.render_card_checklist_progress(entry, cx))
             })
@@ -162,4 +235,26 @@ impl BoardView {
             .child(Icon::new(IconName::CircleCheck).xsmall())
             .child(format!("{completed}/{}", entry.checklist_items.len()))
     }
+}
+
+#[derive(Clone)]
+enum SortValue {
+    Text(String),
+    Number(f64),
+    Bool(bool),
+}
+
+fn compare_sort_values(left: &SortValue, right: &SortValue) -> Ordering {
+    match (left, right) {
+        (SortValue::Text(left), SortValue::Text(right)) => left.cmp(right),
+        (SortValue::Number(left), SortValue::Number(right)) => {
+            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        (SortValue::Bool(left), SortValue::Bool(right)) => left.cmp(right),
+        _ => Ordering::Equal,
+    }
+}
+
+fn left_value_is_present(entry: &EntryDTO, property: &PropertyKey, view: &BoardView) -> bool {
+    view.sort_value(entry, property).is_some()
 }

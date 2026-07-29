@@ -259,6 +259,7 @@ impl BoardView {
                                         .child(self.render_entry_due_date(selected_entry, cx)),
                                 ),
                         )
+                        .child(self.render_entry_properties(selected_entry, cx))
                         .child(self.render_entry_checklist(selected_entry, cx)),
                 ),
         )

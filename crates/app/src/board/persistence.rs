@@ -43,19 +43,68 @@ impl BoardView {
 
         cx.spawn(async move |this, cx| {
             let result = match runtime
-                .spawn(async move { load_board_data(db.as_ref(), board_id).await })
+                .spawn(async move {
+                    let board_data = async {
+                        load_board_data(db.as_ref(), board_id)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    };
+                    let properties = storage::board_properties::load_board_properties(
+                        db.as_ref(),
+                        board_id as i64,
+                    );
+                    let views =
+                        storage::board_properties::load_board_views(db.as_ref(), board_id as i64);
+                    let ((cards, labels), properties, views) =
+                        tokio::try_join!(board_data, properties, views)?;
+                    Ok::<_, anyhow::Error>((cards, labels, properties, views))
+                })
                 .await
             {
                 Ok(result) => result,
-                Err(err) => Err(DbErr::Custom(err.to_string())),
+                Err(err) => Err(anyhow::Error::from(err)),
             };
 
             this.update(cx, |this, cx| {
                 if this.board_id == Some(board_id) && this.load_generation == generation {
                     match result {
-                        Ok((cards, board_labels)) => {
+                        Ok((cards, board_labels, board_properties, saved_views)) => {
+                            let property_values = board_properties
+                                .values
+                                .iter()
+                                .map(|value| {
+                                    ((value.entry_id, value.property_id), value.value.clone())
+                                })
+                                .collect();
+                            let active_view = saved_views
+                                .views
+                                .iter()
+                                .find(|view| view.is_default)
+                                .or_else(|| saved_views.views.first());
+                            let active_view_id = active_view.map(|view| view.id);
+                            let active_view_config = active_view
+                                .map(|view| view.config.clone())
+                                .unwrap_or_else(super::filters::default_view_config);
+                            let mut warnings = board_properties
+                                .warnings
+                                .iter()
+                                .cloned()
+                                .map(SharedString::from)
+                                .collect::<Vec<_>>();
+                            warnings.extend(
+                                saved_views.warnings.iter().cloned().map(SharedString::from),
+                            );
                             this.cards = cards;
                             this.board_labels = board_labels;
+                            this.board_properties = board_properties;
+                            this.property_values = property_values;
+                            this.saved_views = saved_views.views;
+                            this.active_view_id = active_view_id;
+                            this.active_view_config = active_view_config.clone();
+                            this.filters =
+                                super::filters::BoardFilters::from_config(&active_view_config);
+                            this.view_config_dirty = false;
+                            this.view_load_warnings = warnings;
                             this.attachment_preview_paths.clear();
                             this.load_error = None;
                         }
@@ -63,6 +112,13 @@ impl BoardView {
                             let message = format!("Failed to load board {board_id}: {err}");
                             eprintln!("{message}");
                             this.cards.clear();
+                            this.board_properties = Default::default();
+                            this.property_values.clear();
+                            this.saved_views.clear();
+                            this.active_view_id = None;
+                            this.active_view_config = super::filters::default_view_config();
+                            this.filters.clear();
+                            this.view_load_warnings.clear();
                             this.load_error = Some(SharedString::from(message));
                         }
                     }
@@ -106,10 +162,12 @@ pub(super) async fn load_board_data(
         .cloned()
         .map(|label| (label.id as i64, label))
         .collect::<HashMap<_, _>>();
+
     let entry_ids = cards
         .iter()
         .flat_map(|card| card.entries.iter().map(|entry| entry.id as i64))
         .collect::<Vec<_>>();
+
     let associations = if entry_ids.is_empty() {
         vec![]
     } else {
@@ -119,6 +177,7 @@ pub(super) async fn load_board_data(
             .all(db)
             .await?
     };
+
     let mut labels_by_entry = HashMap::<i64, Vec<BoardLabelDTO>>::new();
     for association in associations {
         if let Some(label) = label_by_id.get(&association.board_label_id) {
@@ -138,6 +197,7 @@ pub(super) async fn load_board_data(
             .all(db)
             .await?
     };
+
     let mut attachments_by_entry = HashMap::<i64, Vec<EntryAttachmentDTO>>::new();
     for attachment in attachments {
         attachments_by_entry
@@ -156,6 +216,7 @@ pub(super) async fn load_board_data(
             .all(db)
             .await?
     };
+
     let mut checklist_items_by_entry = HashMap::<i64, Vec<ChecklistItemDTO>>::new();
     for item in checklist_items {
         checklist_items_by_entry

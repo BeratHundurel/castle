@@ -74,21 +74,79 @@ impl BoardView {
 
         h_flex()
             .id("board-filter-toolbar")
-            .min_h_9()
-            .px_4()
-            .gap_2()
-            .justify_end()
+            .min_h_10()
+            .px_3()
+            .gap_1()
+            .items_center()
             .border_b_1()
             .border_color(cx.theme().border.opacity(0.72))
             .bg(cx.theme().background)
-            .when(self.filters.is_active(), |this| {
+            .child(self.render_view_picker(cx))
+            .child(
+                div()
+                    .mx_1()
+                    .h_5()
+                    .w(px(1.))
+                    .bg(cx.theme().border.opacity(0.72)),
+            )
+            .when(!self.filters.due_dates.is_empty(), |this| {
                 this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Dragging is paused while filtering"),
+                    Button::new("active-due-date-filter")
+                        .icon(IconName::Close)
+                        .label("Due date")
+                        .ghost()
+                        .xsmall()
+                        .tooltip("Remove due date filter")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear_due_date_filters(cx);
+                        })),
                 )
             })
+            .when(!self.filters.label_ids.is_empty(), |this| {
+                this.child(
+                    Button::new("active-label-filter")
+                        .icon(IconName::Close)
+                        .label("Labels")
+                        .ghost()
+                        .xsmall()
+                        .tooltip("Remove label filter")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear_label_filters(cx);
+                        })),
+                )
+            })
+            .children(self.filters.custom.iter().filter_map(|filter| {
+                let storage::board_properties::PropertyKey::Custom(property_id) = &filter.property
+                else {
+                    return None;
+                };
+                let property_id = *property_id;
+                Some(
+                    Button::new(SharedString::from(format!(
+                        "active-custom-filter-{property_id}"
+                    )))
+                    .icon(IconName::Close)
+                    .label(self.property_key_label(&filter.property))
+                    .ghost()
+                    .xsmall()
+                    .tooltip("Remove property filter")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.remove_custom_filter(property_id, cx);
+                    })),
+                )
+            }))
+            .child(div().flex_1())
+            .when(
+                self.filters.is_active() || self.active_view_config.sort.is_some(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Dragging is paused in this view"),
+                    )
+                },
+            )
             .child(
                 Popover::new("board-filter-popover")
                     .anchor(Anchor::TopRight)
@@ -106,9 +164,9 @@ impl BoardView {
                             } else {
                                 format!("Filter · {active_count}")
                             })
-                            .outline()
+                            .ghost()
                             .small()
-                            .selected(self.filters.is_active())
+                            .selected(self.filters.is_active() || self.filter_panel_open)
                             .tooltip("Filter cards"),
                     )
                     .child(self.render_filter_panel(cx)),
@@ -124,6 +182,16 @@ impl BoardView {
                         })),
                 )
             })
+            .child(self.render_sort_picker(cx))
+            .child(self.render_fields_picker(cx))
+            .child(
+                div()
+                    .mx_1()
+                    .h_5()
+                    .w(px(1.))
+                    .bg(cx.theme().border.opacity(0.72)),
+            )
+            .child(self.render_property_manager(cx))
     }
 
     pub(super) fn render_filter_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -133,6 +201,8 @@ impl BoardView {
         v_flex()
             .id("board-filter-panel")
             .w_full()
+            .max_h(px(560.))
+            .overflow_y_scrollbar()
             .text_sm()
             .child(
                 h_flex()
@@ -197,6 +267,7 @@ impl BoardView {
                         }),
                     ),
             )
+            .child(self.render_custom_filter_controls(cx))
             .child(
                 v_flex()
                     .gap_2()
