@@ -40,3 +40,6 @@ winrt-notification = "0.5.1"
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 tempfile = "3.23"
+
+[build-dependencies]
+embed-resource = "3.0"

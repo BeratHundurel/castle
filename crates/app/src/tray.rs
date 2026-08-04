@@ -190,24 +190,20 @@ fn set_window_visible(window: &Window, visible: bool) {
 fn set_window_visible(_window: &Window, _visible: bool) {}
 
 fn castle_icon() -> Result<Icon> {
-    const SIZE: u32 = 32;
-    let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
-    for y in 5..28 {
-        for x in 5..27 {
-            let battlement_gap = y < 11 && matches!(x, 10..=12 | 19..=21);
-            let outside_tower = y < 11 && !(x <= 8 || (14..=17).contains(&x) || x >= 23);
-            let doorway = y >= 20 && (14..=17).contains(&x);
-            if battlement_gap || outside_tower || doorway {
-                continue;
-            }
+    let image = image::load_from_memory(include_bytes!("../assets/icon/castle-tray.png"))
+        .context("failed to decode Castle tray icon")?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
 
-            let index = ((y * SIZE + x) * 4) as usize;
-            rgba[index] = 224;
-            rgba[index + 1] = 179;
-            rgba[index + 2] = 84;
-            rgba[index + 3] = 255;
+    Icon::from_rgba(image.into_raw(), width, height).context("invalid tray icon")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bundled_tray_icon_decodes() {
+        if let Err(err) = super::castle_icon() {
+            panic!("bundled tray icon should be valid: {err}");
         }
     }
-
-    Icon::from_rgba(rgba, SIZE, SIZE).context("invalid tray icon")
 }

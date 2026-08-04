@@ -276,6 +276,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dotenvy",
+ "embed-resource",
  "entity",
  "global-hotkey",
  "gpui",
