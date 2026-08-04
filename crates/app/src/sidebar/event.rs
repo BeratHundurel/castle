@@ -28,6 +28,10 @@ pub(crate) enum SidebarEvent {
         note_id: u32,
         title: SharedString,
     },
+    NotePathChanged {
+        note_id: u32,
+        file_path: Option<String>,
+    },
     BoardDeleted {
         board_id: u32,
     },

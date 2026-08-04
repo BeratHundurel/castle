@@ -296,6 +296,19 @@ impl DocumentEditorView {
         cx.notify();
     }
 
+    pub(crate) fn apply_file_path(&mut self, file_path: Option<String>, cx: &mut Context<Self>) {
+        let file_path = file_path.map(PathBuf::from);
+        if self.current_path == file_path {
+            return;
+        }
+
+        self.current_path = file_path;
+        let current_path = self.current_path.clone();
+        self.apply_document_kind(current_path.as_deref(), cx);
+        cx.emit(DocumentEditorEvent::PathChanged);
+        cx.notify();
+    }
+
     pub(crate) fn navigate_to_offset(
         &mut self,
         offset: usize,

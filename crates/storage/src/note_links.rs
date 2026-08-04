@@ -341,7 +341,7 @@ pub async fn index_note_links(
 }
 
 pub async fn record_note_alias(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     note_id: i64,
     alias: &str,
     created_at: i64,

@@ -397,6 +397,20 @@ impl AppShell {
                     this.persist_tab_session(cx);
                     cx.notify();
                 }
+                SidebarEvent::NotePathChanged { note_id, file_path } => {
+                    if let Some(view) = this.open_tabs.iter().find_map(|tab| match &tab.kind {
+                        OpenTabKind::Note {
+                            note_id: open_note_id,
+                            view,
+                            ..
+                        } if open_note_id == note_id => Some(view.clone()),
+                        _ => None,
+                    }) {
+                        view.update(cx, |note, cx| {
+                            note.apply_file_path(file_path.clone(), cx);
+                        });
+                    }
+                }
                 SidebarEvent::BoardDeleted { board_id } => {
                     if let Some(index) = this.open_tabs.iter().position(
                         |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id),

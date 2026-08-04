@@ -451,7 +451,24 @@ impl AppShell {
                 this.pending_workspace_title_saves.remove(&target);
 
                 match result {
-                    Ok(Ok(())) => this.refresh_workspace(cx),
+                    Ok(Ok(update)) => {
+                        if let WorkspaceTitleTarget::Note(note_id) = target
+                            && let Some(view) =
+                                this.open_tabs.iter().find_map(|tab| match &tab.kind {
+                                    OpenTabKind::Note {
+                                        note_id: open_note_id,
+                                        view,
+                                        ..
+                                    } if *open_note_id == note_id => Some(view.clone()),
+                                    _ => None,
+                                })
+                        {
+                            view.update(cx, |note, cx| {
+                                note.apply_file_path(update.file_path, cx);
+                            });
+                        }
+                        this.refresh_workspace(cx);
+                    }
                     Ok(Err(err)) => {
                         eprintln!("Failed to save workspace title: {err}");
                         this.refresh_workspace(cx);

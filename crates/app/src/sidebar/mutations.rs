@@ -331,18 +331,20 @@ impl SidebarView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    note::ActiveModel {
-                        id: Set(note_id as i64),
-                        title: Set(title),
-                        ..Default::default()
-                    }
-                    .update(&*db)
+                    storage::workspace::persist_workspace_title(
+                        db.as_ref(),
+                        storage::workspace::WorkspaceTitleTarget::Note(note_id),
+                        title,
+                    )
                     .await
                 })
                 .await;
 
             this.update(cx, |this, cx| match result {
-                Ok(Ok(_)) => {}
+                Ok(Ok(update)) => cx.emit(SidebarEvent::NotePathChanged {
+                    note_id,
+                    file_path: update.file_path,
+                }),
                 Ok(Err(err)) => {
                     eprintln!("Failed to rename note: {err}");
                     this.request_workspace_refresh(cx);

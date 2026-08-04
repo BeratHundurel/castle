@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use entity::{
     board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
 };
@@ -6,11 +6,12 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement,
+    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
     sea_query::{Query, SelectStatement},
 };
 
 use std::{
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -60,6 +61,11 @@ pub struct WorkspaceItem {
 pub enum WorkspaceTitleTarget {
     Board(u32),
     Note(u32),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkspaceTitleUpdate {
+    pub file_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,7 +270,7 @@ pub async fn persist_workspace_title(
     db: &DatabaseConnection,
     target: WorkspaceTitleTarget,
     title: String,
-) -> Result<()> {
+) -> Result<WorkspaceTitleUpdate> {
     match target {
         WorkspaceTitleTarget::Board(board_id) => {
             board::ActiveModel {
@@ -274,6 +280,8 @@ pub async fn persist_workspace_title(
             }
             .update(db)
             .await?;
+
+            Ok(WorkspaceTitleUpdate::default())
         }
         WorkspaceTitleTarget::Note(note_id) => {
             let current = Note::find_by_id(note_id as i64)
@@ -281,21 +289,149 @@ pub async fn persist_workspace_title(
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("note {note_id} was not found"))?;
             let now = now_ts();
-            if current.title != title {
-                crate::note_links::record_note_alias(db, current.id, &current.title, now).await?;
+            let old_path = current
+                .file_managed_by_app
+                .then_some(current.file_path.as_deref())
+                .flatten()
+                .map(PathBuf::from);
+            let new_path = match old_path.as_deref() {
+                Some(path) => Some(unique_renamed_note_path(path, &title).await?),
+                None => current.file_path.as_deref().map(PathBuf::from),
+            };
+            let path_changed = old_path
+                .as_deref()
+                .zip(new_path.as_deref())
+                .is_some_and(|(old_path, new_path)| !same_path(old_path, new_path));
+            let file_moved = if path_changed && let Some(old_path) = old_path.as_deref() {
+                tokio::fs::try_exists(old_path).await?
+            } else {
+                false
+            };
+            let transaction = db.begin().await?;
+
+            if file_moved
+                && let (Some(old_path), Some(new_path)) = (old_path.as_deref(), new_path.as_deref())
+            {
+                tokio::fs::rename(old_path, new_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to rename managed note file from {} to {}",
+                            old_path.display(),
+                            new_path.display()
+                        )
+                    })?;
             }
-            note::ActiveModel {
-                id: Set(note_id as i64),
-                title: Set(title),
-                updated_at: Set(now),
-                ..Default::default()
+
+            let update_result = async {
+                if current.title != title {
+                    crate::note_links::record_note_alias(
+                        &transaction,
+                        current.id,
+                        &current.title,
+                        now,
+                    )
+                    .await?;
+                }
+                note::ActiveModel {
+                    id: Set(note_id as i64),
+                    title: Set(title),
+                    file_path: Set(new_path
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().into_owned())),
+                    updated_at: Set(now),
+                    ..Default::default()
+                }
+                .update(&transaction)
+                .await?;
+                transaction.commit().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            .update(db)
-            .await?;
+            .await;
+
+            if let Err(err) = update_result {
+                if file_moved
+                    && let (Some(old_path), Some(new_path)) =
+                        (old_path.as_deref(), new_path.as_deref())
+                    && let Err(rollback_err) = tokio::fs::rename(new_path, old_path).await
+                {
+                    return Err(err).context(format!(
+                        "also failed to restore {} after the database update failed: {rollback_err}",
+                        old_path.display()
+                    ));
+                }
+                return Err(err);
+            }
+
+            Ok(WorkspaceTitleUpdate {
+                file_path: new_path.map(|path| path.to_string_lossy().into_owned()),
+            })
+        }
+    }
+}
+
+pub fn suggested_note_file_name(title: &str, extension: &str) -> String {
+    let stem = if title.trim().is_empty() {
+        "untitled"
+    } else {
+        title.trim()
+    };
+    let extension = extension.trim_start_matches('.');
+    let mut file_name = String::with_capacity(stem.len() + extension.len() + 1);
+
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            file_name.push(ch.to_ascii_lowercase());
+        } else if ch.is_whitespace() {
+            file_name.push('-');
         }
     }
 
-    Ok(())
+    if file_name.is_empty() {
+        file_name.push_str("untitled");
+    }
+    if !extension.is_empty() {
+        file_name.push('.');
+        file_name.push_str(extension);
+    }
+    file_name
+}
+
+async fn unique_renamed_note_path(current_path: &Path, title: &str) -> Result<PathBuf> {
+    let parent = current_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("managed note path has no parent directory"))?;
+    let extension = current_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("md");
+    let file_name = suggested_note_file_name(title, extension);
+    let candidate = parent.join(&file_name);
+    if same_path(&candidate, current_path) || !tokio::fs::try_exists(&candidate).await? {
+        return Ok(candidate);
+    }
+
+    let stem = Path::new(&file_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("untitled");
+    for index in 2.. {
+        let candidate = parent.join(format!("{stem}-{index}.{extension}"));
+        if same_path(&candidate, current_path) || !tokio::fs::try_exists(&candidate).await? {
+            return Ok(candidate);
+        }
+    }
+
+    unreachable!()
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
 }
 
 pub async fn load_change_revision(db: &DatabaseConnection) -> Result<ChangeRevision, DbErr> {
@@ -558,6 +694,102 @@ mod tests {
 
         let revision = load_change_revision(&db).await?;
         assert_eq!(revision.revision, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn renaming_managed_note_renames_its_file_and_avoids_collisions() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let directory = tempfile::tempdir()?;
+        let original_path = directory.path().join("untitled-note-3.md");
+        tokio::fs::write(&original_path, "# Original").await?;
+        let note = create_managed_note(
+            &db,
+            None,
+            "Untitled note".to_string(),
+            original_path.to_string_lossy().into_owned(),
+            "# Original".to_string(),
+        )
+        .await?;
+
+        let update = persist_workspace_title(
+            &db,
+            WorkspaceTitleTarget::Note(note.id),
+            "Something".to_string(),
+        )
+        .await?;
+        let renamed_path = directory.path().join("something.md");
+        let renamed_path_string = renamed_path.to_string_lossy().into_owned();
+        assert_eq!(
+            update.file_path.as_deref(),
+            Some(renamed_path_string.as_str())
+        );
+        assert!(!original_path.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(&renamed_path).await?,
+            "# Original"
+        );
+
+        tokio::fs::write(directory.path().join("roadmap.md"), "Existing").await?;
+        let update = persist_workspace_title(
+            &db,
+            WorkspaceTitleTarget::Note(note.id),
+            "Roadmap".to_string(),
+        )
+        .await?;
+        let collision_path = directory.path().join("roadmap-2.md");
+        let collision_path_string = collision_path.to_string_lossy().into_owned();
+        assert_eq!(
+            update.file_path.as_deref(),
+            Some(collision_path_string.as_str())
+        );
+        assert!(!renamed_path.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(&collision_path).await?,
+            "# Original"
+        );
+
+        let saved = Note::find_by_id(note.id as i64)
+            .one(&db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("renamed note was not found"))?;
+        assert_eq!(saved.title, "Roadmap");
+        assert_eq!(
+            saved.file_path.as_deref(),
+            Some(collision_path_string.as_str())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn renaming_external_note_does_not_rename_its_file() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let directory = tempfile::tempdir()?;
+        let external_path = directory.path().join("external-name.md");
+        tokio::fs::write(&external_path, "External").await?;
+        let note = import_external_note(
+            &db,
+            "External".to_string(),
+            external_path.to_string_lossy().into_owned(),
+            "External".to_string(),
+        )
+        .await?;
+
+        let update = persist_workspace_title(
+            &db,
+            WorkspaceTitleTarget::Note(note.id),
+            "Renamed externally".to_string(),
+        )
+        .await?;
+        let external_path_string = external_path.to_string_lossy().into_owned();
+        assert_eq!(
+            update.file_path.as_deref(),
+            Some(external_path_string.as_str())
+        );
+        assert!(external_path.exists());
+        assert!(!directory.path().join("renamed-externally.md").exists());
         Ok(())
     }
 

@@ -11,8 +11,8 @@ chrono.workspace = true
 sea-orm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 migration = { path = "../migration" }
 tempfile = "3.23"
-tokio.workspace = true

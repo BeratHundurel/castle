@@ -4,28 +4,7 @@ use std::{
 };
 
 pub(crate) fn suggested_file_name(title: &str) -> String {
-    let stem = if title.trim().is_empty() {
-        "untitled"
-    } else {
-        title.trim()
-    };
-    let mut file_name = String::with_capacity(stem.len() + 3);
-
-    for ch in stem.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            file_name.push(ch.to_ascii_lowercase());
-        } else if ch.is_whitespace() {
-            file_name.push('-');
-        }
-    }
-
-    if file_name.is_empty() {
-        file_name.push_str("untitled");
-    }
-    if !file_name.ends_with(".md") {
-        file_name.push_str(".md");
-    }
-    file_name
+    storage::workspace::suggested_note_file_name(title, "md")
 }
 
 pub(crate) fn suggested_save_as_file_name(path: Option<&Path>, title: &str) -> String {

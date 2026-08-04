@@ -327,7 +327,7 @@ impl CastleStore {
         if input.title.is_none() && input.content.is_none() && input.is_pinned.is_none() {
             bail!("provide title, content, or is_pinned to update the note");
         }
-        let note = self.active_note(input.note_id).await?;
+        let mut note = self.active_note(input.note_id).await?;
         if let Some(expected) = input.expected_updated_at
             && expected != note.updated_at
         {
@@ -353,19 +353,20 @@ impl CastleStore {
             .title
             .map(|title| required_text(title, "note title"))
             .transpose()?;
-        if new_title
-            .as_deref()
-            .is_some_and(|title| title != note.title)
-        {
-            storage::note_links::record_note_alias(&self.db, note.id, &note.title, now_ts())
-                .await?;
+        if let Some(new_title) = new_title.as_deref().filter(|title| *title != note.title) {
+            let note_id = u32::try_from(note.id)
+                .with_context(|| format!("note id {} cannot be renamed", note.id))?;
+            storage::workspace::persist_workspace_title(
+                &self.db,
+                storage::workspace::WorkspaceTitleTarget::Note(note_id),
+                new_title.to_string(),
+            )
+            .await?;
+            note = self.active_note(input.note_id).await?;
         }
         let content_for_index = input.content.clone();
         let current_updated_at = note.updated_at;
         let mut active: note::ActiveModel = note.into();
-        if let Some(title) = new_title {
-            active.title = Set(title);
-        }
         if let Some(content) = input.content {
             active.cached_content = Set(content);
             active.file_missing_since = Set(None);

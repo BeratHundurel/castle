@@ -91,7 +91,7 @@ pub async fn load_board_snapshot(
         .cloned()
         .map(|label| (label.id as i64, label))
         .collect::<HashMap<_, _>>();
-    
+
     let entry_ids = cards
         .iter()
         .flat_map(|card| card.entries.iter().map(|entry| entry.id as i64))
