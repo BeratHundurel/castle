@@ -104,12 +104,6 @@ impl BoardFilters {
         !self.label_ids.is_empty() || !self.due_dates.is_empty() || !self.custom.is_empty()
     }
 
-    pub(crate) fn count(&self) -> usize {
-        usize::from(!self.label_ids.is_empty())
-            + usize::from(!self.due_dates.is_empty())
-            + self.custom.len()
-    }
-
     pub(crate) fn clear(&mut self) {
         self.label_ids.clear();
         self.due_dates.clear();

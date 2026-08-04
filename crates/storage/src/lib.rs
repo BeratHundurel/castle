@@ -1,5 +1,6 @@
 pub mod board;
 pub mod board_properties;
+pub mod board_templates;
 pub mod folder_import;
 pub mod home;
 pub mod note_links;

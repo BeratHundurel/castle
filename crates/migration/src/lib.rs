@@ -18,6 +18,7 @@ mod m20260723_000015_external_change_revisions;
 mod m20260723_000016_project_folder_path;
 mod m20260727_000017_note_links;
 mod m20260727_000018_board_properties_and_views;
+mod m20260805_000019_board_templates;
 
 pub struct Migrator;
 
@@ -43,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260723_000016_project_folder_path::Migration),
             Box::new(m20260727_000017_note_links::Migration),
             Box::new(m20260727_000018_board_properties_and_views::Migration),
+            Box::new(m20260805_000019_board_templates::Migration),
         ]
     }
 }

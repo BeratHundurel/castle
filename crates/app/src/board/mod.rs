@@ -10,6 +10,7 @@ mod interactions;
 mod persistence;
 mod properties;
 mod render;
+mod templates;
 
 use std::{
     collections::{HashMap, HashSet},

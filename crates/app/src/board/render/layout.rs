@@ -70,8 +70,6 @@ impl BoardView {
     }
 
     pub(super) fn render_filter_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_count = self.filters.count();
-
         h_flex()
             .id("board-filter-toolbar")
             .min_h_10()
@@ -159,11 +157,7 @@ impl BoardView {
                     .trigger(
                         Button::new("toggle-board-filters")
                             .icon(IconName::Settings2)
-                            .label(if active_count == 0 {
-                                "Filter".to_string()
-                            } else {
-                                format!("Filter · {active_count}")
-                            })
+                            .label("Filter")
                             .ghost()
                             .small()
                             .selected(self.filters.is_active() || self.filter_panel_open)
@@ -184,6 +178,17 @@ impl BoardView {
             })
             .child(self.render_sort_picker(cx))
             .child(self.render_fields_picker(cx))
+            .child(
+                Button::new("save-board-template")
+                    .icon(IconName::Copy)
+                    .label("Template")
+                    .ghost()
+                    .small()
+                    .tooltip("Save this board as a reusable template")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_save_template_dialog(window, cx);
+                    })),
+            )
             .child(
                 div()
                     .mx_1()

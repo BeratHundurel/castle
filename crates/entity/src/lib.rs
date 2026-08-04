@@ -6,6 +6,7 @@ pub mod board;
 pub mod board_label;
 pub mod board_property;
 pub mod board_property_option;
+pub mod board_template;
 pub mod card;
 pub mod entry;
 pub mod entry_attachment;

@@ -1395,30 +1395,34 @@ impl BoardView {
                                 )
                             }),
                     )
-                    .child(v_flex().p_1().children(fields.into_iter().map(|field| {
-                        let selected_sort =
-                            active_sort.as_ref().filter(|sort| sort.property == field);
-                        let label = match selected_sort.map(|sort| sort.direction) {
-                            Some(SortDirection::Ascending) => {
-                                format!("{} · Ascending", self.property_key_label(&field))
-                            }
-                            Some(SortDirection::Descending) => {
-                                format!("{} · Descending", self.property_key_label(&field))
-                            }
-                            None => self.property_key_label(&field),
-                        };
-                        Button::new(SharedString::from(format!(
-                            "sort-field-{}",
-                            property_key_id(&field)
-                        )))
-                        .label(label)
-                        .ghost()
-                        .small()
-                        .selected(selected_sort.is_some())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_sort(field.clone(), cx);
-                        }))
-                    })))
+                    .child(v_flex().justify_center().items_start().p_1().children(
+                        fields.into_iter().map(|field| {
+                            let selected_sort =
+                                active_sort.as_ref().filter(|sort| sort.property == field);
+                            let label = match selected_sort.map(|sort| sort.direction) {
+                                Some(SortDirection::Ascending) => {
+                                    format!("{} · Ascending", self.property_key_label(&field))
+                                }
+                                Some(SortDirection::Descending) => {
+                                    format!("{} · Descending", self.property_key_label(&field))
+                                }
+                                None => self.property_key_label(&field),
+                            };
+                            Button::new(SharedString::from(format!(
+                                "sort-field-{}",
+                                property_key_id(&field)
+                            )))
+                            .label(label)
+                            .ghost()
+                            .small()
+                            .selected(selected_sort.is_some())
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.set_sort(field.clone(), cx);
+                                },
+                            ))
+                        }),
+                    ))
                     .child(
                         div()
                             .px_4()

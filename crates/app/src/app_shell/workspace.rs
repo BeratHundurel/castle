@@ -420,7 +420,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.create_board_with_title(project_id, "Board".to_string(), window, cx);
+        self.open_board_template_picker(project_id, window, cx);
     }
 
     pub(crate) fn create_board_with_title(

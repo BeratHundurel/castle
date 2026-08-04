@@ -4,6 +4,7 @@ mod home;
 mod render;
 mod settings;
 mod tabs;
+mod templates;
 mod workspace;
 
 pub(crate) use action::*;
@@ -122,6 +123,8 @@ pub struct AppShell {
     pub(crate) active_project_id: Option<u32>,
     suppress_title_event: bool,
     settings_dialog_open: bool,
+    board_template_dialog_open: bool,
+    board_template_picker: Option<templates::BoardTemplatePickerState>,
     mcp_setup_state: McpSetupState,
     window_is_narrow: bool,
     home_state: WorkspaceHomeState,
@@ -478,6 +481,8 @@ impl AppShell {
             active_project_id: tab_session.active_project_id,
             suppress_title_event: false,
             settings_dialog_open: false,
+            board_template_dialog_open: false,
+            board_template_picker: None,
             mcp_setup_state: McpSetupState::Checking,
             window_is_narrow: false,
             home_state: WorkspaceHomeState::default(),

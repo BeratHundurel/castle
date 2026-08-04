@@ -4,6 +4,7 @@ pub use super::board::Entity as Board;
 pub use super::board_label::Entity as BoardLabel;
 pub use super::board_property::Entity as BoardProperty;
 pub use super::board_property_option::Entity as BoardPropertyOption;
+pub use super::board_template::Entity as BoardTemplate;
 pub use super::card::Entity as Card;
 pub use super::entry::Entity as Entry;
 pub use super::entry_attachment::Entity as EntryAttachment;
