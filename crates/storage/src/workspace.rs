@@ -3,11 +3,17 @@ use entity::{
     board, board::Entity as Board, note, note::Entity as Note, project, project::Entity as Project,
 };
 use sea_orm::{
-    ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement,
     sea_query::{Query, SelectStatement},
 };
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 static WORKSPACE_LOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -42,6 +48,25 @@ pub struct WorkspaceRows {
     pub projects: Vec<ProjectRow>,
     pub boards: Vec<BoardRow>,
     pub notes: Vec<NoteRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceItem {
+    pub id: u32,
+    pub title: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WorkspaceTitleTarget {
+    Board(u32),
+    Note(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChangeRevision {
+    pub revision: i64,
+    pub board_revision: i64,
+    pub note_revision: i64,
 }
 
 fn visible_project_ids_query() -> SelectStatement {
@@ -143,6 +168,160 @@ pub async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRow
     })
 }
 
+pub async fn create_managed_note(
+    db: &DatabaseConnection,
+    project_id: Option<u32>,
+    title: String,
+    file_path: String,
+    content: String,
+) -> Result<WorkspaceItem, DbErr> {
+    let now = now_ts();
+    let note = note::ActiveModel {
+        title: Set(title),
+        project_id: Set(project_id.map(i64::from)),
+        file_path: Set(Some(file_path)),
+        file_managed_by_app: Set(true),
+        cached_content: Set(content),
+        file_missing_since: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    Ok(WorkspaceItem {
+        id: note.id as u32,
+        title: note.title,
+    })
+}
+
+pub async fn import_external_note(
+    db: &DatabaseConnection,
+    title: String,
+    file_path: String,
+    content: String,
+) -> Result<WorkspaceItem, DbErr> {
+    let existing = Note::find()
+        .filter(note::Column::FilePath.eq(file_path.clone()))
+        .one(db)
+        .await?;
+
+    let note = if let Some(existing) = existing {
+        note::ActiveModel {
+            id: Set(existing.id),
+            file_path: Set(Some(file_path)),
+            cached_content: Set(content),
+            file_missing_since: Set(None),
+            updated_at: Set(now_ts()),
+            ..Default::default()
+        }
+        .update(db)
+        .await?
+    } else {
+        let now = now_ts();
+        note::ActiveModel {
+            title: Set(title),
+            project_id: Set(None),
+            file_path: Set(Some(file_path)),
+            file_managed_by_app: Set(false),
+            cached_content: Set(content),
+            file_missing_since: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?
+    };
+
+    Ok(WorkspaceItem {
+        id: note.id as u32,
+        title: note.title,
+    })
+}
+
+pub async fn create_board(
+    db: &DatabaseConnection,
+    project_id: Option<u32>,
+    title: String,
+) -> Result<WorkspaceItem, DbErr> {
+    let board = board::ActiveModel {
+        title: Set(title),
+        project_id: Set(project_id.map(i64::from)),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    Ok(WorkspaceItem {
+        id: board.id as u32,
+        title: board.title,
+    })
+}
+
+pub async fn persist_workspace_title(
+    db: &DatabaseConnection,
+    target: WorkspaceTitleTarget,
+    title: String,
+) -> Result<()> {
+    match target {
+        WorkspaceTitleTarget::Board(board_id) => {
+            board::ActiveModel {
+                id: Set(board_id as i64),
+                title: Set(title),
+                ..Default::default()
+            }
+            .update(db)
+            .await?;
+        }
+        WorkspaceTitleTarget::Note(note_id) => {
+            let current = Note::find_by_id(note_id as i64)
+                .one(db)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("note {note_id} was not found"))?;
+            let now = now_ts();
+            if current.title != title {
+                crate::note_links::record_note_alias(db, current.id, &current.title, now).await?;
+            }
+            note::ActiveModel {
+                id: Set(note_id as i64),
+                title: Set(title),
+                updated_at: Set(now),
+                ..Default::default()
+            }
+            .update(db)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn load_change_revision(db: &DatabaseConnection) -> Result<ChangeRevision, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT revision, board_revision, note_revision
+             FROM castle_change_revision WHERE id = 1",
+        ))
+        .await?
+        .ok_or_else(|| DbErr::Custom("Castle change revision row is missing".to_string()))?;
+
+    Ok(ChangeRevision {
+        revision: row.try_get("", "revision")?,
+        board_revision: row.try_get("", "board_revision")?,
+        note_revision: row.try_get("", "note_revision")?,
+    })
+}
+
+fn now_ts() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
+}
+
 pub fn reset_workspace_load_count() {
     WORKSPACE_LOAD_COUNT.store(0, Ordering::Relaxed);
 }
@@ -155,7 +334,7 @@ pub fn workspace_load_count() -> usize {
 mod tests {
     use super::*;
     use crate::test_alloc;
-    use entity::{board, note, project};
+    use entity::{board, note, note_alias, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
 
@@ -326,6 +505,59 @@ mod tests {
         assert_eq!(rows.notes[0].file_path.as_deref(), Some("active.json"));
         assert_eq!(rows.notes[1].file_path.as_deref(), Some("scratch.txt"));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn workspace_mutations_keep_persistence_details_out_of_callers() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let board = create_board(&db, None, "Roadmap".to_string()).await?;
+        let note = create_managed_note(
+            &db,
+            None,
+            "Design".to_string(),
+            "notes/design.md".to_string(),
+            "# Design".to_string(),
+        )
+        .await?;
+        let imported = import_external_note(
+            &db,
+            "External".to_string(),
+            "C:\\notes\\external.md".to_string(),
+            "First".to_string(),
+        )
+        .await?;
+        let refreshed = import_external_note(
+            &db,
+            "Ignored replacement title".to_string(),
+            "C:\\notes\\external.md".to_string(),
+            "Second".to_string(),
+        )
+        .await?;
+
+        assert_eq!(board.title, "Roadmap");
+        assert_eq!(imported.id, refreshed.id);
+        assert_eq!(refreshed.title, "External");
+        persist_workspace_title(
+            &db,
+            WorkspaceTitleTarget::Note(note.id),
+            "Architecture".to_string(),
+        )
+        .await?;
+
+        let renamed = note::Entity::find_by_id(note.id as i64)
+            .one(&db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("renamed note was not found"))?;
+        assert_eq!(renamed.title, "Architecture");
+        let aliases = note_alias::Entity::find().all(&db).await?;
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].alias, "Design");
+
+        let revision = load_change_revision(&db).await?;
+        assert_eq!(revision.revision, 0);
         Ok(())
     }
 

@@ -135,3 +135,73 @@ impl From<board_label::Model> for BoardLabelDTO {
         }
     }
 }
+
+impl From<storage::board::CardRecord> for CardDTO {
+    fn from(card: storage::board::CardRecord) -> Self {
+        Self {
+            id: card.id,
+            title: card.title.into(),
+            board_id: card.board_id,
+            position: card.position,
+            entries: card.entries.into_iter().map(EntryDTO::from).collect(),
+        }
+    }
+}
+
+impl From<storage::board::EntryRecord> for EntryDTO {
+    fn from(entry: storage::board::EntryRecord) -> Self {
+        Self {
+            id: entry.id,
+            title: entry.title.into(),
+            description: entry.description.into(),
+            card_id: entry.card_id,
+            position: entry.position,
+            due_on: entry.due_on.map(SharedString::from),
+            reminder_enabled: entry.reminder_enabled,
+            labels: entry.labels.into_iter().map(BoardLabelDTO::from).collect(),
+            checklist_items: entry
+                .checklist_items
+                .into_iter()
+                .map(ChecklistItemDTO::from)
+                .collect(),
+            attachments: entry
+                .attachments
+                .into_iter()
+                .map(EntryAttachmentDTO::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<storage::board::AttachmentRecord> for EntryAttachmentDTO {
+    fn from(attachment: storage::board::AttachmentRecord) -> Self {
+        Self {
+            id: attachment.id,
+            entry_id: attachment.entry_id,
+            file_name: attachment.file_name.into(),
+        }
+    }
+}
+
+impl From<storage::board::ChecklistItemRecord> for ChecklistItemDTO {
+    fn from(item: storage::board::ChecklistItemRecord) -> Self {
+        Self {
+            id: item.id,
+            entry_id: item.entry_id,
+            title: item.title.into(),
+            checked: item.checked,
+            position: item.position,
+        }
+    }
+}
+
+impl From<storage::board::LabelRecord> for BoardLabelDTO {
+    fn from(label: storage::board::LabelRecord) -> Self {
+        Self {
+            id: label.id,
+            board_id: label.board_id,
+            name: label.name.into(),
+            color: label.color.into(),
+        }
+    }
+}

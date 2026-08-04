@@ -4,7 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 use super::*;
 use crate::workspace_data::load_workspace_rows;
 use gpui_component::{WindowExt as _, notification::Notification};
-use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
+use sea_orm::DbErr;
+use storage::workspace::ChangeRevision;
 
 const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
 
@@ -256,7 +257,6 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let now = now_ts();
         let view = cx.entity().downgrade();
         let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
         let path_string = path.display().to_string();
@@ -277,18 +277,13 @@ impl AppShell {
 
             let inserted = runtime
                 .spawn(async move {
-                    note::ActiveModel {
-                        title: Set(title),
-                        project_id: Set(project_id.map(|id| id as i64)),
-                        file_path: Set(Some(path_string)),
-                        file_managed_by_app: Set(true),
-                        cached_content: Set(DEFAULT_NOTE.to_string()),
-                        file_missing_since: Set(None),
-                        created_at: Set(now),
-                        updated_at: Set(now),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
+                    storage::workspace::create_managed_note(
+                        db.as_ref(),
+                        project_id,
+                        title,
+                        path_string,
+                        DEFAULT_NOTE.to_string(),
+                    )
                     .await
                 })
                 .await
@@ -303,7 +298,7 @@ impl AppShell {
 
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
-                            inserted.id as u32,
+                            inserted.id,
                             project_id,
                             SharedString::from(inserted.title),
                             window,
@@ -365,46 +360,17 @@ impl AppShell {
 
             let persisted = runtime
                 .spawn(async move {
-                    let existing = Note::find()
-                        .filter(note::Column::FilePath.eq(path_string.clone()))
-                        .one(&*db)
-                        .await?;
-
-                    if let Some(existing) = existing {
-                        note::ActiveModel {
-                            id: Set(existing.id),
-                            file_path: Set(Some(path_string)),
-                            cached_content: Set(content),
-                            file_missing_since: Set(None),
-                            updated_at: Set(now_ts()),
-                            ..Default::default()
-                        }
-                        .update(&*db)
-                        .await?;
-
-                        Ok::<_, sea_orm::DbErr>((existing.id as u32, existing.title))
-                    } else {
-                        let now = now_ts();
-                        let inserted = note::ActiveModel {
-                            title: Set(title),
-                            project_id: Set(None),
-                            file_path: Set(Some(path_string)),
-                            file_managed_by_app: Set(false),
-                            cached_content: Set(content),
-                            file_missing_since: Set(None),
-                            created_at: Set(now),
-                            updated_at: Set(now),
-                            ..Default::default()
-                        }
-                        .insert(&*db)
-                        .await?;
-
-                        Ok((inserted.id as u32, inserted.title))
-                    }
+                    storage::workspace::import_external_note(
+                        db.as_ref(),
+                        title,
+                        path_string,
+                        content,
+                    )
+                    .await
                 })
                 .await;
 
-            let (note_id, note_title) = match persisted {
+            let note = match persisted {
                 Ok(Ok(note)) => note,
                 Ok(Err(err)) => {
                     let message = format!("Could not add the text file to the workspace: {err}");
@@ -434,9 +400,9 @@ impl AppShell {
 
                     view.update(cx, |this, cx| {
                         this.open_note_tab(
-                            note_id,
+                            note.id,
                             None,
-                            SharedString::from(note_title),
+                            SharedString::from(note.title),
                             window,
                             cx,
                         );
@@ -471,13 +437,7 @@ impl AppShell {
         cx.spawn_in(window, async move |_, window| {
             let inserted = runtime
                 .spawn(async move {
-                    board::ActiveModel {
-                        title: Set(title),
-                        project_id: Set(project_id.map(|id| id as i64)),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
-                    .await
+                    storage::workspace::create_board(db.as_ref(), project_id, title).await
                 })
                 .await
                 .ok()?
@@ -491,7 +451,7 @@ impl AppShell {
 
                     view.update(cx, |this, cx| {
                         this.open_board_tab(
-                            inserted.id as u32,
+                            inserted.id,
                             project_id,
                             SharedString::from(inserted.title),
                             window,
@@ -506,13 +466,6 @@ impl AppShell {
         })
         .detach();
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChangeRevision {
-    revision: i64,
-    board_revision: i64,
-    note_revision: i64,
 }
 
 async fn watch_change_revisions(
@@ -539,7 +492,7 @@ async fn publish_change_revision(
     sender: &tokio::sync::watch::Sender<Option<ChangeRevision>>,
     last_published: &mut Option<ChangeRevision>,
 ) -> Result<bool, DbErr> {
-    let revision = load_change_revision(db).await?;
+    let revision = storage::workspace::load_change_revision(db).await?;
     if *last_published == Some(revision) {
         return Ok(true);
     }
@@ -550,28 +503,14 @@ async fn publish_change_revision(
     Ok(true)
 }
 
-async fn load_change_revision(db: &sea_orm::DatabaseConnection) -> Result<ChangeRevision, DbErr> {
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT revision, board_revision, note_revision
-             FROM castle_change_revision WHERE id = 1",
-        ))
-        .await?
-        .ok_or_else(|| DbErr::Custom("Castle change revision row is missing".to_string()))?;
-
-    Ok(ChangeRevision {
-        revision: row.try_get("", "revision")?,
-        board_revision: row.try_get("", "board_revision")?,
-        note_revision: row.try_get("", "note_revision")?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, EntityTrait};
+    use sea_orm::{
+        ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, DbBackend, EntityTrait,
+        Statement,
+    };
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     #[tokio::test]

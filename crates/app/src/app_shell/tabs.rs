@@ -436,7 +436,7 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     let _guard = save_lock.lock().await;
-                    persist_workspace_title(db.as_ref(), target, title).await
+                    storage::workspace::persist_workspace_title(db.as_ref(), target, title).await
                 })
                 .await;
 
@@ -488,9 +488,10 @@ impl AppShell {
                 .spawn(async move {
                     let _guard = save_lock.lock().await;
                     for (target, title) in pending {
-                        persist_workspace_title(db.as_ref(), target, title).await?;
+                        storage::workspace::persist_workspace_title(db.as_ref(), target, title)
+                            .await?;
                     }
-                    Ok::<(), sea_orm::DbErr>(())
+                    Ok::<(), anyhow::Error>(())
                 })
                 .await;
 
@@ -677,43 +678,4 @@ impl AppShell {
         self.open_tabs.push(OpenTab { id, title, kind });
         self.activate_tab(index, window, cx);
     }
-}
-
-async fn persist_workspace_title(
-    db: &sea_orm::DatabaseConnection,
-    target: WorkspaceTitleTarget,
-    title: String,
-) -> Result<(), sea_orm::DbErr> {
-    match target {
-        WorkspaceTitleTarget::Board(board_id) => {
-            board::ActiveModel {
-                id: Set(board_id as i64),
-                title: Set(title),
-                ..Default::default()
-            }
-            .update(db)
-            .await?;
-        }
-        WorkspaceTitleTarget::Note(note_id) => {
-            let current = Note::find_by_id(note_id as i64)
-                .one(db)
-                .await?
-                .ok_or_else(|| sea_orm::DbErr::Custom(format!("note {note_id} was not found")))?;
-            if current.title != title {
-                storage::note_links::record_note_alias(db, current.id, &current.title, now_ts())
-                    .await
-                    .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-            }
-            note::ActiveModel {
-                id: Set(note_id as i64),
-                title: Set(title),
-                updated_at: Set(now_ts()),
-                ..Default::default()
-            }
-            .update(db)
-            .await?;
-        }
-    }
-
-    Ok(())
 }

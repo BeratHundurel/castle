@@ -7,7 +7,6 @@ mod tabs;
 mod workspace;
 
 pub(crate) use action::*;
-use entity::{board, note, note::Entity as Note};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     MouseButton, ParentElement, PathPromptOptions, Pixels, Render, SharedString, Styled, Task,
@@ -25,9 +24,8 @@ use gpui_component::{
     tab::{Tab, TabBar},
     v_flex,
 };
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use std::{collections::HashMap, sync::Arc};
+use storage::workspace::WorkspaceTitleTarget;
 
 use crate::DB;
 use crate::app_settings::{AppSettings, StoredTab};
@@ -62,12 +60,6 @@ enum OpenTabKind {
         project_id: Option<u32>,
         view: Entity<DocumentEditorView>,
     },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum WorkspaceTitleTarget {
-    Board(u32),
-    Note(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

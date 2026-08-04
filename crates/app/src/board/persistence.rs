@@ -1,13 +1,5 @@
-use std::collections::HashMap;
-
-use entity::{
-    board_label, board_label::Entity as BoardLabel, card, card::Entity as Card,
-    entry::Entity as Entry, entry_attachment, entry_attachment::Entity as EntryAttachment,
-    entry_checklist_item, entry_checklist_item::Entity as EntryChecklistItem, entry_label,
-    entry_label::Entity as EntryLabel,
-};
 use gpui::{Context, SharedString};
-use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{DatabaseConnection, DbErr};
 
 use crate::DB;
 
@@ -136,110 +128,15 @@ pub(super) async fn load_board_data(
     db: &DatabaseConnection,
     board_id: u32,
 ) -> Result<(Vec<CardDTO>, Vec<BoardLabelDTO>), DbErr> {
-    let mut cards = Card::load()
-        .filter(card::Column::BoardId.eq(board_id as i32))
-        .filter(card::Column::DeletedAt.is_null())
-        .order_by_asc(card::Column::Position)
-        .order_by_asc(card::Column::Id)
-        .with(Entry)
-        .all(db)
-        .await?
-        .into_iter()
-        .map(CardDTO::from)
-        .collect::<Vec<_>>();
-
-    let board_labels = BoardLabel::find()
-        .filter(board_label::Column::BoardId.eq(board_id as i64))
-        .order_by_asc(board_label::Column::Id)
-        .all(db)
-        .await?
-        .into_iter()
-        .map(BoardLabelDTO::from)
-        .collect::<Vec<_>>();
-
-    let label_by_id = board_labels
-        .iter()
-        .cloned()
-        .map(|label| (label.id as i64, label))
-        .collect::<HashMap<_, _>>();
-
-    let entry_ids = cards
-        .iter()
-        .flat_map(|card| card.entries.iter().map(|entry| entry.id as i64))
-        .collect::<Vec<_>>();
-
-    let associations = if entry_ids.is_empty() {
-        vec![]
-    } else {
-        EntryLabel::find()
-            .filter(entry_label::Column::EntryId.is_in(entry_ids.clone()))
-            .order_by_asc(entry_label::Column::Id)
-            .all(db)
-            .await?
-    };
-
-    let mut labels_by_entry = HashMap::<i64, Vec<BoardLabelDTO>>::new();
-    for association in associations {
-        if let Some(label) = label_by_id.get(&association.board_label_id) {
-            labels_by_entry
-                .entry(association.entry_id)
-                .or_default()
-                .push(label.clone());
-        }
-    }
-
-    let attachments = if entry_ids.is_empty() {
-        vec![]
-    } else {
-        EntryAttachment::find()
-            .filter(entry_attachment::Column::EntryId.is_in(entry_ids.clone()))
-            .order_by_asc(entry_attachment::Column::Id)
-            .all(db)
-            .await?
-    };
-
-    let mut attachments_by_entry = HashMap::<i64, Vec<EntryAttachmentDTO>>::new();
-    for attachment in attachments {
-        attachments_by_entry
-            .entry(attachment.entry_id)
-            .or_default()
-            .push(EntryAttachmentDTO::from(attachment));
-    }
-
-    let checklist_items = if entry_ids.is_empty() {
-        vec![]
-    } else {
-        EntryChecklistItem::find()
-            .filter(entry_checklist_item::Column::EntryId.is_in(entry_ids))
-            .order_by_asc(entry_checklist_item::Column::Position)
-            .order_by_asc(entry_checklist_item::Column::Id)
-            .all(db)
-            .await?
-    };
-
-    let mut checklist_items_by_entry = HashMap::<i64, Vec<ChecklistItemDTO>>::new();
-    for item in checklist_items {
-        checklist_items_by_entry
-            .entry(item.entry_id)
-            .or_default()
-            .push(ChecklistItemDTO::from(item));
-    }
-
-    for card in &mut cards {
-        for entry in &mut card.entries {
-            entry.labels = labels_by_entry
-                .remove(&(entry.id as i64))
-                .unwrap_or_default();
-            entry.checklist_items = checklist_items_by_entry
-                .remove(&(entry.id as i64))
-                .unwrap_or_default();
-            entry.attachments = attachments_by_entry
-                .remove(&(entry.id as i64))
-                .unwrap_or_default();
-        }
-    }
-
-    Ok((cards, board_labels))
+    let snapshot = storage::board::load_board_snapshot(db, board_id).await?;
+    Ok((
+        snapshot.cards.into_iter().map(CardDTO::from).collect(),
+        snapshot
+            .labels
+            .into_iter()
+            .map(BoardLabelDTO::from)
+            .collect(),
+    ))
 }
 
 #[cfg(test)]
