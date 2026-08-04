@@ -270,6 +270,35 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("w", VimKeyAction(VimKey::WordForward), Some(VIM_CONTEXT)),
         KeyBinding::new("b", VimKeyAction(VimKey::WordBackward), Some(VIM_CONTEXT)),
         KeyBinding::new("e", VimKeyAction(VimKey::WordEnd), Some(VIM_CONTEXT)),
+        KeyBinding::new("f", VimKeyAction(VimKey::FindForward), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-f",
+            VimKeyAction(VimKey::FindBackward),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("t", VimKeyAction(VimKey::TillForward), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "shift-t",
+            VimKeyAction(VimKey::TillBackward),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(";", VimKeyAction(VimKey::RepeatFind), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            ",",
+            VimKeyAction(VimKey::RepeatFindReverse),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new(
+            "enter",
+            VimKeyAction(VimKey::LiteralEnter),
+            Some(VIM_CONTEXT),
+        ),
+        KeyBinding::new("tab", VimKeyAction(VimKey::LiteralTab), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            "space",
+            VimKeyAction(VimKey::LiteralSpace),
+            Some(VIM_CONTEXT),
+        ),
         KeyBinding::new(
             "shift-w",
             VimKeyAction(VimKey::BigWordForward),
@@ -321,11 +350,15 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("'", VimKeyAction(VimKey::SingleQuote), Some(VIM_CONTEXT)),
         KeyBinding::new("`", VimKeyAction(VimKey::Backtick), Some(VIM_CONTEXT)),
         KeyBinding::new("(", VimKeyAction(VimKey::Parenthesis), Some(VIM_CONTEXT)),
-        KeyBinding::new(")", VimKeyAction(VimKey::Parenthesis), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            ")",
+            VimKeyAction(VimKey::ParenthesisClose),
+            Some(VIM_CONTEXT),
+        ),
         KeyBinding::new("[", VimKeyAction(VimKey::Bracket), Some(VIM_CONTEXT)),
-        KeyBinding::new("]", VimKeyAction(VimKey::Bracket), Some(VIM_CONTEXT)),
+        KeyBinding::new("]", VimKeyAction(VimKey::BracketClose), Some(VIM_CONTEXT)),
         KeyBinding::new("{", VimKeyAction(VimKey::Brace), Some(VIM_CONTEXT)),
-        KeyBinding::new("}", VimKeyAction(VimKey::Brace), Some(VIM_CONTEXT)),
+        KeyBinding::new("}", VimKeyAction(VimKey::BraceClose), Some(VIM_CONTEXT)),
         KeyBinding::new("x", VimKeyAction(VimKey::DeleteChar), Some(VIM_CONTEXT)),
         KeyBinding::new(
             "shift-x",
@@ -333,6 +366,7 @@ fn default_bindings() -> Vec<KeyBinding> {
             Some(VIM_CONTEXT),
         ),
         KeyBinding::new("s", VimKeyAction(VimKey::SubstituteChar), Some(VIM_CONTEXT)),
+        KeyBinding::new("r", VimKeyAction(VimKey::ReplaceChar), Some(VIM_CONTEXT)),
         KeyBinding::new(
             "shift-s",
             VimKeyAction(VimKey::SubstituteLine),
@@ -365,6 +399,11 @@ fn default_bindings() -> Vec<KeyBinding> {
         ),
         KeyBinding::new("u", VimKeyAction(VimKey::Undo), Some(VIM_CONTEXT)),
         KeyBinding::new("ctrl-r", VimKeyAction(VimKey::Redo), Some(VIM_CONTEXT)),
+        KeyBinding::new(
+            ".",
+            VimKeyAction(VimKey::RepeatLastChange),
+            Some(VIM_CONTEXT),
+        ),
         KeyBinding::new("escape", VimKeyAction(VimKey::Escape), Some(VIM_CONTEXT)),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-z", VimKeyAction(VimKey::Undo), Some(VIM_CONTEXT)),

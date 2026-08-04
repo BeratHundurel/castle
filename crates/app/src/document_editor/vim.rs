@@ -1,5 +1,11 @@
-use gpui::{ClipboardItem, Context, EntityInputHandler, Focusable as _, MouseDownEvent, Window};
-use gpui_component::input::{Position, Redo, Rope, RopeExt as _, Search, Undo};
+use gpui::{
+    AppContext as _, ClipboardItem, Context, EntityInputHandler, Focusable as _, KeyDownEvent,
+    MouseDownEvent, Window,
+};
+use gpui_component::{
+    highlighter::Language,
+    input::{InputState, Position, Redo, Rope, RopeExt as _, Search, Undo},
+};
 use std::ops::Range;
 
 use super::DocumentEditorView;
@@ -40,6 +46,94 @@ enum VimTextObjectPrefix {
     Around,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VimFindKind {
+    Forward,
+    Backward,
+    TillForward,
+    TillBackward,
+}
+
+impl VimFindKind {
+    fn reverse(self) -> Self {
+        match self {
+            Self::Forward => Self::Backward,
+            Self::Backward => Self::Forward,
+            Self::TillForward => Self::TillBackward,
+            Self::TillBackward => Self::TillForward,
+        }
+    }
+
+    fn command(self) -> char {
+        match self {
+            Self::Forward => 'f',
+            Self::Backward => 'F',
+            Self::TillForward => 't',
+            Self::TillBackward => 'T',
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VimPendingChar {
+    Find(VimFindKind),
+    Replace,
+}
+
+#[derive(Clone, Debug)]
+struct VimLastFind {
+    kind: VimFindKind,
+    target: String,
+}
+
+#[derive(Clone, Debug)]
+enum VimReplayStep {
+    Key(VimKey),
+    Literal(String),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VimVisualRepeat {
+    linewise: bool,
+    extent: usize,
+}
+
+#[derive(Clone, Debug)]
+struct VimInsertPatch {
+    start_delta: isize,
+    end_delta: isize,
+    replacement: String,
+    cursor_delta: isize,
+}
+
+#[derive(Clone, Debug)]
+struct VimChangeRecipe {
+    steps: Vec<VimReplayStep>,
+    count: u32,
+    insert_patch: Option<VimInsertPatch>,
+    visual: Option<VimVisualRepeat>,
+}
+
+#[derive(Clone, Debug)]
+struct VimHistoryEntry {
+    before: Rope,
+    after: Rope,
+    cursor_before: usize,
+    cursor_after: usize,
+}
+
+#[derive(Clone, Debug)]
+struct VimInsertCapture {
+    before: Rope,
+    anchor: usize,
+    steps: Vec<VimReplayStep>,
+    count: u32,
+    visual: Option<VimVisualRepeat>,
+    pre_edit_changed: bool,
+    history_before: Rope,
+    history_cursor: usize,
+}
+
 #[derive(Clone, Debug)]
 struct VimRegister {
     text: String,
@@ -55,10 +149,19 @@ pub(super) struct VimState {
     pending_operator: Option<VimOperator>,
     pending_g: bool,
     pending_text_object: Option<VimTextObjectPrefix>,
+    pending_char: Option<VimPendingChar>,
+    last_find: Option<VimLastFind>,
     visual_anchor: Option<usize>,
     visual_head: Option<usize>,
     preferred_column: Option<u32>,
     register: Option<VimRegister>,
+    change_candidate: Vec<VimReplayStep>,
+    candidate_visual: Option<VimVisualRepeat>,
+    insert_capture: Option<VimInsertCapture>,
+    last_change: Option<VimChangeRecipe>,
+    replaying: bool,
+    undo_stack: Vec<VimHistoryEntry>,
+    redo_stack: Vec<VimHistoryEntry>,
 }
 
 impl VimState {
@@ -75,10 +178,19 @@ impl VimState {
             pending_operator: None,
             pending_g: false,
             pending_text_object: None,
+            pending_char: None,
+            last_find: None,
             visual_anchor: None,
             visual_head: None,
             preferred_column: None,
             register: None,
+            change_candidate: Vec::new(),
+            candidate_visual: None,
+            insert_capture: None,
+            last_change: None,
+            replaying: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -122,6 +234,12 @@ impl VimState {
                 VimTextObjectPrefix::Around => 'a',
             });
         }
+        if let Some(pending) = self.pending_char {
+            command.push(match pending {
+                VimPendingChar::Find(kind) => kind.command(),
+                VimPendingChar::Replace => 'r',
+            });
+        }
         command
     }
 
@@ -131,6 +249,7 @@ impl VimState {
         self.pending_operator = None;
         self.pending_g = false;
         self.pending_text_object = None;
+        self.pending_char = None;
     }
 
     fn take_count(&mut self) -> u32 {
@@ -248,8 +367,40 @@ impl DocumentEditorView {
 
         let key = action.0;
         if key == VimKey::Escape {
+            self.discard_vim_change_candidate();
             self.enter_vim_normal(window, cx);
             return;
+        }
+        if let Some(pending) = self.vim.pending_char.take()
+            && let Some(target) = vim_literal_for_key(key)
+        {
+            let before_mode = self.vim.mode;
+            let before_text = self.editor.read(cx).text().clone();
+            let before_cursor = self.editor.read(cx).cursor();
+            if !self.vim.replaying {
+                self.vim
+                    .change_candidate
+                    .push(VimReplayStep::Literal(target.clone()));
+            }
+            self.apply_pending_vim_char(pending, target, window, cx);
+            if !self.vim.replaying {
+                self.finish_vim_action_recording(before_mode, before_text, before_cursor, cx);
+            }
+            return;
+        }
+
+        let before_mode = self.vim.mode;
+        let before_text = self.editor.read(cx).text().clone();
+        let before_cursor = self.editor.read(cx).cursor();
+        let record_action = !self.vim.replaying
+            && !matches!(
+                key,
+                VimKey::RepeatLastChange | VimKey::Undo | VimKey::Redo | VimKey::Search
+            );
+        if record_action {
+            self.prepare_vim_change_candidate(key, cx);
+        } else if key != VimKey::RepeatLastChange {
+            self.discard_vim_change_candidate();
         }
 
         if let VimKey::Digit(digit) = key
@@ -265,6 +416,79 @@ impl DocumentEditorView {
         } else {
             self.handle_normal_key(key, window, cx);
         }
+        if record_action {
+            self.finish_vim_action_recording(before_mode, before_text, before_cursor, cx);
+        }
+    }
+
+    pub(super) fn on_vim_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.vim.enabled
+            || self.mode != EditorMode::Source
+            || self.vim.mode == VimMode::Insert
+            || self.vim.pending_char.is_none()
+        {
+            return;
+        }
+
+        if event.keystroke.key == "escape" {
+            self.vim.reset_command();
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.platform || modifiers.function {
+            self.vim.reset_command();
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
+        let target = match event.keystroke.key.as_str() {
+            "enter" => Some("\n".to_string()),
+            "tab" => Some("\t".to_string()),
+            "space" => Some(" ".to_string()),
+            _ => event
+                .keystroke
+                .key_char
+                .clone()
+                .or_else(|| Some(event.keystroke.key.clone())),
+        };
+        let Some(target) =
+            target.filter(|target| !target.is_empty() && !target.chars().any(|ch| ch.is_control()))
+        else {
+            self.vim.reset_command();
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        };
+
+        let Some(pending) = self.vim.pending_char.take() else {
+            return;
+        };
+        let before_mode = self.vim.mode;
+        let before_text = self.editor.read(cx).text().clone();
+        let before_cursor = self.editor.read(cx).cursor();
+        if !self.vim.replaying {
+            self.vim
+                .change_candidate
+                .push(VimReplayStep::Literal(target.clone()));
+        }
+        self.apply_pending_vim_char(pending, target, window, cx);
+        if !self.vim.replaying {
+            self.finish_vim_action_recording(before_mode, before_text, before_cursor, cx);
+        }
+        window.prevent_default();
+        cx.stop_propagation();
     }
 
     pub(super) fn on_vim_mouse_down(
@@ -307,12 +531,147 @@ impl DocumentEditorView {
             return;
         }
         if self.vim.mode == VimMode::Insert && !self.show_emmet_input {
+            self.finish_vim_insert_capture(window, cx);
             self.enter_vim_normal(window, cx);
         } else {
             cx.propagate();
             return;
         }
         cx.stop_propagation();
+    }
+
+    fn vim_command_in_progress(&self) -> bool {
+        self.vim.count.is_some()
+            || self.vim.pending_operator.is_some()
+            || self.vim.pending_g
+            || self.vim.pending_text_object.is_some()
+            || self.vim.pending_char.is_some()
+    }
+
+    fn prepare_vim_change_candidate(&mut self, key: VimKey, cx: &gpui::App) {
+        if self.vim.mode.is_visual() {
+            self.vim.change_candidate.clear();
+            self.vim.candidate_visual = self.vim_visual_repeat(cx);
+        } else if !self.vim_command_in_progress() {
+            self.vim.change_candidate.clear();
+            self.vim.candidate_visual = None;
+        }
+        self.vim.change_candidate.push(VimReplayStep::Key(key));
+    }
+
+    fn finish_vim_action_recording(
+        &mut self,
+        before_mode: VimMode,
+        before_text: Rope,
+        before_cursor: usize,
+        cx: &gpui::App,
+    ) {
+        let changed = before_text != *self.editor.read(cx).text();
+        if self.vim.mode == VimMode::Insert && before_mode != VimMode::Insert {
+            let (steps, count) = normalized_replay_steps(&self.vim.change_candidate);
+            self.vim.insert_capture = Some(VimInsertCapture {
+                before: self.editor.read(cx).text().clone(),
+                anchor: self.editor.read(cx).cursor(),
+                steps,
+                count,
+                visual: self.vim.candidate_visual,
+                pre_edit_changed: changed,
+                history_before: before_text,
+                history_cursor: before_cursor,
+            });
+            self.vim.change_candidate.clear();
+            self.vim.candidate_visual = None;
+        } else if changed && self.vim.mode != VimMode::Insert {
+            self.push_vim_history(before_text, before_cursor, cx);
+            self.commit_vim_change(None);
+        } else if self.vim.mode.is_visual() || !self.vim_command_in_progress() {
+            self.discard_vim_change_candidate();
+        }
+    }
+
+    fn vim_visual_repeat(&self, cx: &gpui::App) -> Option<VimVisualRepeat> {
+        let range = self.vim_visual_range(cx)?;
+        if self.vim.mode == VimMode::VisualLine {
+            let rope = self.editor.read(cx).text();
+            let start = row_at(rope, range.start);
+            let end_offset = previous_boundary(rope, range.end);
+            let end = row_at(rope, end_offset);
+            Some(VimVisualRepeat {
+                linewise: true,
+                extent: end.saturating_sub(start) + 1,
+            })
+        } else {
+            Some(VimVisualRepeat {
+                linewise: false,
+                extent: self.editor.read(cx).text().slice(range).chars().count(),
+            })
+        }
+    }
+
+    fn commit_vim_change(&mut self, insert_patch: Option<VimInsertPatch>) {
+        let (steps, count) = normalized_replay_steps(&self.vim.change_candidate);
+        if !steps.is_empty() {
+            self.vim.last_change = Some(VimChangeRecipe {
+                steps,
+                count,
+                insert_patch,
+                visual: self.vim.candidate_visual,
+            });
+        }
+        self.discard_vim_change_candidate();
+    }
+
+    fn discard_vim_change_candidate(&mut self) {
+        self.vim.change_candidate.clear();
+        self.vim.candidate_visual = None;
+    }
+
+    fn finish_vim_insert_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(capture) = self.vim.insert_capture.take() else {
+            return;
+        };
+        let after = self.editor.read(cx).text();
+        let cursor = self.editor.read(cx).cursor();
+        let insert_patch = insert_patch_between(&capture.before, after, capture.anchor, cursor);
+        if insert_patch.is_none() && !capture.pre_edit_changed {
+            return;
+        }
+        if capture.count > 1
+            && replay_repeats_insert_text(&capture.steps)
+            && let Some(patch) = insert_patch.as_ref()
+            && patch.start_delta == 0
+            && patch.end_delta == 0
+        {
+            let extra = patch
+                .replacement
+                .repeat(capture.count.saturating_sub(1) as usize);
+            self.replace_vim_range(cursor..cursor, &extra, window, cx);
+            self.set_input_cursor(cursor.saturating_add(extra.len()), window, cx);
+        }
+        self.vim.last_change = Some(VimChangeRecipe {
+            steps: capture.steps,
+            count: capture.count,
+            insert_patch,
+            visual: capture.visual,
+        });
+        self.push_vim_history(capture.history_before, capture.history_cursor, cx);
+    }
+
+    fn push_vim_history(&mut self, before: Rope, cursor_before: usize, cx: &gpui::App) {
+        let after = self.editor.read(cx).text().clone();
+        if before == after {
+            return;
+        }
+        if self.vim.undo_stack.len() >= 1_000 {
+            self.vim.undo_stack.remove(0);
+        }
+        self.vim.undo_stack.push(VimHistoryEntry {
+            before,
+            after,
+            cursor_before,
+            cursor_after: self.editor.read(cx).cursor(),
+        });
+        self.vim.redo_stack.clear();
     }
 
     pub(super) fn sync_vim_search_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -336,6 +695,8 @@ impl DocumentEditorView {
                 return;
             }
             self.vim.reset_command();
+            cx.notify();
+            return;
         }
         if self.vim.pending_g && key != VimKey::Go {
             self.vim.reset_command();
@@ -358,6 +719,12 @@ impl DocumentEditorView {
             | VimKey::FirstNonBlank
             | VimKey::LineEnd
             | VimKey::DocumentEnd => self.apply_motion_key(key, window, cx),
+            VimKey::FindForward => self.begin_find(VimFindKind::Forward, cx),
+            VimKey::FindBackward => self.begin_find(VimFindKind::Backward, cx),
+            VimKey::TillForward => self.begin_find(VimFindKind::TillForward, cx),
+            VimKey::TillBackward => self.begin_find(VimFindKind::TillBackward, cx),
+            VimKey::RepeatFind => self.repeat_find(false, window, cx),
+            VimKey::RepeatFindReverse => self.repeat_find(true, window, cx),
             VimKey::Go => {
                 if self.vim.pending_g {
                     self.vim.pending_g = false;
@@ -412,6 +779,10 @@ impl DocumentEditorView {
             VimKey::DeleteChar => self.delete_vim_char(window, cx),
             VimKey::DeletePreviousChar => self.delete_vim_previous_char(window, cx),
             VimKey::SubstituteChar => self.substitute_vim_char(window, cx),
+            VimKey::ReplaceChar => {
+                self.vim.pending_char = Some(VimPendingChar::Replace);
+                cx.notify();
+            }
             VimKey::SubstituteLine => {
                 let count = self.vim.take_count();
                 self.apply_line_operator(VimOperator::Change, count, window, cx);
@@ -432,8 +803,9 @@ impl DocumentEditorView {
             }
             VimKey::PasteAfter => self.paste_vim(false, window, cx),
             VimKey::PasteBefore => self.paste_vim(true, window, cx),
-            VimKey::Undo => self.dispatch_input_action(Box::new(Undo), window, cx),
-            VimKey::Redo => self.dispatch_input_action(Box::new(Redo), window, cx),
+            VimKey::Undo => self.undo_vim_change(window, cx),
+            VimKey::Redo => self.redo_vim_change(window, cx),
+            VimKey::RepeatLastChange => self.repeat_last_change(window, cx),
             VimKey::Search => self.dispatch_search(window, cx),
             _ => {
                 self.vim.reset_command();
@@ -474,6 +846,12 @@ impl DocumentEditorView {
             | VimKey::FirstNonBlank
             | VimKey::LineEnd
             | VimKey::DocumentEnd => self.apply_motion_key(key, window, cx),
+            VimKey::FindForward => self.begin_find(VimFindKind::Forward, cx),
+            VimKey::FindBackward => self.begin_find(VimFindKind::Backward, cx),
+            VimKey::TillForward => self.begin_find(VimFindKind::TillForward, cx),
+            VimKey::TillBackward => self.begin_find(VimFindKind::TillBackward, cx),
+            VimKey::RepeatFind => self.repeat_find(false, window, cx),
+            VimKey::RepeatFindReverse => self.repeat_find(true, window, cx),
             VimKey::Go => {
                 if self.vim.pending_g {
                     self.vim.pending_g = false;
@@ -518,9 +896,17 @@ impl DocumentEditorView {
             VimKey::Change | VimKey::SubstituteChar | VimKey::SubstituteLine => {
                 self.apply_visual_operator(VimOperator::Change, window, cx)
             }
+            VimKey::ReplaceChar => {
+                self.vim.pending_char = Some(VimPendingChar::Replace);
+                cx.notify();
+            }
             VimKey::PasteAfter | VimKey::PasteBefore => self.paste_vim(true, window, cx),
-            VimKey::Undo => self.dispatch_input_action(Box::new(Undo), window, cx),
-            VimKey::Redo => self.dispatch_input_action(Box::new(Redo), window, cx),
+            VimKey::Undo => self.undo_vim_change(window, cx),
+            VimKey::Redo => self.redo_vim_change(window, cx),
+            VimKey::RepeatLastChange => {
+                self.enter_vim_normal(window, cx);
+                self.repeat_last_change(window, cx);
+            }
             VimKey::Search => self.dispatch_search(window, cx),
             _ => {
                 self.vim.reset_command();
@@ -545,7 +931,7 @@ impl DocumentEditorView {
     ) -> bool {
         if let Some(prefix) = self.vim.pending_text_object.take() {
             if is_text_object_key(key) {
-                let count = combined_operator_count(&mut self.vim);
+                let count = combined_operator_count(&mut self.vim).unwrap_or(1);
                 let range = {
                     let editor = self.editor.read(cx);
                     text_object_range(editor.text(), editor.cursor(), count, prefix, key)
@@ -579,7 +965,7 @@ impl DocumentEditorView {
                 | (VimOperator::Change, VimKey::Change)
         );
         if repeated {
-            let count = combined_operator_count(&mut self.vim);
+            let count = combined_operator_count(&mut self.vim).unwrap_or(1);
             self.apply_line_operator(operator, count, window, cx);
             return true;
         }
@@ -599,7 +985,375 @@ impl DocumentEditorView {
             return true;
         }
 
+        if let Some(kind) = vim_find_kind_for_key(key) {
+            self.vim.pending_char = Some(VimPendingChar::Find(kind));
+            cx.notify();
+            return true;
+        }
+        if matches!(key, VimKey::RepeatFind | VimKey::RepeatFindReverse) {
+            return self.apply_operator_repeated_find(
+                operator,
+                key == VimKey::RepeatFindReverse,
+                window,
+                cx,
+            );
+        }
+
         self.apply_operator_motion(operator, key, window, cx)
+    }
+
+    fn begin_find(&mut self, kind: VimFindKind, cx: &mut Context<Self>) {
+        self.vim.pending_char = Some(VimPendingChar::Find(kind));
+        cx.notify();
+    }
+
+    fn apply_pending_vim_char(
+        &mut self,
+        pending: VimPendingChar,
+        target: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match pending {
+            VimPendingChar::Find(kind) => self.apply_find(kind, target, false, window, cx),
+            VimPendingChar::Replace => self.replace_vim_chars(&target, window, cx),
+        }
+    }
+
+    fn apply_find(
+        &mut self,
+        kind: VimFindKind,
+        target: String,
+        repeating: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let operator = self.vim.pending_operator;
+        let count = if operator.is_some() {
+            combined_operator_count(&mut self.vim)
+        } else {
+            self.vim.count.take()
+        };
+        let motion = {
+            let editor = self.editor.read(cx);
+            find_char_motion(
+                editor.text(),
+                editor.cursor(),
+                kind,
+                &target,
+                count.unwrap_or(1),
+                repeating,
+            )
+        };
+        let Some(motion) = motion else {
+            self.vim.reset_command();
+            cx.notify();
+            return;
+        };
+
+        if !repeating {
+            self.vim.last_find = Some(VimLastFind {
+                kind,
+                target: target.clone(),
+            });
+        }
+        if let Some(operator) = operator {
+            let range = {
+                let editor = self.editor.read(cx);
+                operator_range(editor.text(), editor.cursor(), motion)
+            };
+            self.apply_operator(operator, range, false, window, cx);
+        } else {
+            self.set_vim_cursor(motion.target, window, cx);
+            self.vim.reset_command();
+            cx.notify();
+        }
+    }
+
+    fn repeat_find(&mut self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(last) = self.vim.last_find.clone() else {
+            self.vim.reset_command();
+            cx.notify();
+            return;
+        };
+        let kind = if reverse {
+            last.kind.reverse()
+        } else {
+            last.kind
+        };
+        self.apply_find(kind, last.target, true, window, cx);
+    }
+
+    fn apply_operator_repeated_find(
+        &mut self,
+        operator: VimOperator,
+        reverse: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(last) = self.vim.last_find.clone() else {
+            self.vim.reset_command();
+            cx.notify();
+            return true;
+        };
+        let kind = if reverse {
+            last.kind.reverse()
+        } else {
+            last.kind
+        };
+        self.vim.pending_operator = Some(operator);
+        self.apply_find(kind, last.target, true, window, cx);
+        true
+    }
+
+    fn replace_vim_chars(&mut self, target: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (range, replacement, linewise) = if self.vim.mode.is_visual() {
+            let Some(range) = self.vim_visual_range(cx) else {
+                self.vim.reset_command();
+                return;
+            };
+            let linewise = self.vim.mode == VimMode::VisualLine;
+            let selected = self.editor.read(cx).text().slice(range.clone()).to_string();
+            let replacement = replace_visual_text(&selected, target);
+            (range, replacement, linewise)
+        } else {
+            let count = self.vim.take_count();
+            let editor = self.editor.read(cx);
+            let range = forward_char_range(editor.text(), editor.cursor(), count);
+            if range.is_empty()
+                || editor.text().slice(range.clone()).chars().count() != count as usize
+            {
+                self.vim.reset_command();
+                cx.notify();
+                return;
+            }
+            let replacement = if target == "\n" {
+                line_break_for_row(editor.text(), row_at(editor.text(), editor.cursor()))
+                    .to_string()
+            } else {
+                target.repeat(count as usize)
+            };
+            (range, replacement, false)
+        };
+
+        let replaced = self.editor.read(cx).text().slice(range.clone()).to_string();
+        self.vim.register = Some(VimRegister {
+            text: replaced.clone(),
+            linewise,
+        });
+        let metadata = if linewise {
+            VIM_CLIPBOARD_LINEWISE
+        } else {
+            VIM_CLIPBOARD_CHARACTERWISE
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            replaced,
+            metadata.to_string(),
+        ));
+        self.replace_vim_range(range.clone(), &replacement, window, cx);
+        self.set_vim_cursor(range.start, window, cx);
+        self.enter_vim_normal(window, cx);
+    }
+
+    fn repeat_last_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let count_override = self.vim.count.take();
+        let Some(recipe) = self.vim.last_change.clone() else {
+            self.vim.reset_command();
+            cx.notify();
+            return;
+        };
+        let count = count_override.unwrap_or(recipe.count).clamp(1, MAX_COUNT);
+        let history_before = self.editor.read(cx).text().clone();
+        let history_cursor = self.editor.read(cx).cursor();
+        let live_editor = self.editor.clone();
+        let scratch_value = history_before.to_string();
+        let scratch_editor = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor(Language::Plain)
+                .default_value(scratch_value)
+        });
+        scratch_editor.update(cx, |editor, cx| {
+            editor.set_cursor_position(
+                history_before.offset_to_position(history_cursor),
+                window,
+                cx,
+            );
+        });
+        self.editor = scratch_editor;
+        self.vim.replaying = true;
+        self.vim.reset_command();
+
+        if replay_is_open_line(&recipe.steps) && recipe.visual.is_none() {
+            for _ in 0..count {
+                self.replay_vim_steps(&recipe.steps, window, cx);
+                if self.vim.mode == VimMode::Insert {
+                    if let Some(patch) = recipe.insert_patch.as_ref() {
+                        self.apply_insert_patch(patch, 1, window, cx);
+                    }
+                    self.enter_vim_normal(window, cx);
+                }
+            }
+        } else {
+            if let Some(visual) = recipe.visual {
+                self.prepare_visual_repeat(visual, window, cx);
+            }
+            let repeat_insert_text =
+                recipe.visual.is_none() && replay_repeats_insert_text(&recipe.steps);
+            if !repeat_insert_text {
+                for digit in count.to_string().bytes() {
+                    self.vim.push_digit(digit.saturating_sub(b'0'));
+                }
+            }
+            self.replay_vim_steps(&recipe.steps, window, cx);
+            if self.vim.mode == VimMode::Insert {
+                if let Some(patch) = recipe.insert_patch.as_ref() {
+                    let repetitions = if repeat_insert_text { count } else { 1 };
+                    self.apply_insert_patch(patch, repetitions, window, cx);
+                }
+                self.enter_vim_normal(window, cx);
+            }
+        }
+        let replayed_text = self.editor.read(cx).text().clone();
+        let replayed_cursor = self.editor.read(cx).cursor();
+        self.editor = live_editor;
+        self.vim.replaying = false;
+        self.vim.last_change = Some(recipe);
+        self.discard_vim_change_candidate();
+        if let Some((range, replacement)) =
+            rope_replacement_between(&history_before, &replayed_text)
+        {
+            self.replace_vim_range(range, &replacement, window, cx);
+        }
+        self.set_vim_cursor(replayed_cursor, window, cx);
+        self.enter_vim_normal(window, cx);
+        self.push_vim_history(history_before, history_cursor, cx);
+        cx.notify();
+    }
+
+    fn replay_vim_steps(
+        &mut self,
+        steps: &[VimReplayStep],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for step in steps {
+            match step {
+                VimReplayStep::Key(VimKey::Digit(_)) => {}
+                VimReplayStep::Key(key) => {
+                    if self.vim.mode.is_visual() {
+                        self.handle_visual_key(*key, window, cx);
+                    } else {
+                        self.handle_normal_key(*key, window, cx);
+                    }
+                }
+                VimReplayStep::Literal(target) => {
+                    if let Some(pending) = self.vim.pending_char.take() {
+                        self.apply_pending_vim_char(pending, target.clone(), window, cx);
+                    }
+                }
+            }
+        }
+    }
+
+    fn undo_vim_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.vim.undo_stack.pop() else {
+            self.dispatch_input_action(Box::new(Undo), window, cx);
+            return;
+        };
+        if entry.after != *self.editor.read(cx).text() {
+            self.vim.redo_stack.clear();
+            self.dispatch_input_action(Box::new(Undo), window, cx);
+            return;
+        }
+        let current_len = self.editor.read(cx).text().len();
+        self.vim.replaying = true;
+        self.replace_vim_range(0..current_len, &entry.before.to_string(), window, cx);
+        self.set_vim_cursor(entry.cursor_before, window, cx);
+        self.enter_vim_normal(window, cx);
+        self.vim.replaying = false;
+        self.vim.redo_stack.push(entry);
+    }
+
+    fn redo_vim_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.vim.redo_stack.pop() else {
+            self.dispatch_input_action(Box::new(Redo), window, cx);
+            return;
+        };
+        if entry.before != *self.editor.read(cx).text() {
+            self.dispatch_input_action(Box::new(Redo), window, cx);
+            return;
+        }
+        let current_len = self.editor.read(cx).text().len();
+        self.vim.replaying = true;
+        self.replace_vim_range(0..current_len, &entry.after.to_string(), window, cx);
+        self.set_vim_cursor(entry.cursor_after, window, cx);
+        self.enter_vim_normal(window, cx);
+        self.vim.replaying = false;
+        self.vim.undo_stack.push(entry);
+    }
+
+    fn prepare_visual_repeat(
+        &mut self,
+        visual: VimVisualRepeat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = self.editor.read(cx).cursor();
+        let head = {
+            let editor = self.editor.read(cx);
+            let rope = editor.text();
+            if visual.linewise {
+                let row = row_at(rope, anchor);
+                let target_row = row
+                    .saturating_add(visual.extent.saturating_sub(1))
+                    .min(rope.lines_len().saturating_sub(1));
+                rope.line_start_offset(target_row)
+            } else {
+                move_by_chars(rope, anchor, visual.extent.saturating_sub(1) as isize)
+            }
+        };
+        self.vim.mode = if visual.linewise {
+            VimMode::VisualLine
+        } else {
+            VimMode::Visual
+        };
+        self.vim.visual_anchor = Some(anchor);
+        self.vim.visual_head = Some(head);
+        self.set_vim_cursor(head, window, cx);
+    }
+
+    fn apply_insert_patch(
+        &mut self,
+        patch: &VimInsertPatch,
+        repetitions: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = self.editor.read(cx).cursor();
+        let (start, end) = {
+            let rope = self.editor.read(cx).text();
+            (
+                move_by_chars(rope, anchor, patch.start_delta),
+                move_by_chars(rope, anchor, patch.end_delta),
+            )
+        };
+        let replacement = patch.replacement.repeat(repetitions as usize);
+        self.replace_vim_range(start..end, &replacement, window, cx);
+        let extra_cursor = if repetitions > 1 && patch.cursor_delta >= 0 {
+            patch
+                .replacement
+                .chars()
+                .count()
+                .saturating_mul(repetitions.saturating_sub(1) as usize) as isize
+        } else {
+            0
+        };
+        let cursor = move_by_chars(
+            self.editor.read(cx).text(),
+            start,
+            patch.cursor_delta.saturating_add(extra_cursor),
+        );
+        self.set_input_cursor(cursor, window, cx);
     }
 
     fn apply_direct_operator(
@@ -759,7 +1513,7 @@ impl DocumentEditorView {
     }
 
     fn apply_motion_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.take_count();
+        let count = self.vim.count.take();
         let preferred = self.vim.preferred_column;
         let motion = {
             let editor = self.editor.read(cx);
@@ -916,11 +1670,12 @@ impl DocumentEditorView {
     }
 
     fn open_vim_line(&mut self, above: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let (offset, prefix, insertion) = {
+        let (offset, prefix, insertion, line_break_len) = {
             let editor = self.editor.read(cx);
             let rope = editor.text();
             let row = row_at(rope, editor.cursor());
             let line = rope.slice_line(row).to_string();
+            let line_break = line_break_for_row(rope, row);
             let prefix = if above {
                 leading_indent(&line)
             } else {
@@ -930,18 +1685,24 @@ impl DocumentEditorView {
                 (
                     rope.line_start_offset(row),
                     prefix.clone(),
-                    format!("{prefix}\n"),
+                    format!("{prefix}{line_break}"),
+                    line_break.len(),
                 )
             } else {
                 let end = line_content_end(rope, row);
-                (end, prefix.clone(), format!("\n{prefix}"))
+                (
+                    end,
+                    prefix.clone(),
+                    format!("{line_break}{prefix}"),
+                    line_break.len(),
+                )
             }
         };
         self.replace_vim_range(offset..offset, &insertion, window, cx);
         let cursor = if above {
             offset + prefix.len()
         } else {
-            offset + 1 + prefix.len()
+            offset + line_break_len + prefix.len()
         };
         self.enter_vim_insert(cursor, window, cx);
     }
@@ -1050,36 +1811,390 @@ impl DocumentEditorView {
     }
 }
 
-fn combined_operator_count(vim: &mut VimState) -> u32 {
-    let operator = vim.operator_count.take().unwrap_or(1);
-    let motion = vim.take_count();
+fn vim_find_kind_for_key(key: VimKey) -> Option<VimFindKind> {
+    match key {
+        VimKey::FindForward => Some(VimFindKind::Forward),
+        VimKey::FindBackward => Some(VimFindKind::Backward),
+        VimKey::TillForward => Some(VimFindKind::TillForward),
+        VimKey::TillBackward => Some(VimFindKind::TillBackward),
+        _ => None,
+    }
+}
+
+fn vim_literal_for_key(key: VimKey) -> Option<String> {
+    let literal = match key {
+        VimKey::Digit(digit) => {
+            return char::from_digit(u32::from(digit), 10).map(|ch| ch.to_string());
+        }
+        VimKey::Left => "h",
+        VimKey::Down => "j",
+        VimKey::Up => "k",
+        VimKey::Right => "l",
+        VimKey::WordForward => "w",
+        VimKey::WordBackward => "b",
+        VimKey::WordEnd => "e",
+        VimKey::BigWordForward => "W",
+        VimKey::BigWordBackward => "B",
+        VimKey::BigWordEnd => "E",
+        VimKey::FindForward => "f",
+        VimKey::FindBackward => "F",
+        VimKey::TillForward => "t",
+        VimKey::TillBackward => "T",
+        VimKey::RepeatFind => ";",
+        VimKey::RepeatFindReverse => ",",
+        VimKey::LiteralEnter => "\n",
+        VimKey::LiteralTab => "\t",
+        VimKey::LiteralSpace => " ",
+        VimKey::FirstNonBlank => "^",
+        VimKey::LineEnd => "$",
+        VimKey::Go => "g",
+        VimKey::DocumentEnd => "G",
+        VimKey::Insert => "i",
+        VimKey::Append => "a",
+        VimKey::InsertLineStart => "I",
+        VimKey::AppendLineEnd => "A",
+        VimKey::OpenBelow => "o",
+        VimKey::OpenAbove => "O",
+        VimKey::Visual => "v",
+        VimKey::VisualLine => "V",
+        VimKey::DoubleQuote => "\"",
+        VimKey::SingleQuote => "'",
+        VimKey::Backtick => "`",
+        VimKey::Parenthesis => "(",
+        VimKey::ParenthesisClose => ")",
+        VimKey::Bracket => "[",
+        VimKey::BracketClose => "]",
+        VimKey::Brace => "{",
+        VimKey::BraceClose => "}",
+        VimKey::DeleteChar => "x",
+        VimKey::DeletePreviousChar => "X",
+        VimKey::SubstituteChar => "s",
+        VimKey::SubstituteLine => "S",
+        VimKey::ReplaceChar => "r",
+        VimKey::YankLine => "Y",
+        VimKey::JoinLines => "J",
+        VimKey::Delete => "d",
+        VimKey::Yank => "y",
+        VimKey::Change => "c",
+        VimKey::DeleteToLineEnd => "D",
+        VimKey::ChangeToLineEnd => "C",
+        VimKey::PasteAfter => "p",
+        VimKey::PasteBefore => "P",
+        VimKey::Undo => "u",
+        VimKey::RepeatLastChange => ".",
+        VimKey::LineStart | VimKey::Redo | VimKey::Search | VimKey::Escape => return None,
+    };
+    Some(literal.to_string())
+}
+
+fn target_matches(rope: &Rope, offset: usize, line_end: usize, target: &str) -> bool {
+    let end = offset.saturating_add(target.len());
+    end <= line_end
+        && rope.is_char_boundary(offset)
+        && rope.is_char_boundary(end)
+        && rope.slice(offset..end) == target
+}
+
+fn find_forward_occurrence(
+    rope: &Rope,
+    mut offset: usize,
+    line_end: usize,
+    target: &str,
+) -> Option<usize> {
+    while offset < line_end {
+        if target_matches(rope, offset, line_end, target) {
+            return Some(offset);
+        }
+        offset = next_boundary(rope, offset);
+    }
+    None
+}
+
+fn find_backward_occurrence(
+    rope: &Rope,
+    line_start: usize,
+    before: usize,
+    target: &str,
+) -> Option<usize> {
+    let mut offset = line_start;
+    let mut found = None;
+    while offset < before {
+        if target_matches(rope, offset, before, target) {
+            found = Some(offset);
+        }
+        offset = next_boundary(rope, offset);
+    }
+    found
+}
+
+fn find_char_motion(
+    rope: &Rope,
+    cursor: usize,
+    kind: VimFindKind,
+    target: &str,
+    count: u32,
+    repeating: bool,
+) -> Option<Motion> {
+    if target.is_empty() || target.contains(['\r', '\n']) {
+        return None;
+    }
+    let row = row_at(rope, cursor);
+    let line_start = rope.line_start_offset(row);
+    let line_end = line_content_end(rope, row);
+    let mut occurrence = None;
+
+    match kind {
+        VimFindKind::Forward | VimFindKind::TillForward => {
+            let mut search_start = next_boundary(rope, cursor).min(line_end);
+            for index in 0..count.max(1) {
+                let mut found = find_forward_occurrence(rope, search_start, line_end, target)?;
+                if repeating
+                    && index == 0
+                    && kind == VimFindKind::TillForward
+                    && found == search_start
+                {
+                    search_start = found.saturating_add(target.len()).min(line_end);
+                    found = find_forward_occurrence(rope, search_start, line_end, target)?;
+                }
+                occurrence = Some(found);
+                search_start = found.saturating_add(target.len()).min(line_end);
+            }
+        }
+        VimFindKind::Backward | VimFindKind::TillBackward => {
+            let mut before = cursor;
+            for index in 0..count.max(1) {
+                let mut found = find_backward_occurrence(rope, line_start, before, target)?;
+                if repeating
+                    && index == 0
+                    && kind == VimFindKind::TillBackward
+                    && found.saturating_add(target.len()) == before
+                {
+                    before = found;
+                    found = find_backward_occurrence(rope, line_start, before, target)?;
+                }
+                occurrence = Some(found);
+                before = found;
+            }
+        }
+    }
+
+    let occurrence = occurrence?;
+    let target_offset = match kind {
+        VimFindKind::Forward | VimFindKind::Backward => occurrence,
+        VimFindKind::TillForward => previous_boundary(rope, occurrence),
+        VimFindKind::TillBackward => occurrence.saturating_add(target.len()),
+    };
+    Some(Motion {
+        target: target_offset,
+        inclusive: matches!(kind, VimFindKind::Forward | VimFindKind::TillForward),
+        linewise: false,
+    })
+}
+
+fn replace_visual_text(selected: &str, target: &str) -> String {
+    if target == "\n" {
+        return target.to_string();
+    }
+    let mut replacement = String::with_capacity(selected.len().max(target.len()));
+    for ch in selected.chars() {
+        if matches!(ch, '\r' | '\n') {
+            replacement.push(ch);
+        } else {
+            replacement.push_str(target);
+        }
+    }
+    replacement
+}
+
+fn normalized_replay_steps(steps: &[VimReplayStep]) -> (Vec<VimReplayStep>, u32) {
+    let mut normalized = Vec::with_capacity(steps.len());
+    let mut combined_count = 1_u32;
+    let mut index = 0;
+    while index < steps.len() {
+        let Some(VimReplayStep::Key(VimKey::Digit(first))) = steps.get(index) else {
+            normalized.push(steps[index].clone());
+            index += 1;
+            continue;
+        };
+        if *first == 0 {
+            normalized.push(steps[index].clone());
+            index += 1;
+            continue;
+        }
+        let mut group = 0_u32;
+        while let Some(VimReplayStep::Key(VimKey::Digit(digit))) = steps.get(index) {
+            group = group
+                .saturating_mul(10)
+                .saturating_add(u32::from(*digit))
+                .min(MAX_COUNT);
+            index += 1;
+        }
+        combined_count = combined_count.saturating_mul(group).min(MAX_COUNT);
+    }
+    (normalized, combined_count)
+}
+
+fn replay_is_open_line(steps: &[VimReplayStep]) -> bool {
+    matches!(
+        steps.first(),
+        Some(VimReplayStep::Key(VimKey::OpenBelow | VimKey::OpenAbove))
+    )
+}
+
+fn replay_repeats_insert_text(steps: &[VimReplayStep]) -> bool {
+    matches!(
+        steps.first(),
+        Some(VimReplayStep::Key(
+            VimKey::Insert | VimKey::Append | VimKey::InsertLineStart | VimKey::AppendLineEnd
+        ))
+    )
+}
+
+fn signed_char_distance(rope: &Rope, from: usize, to: usize) -> isize {
+    if to >= from {
+        rope.slice(from..to).chars().count() as isize
+    } else {
+        -(rope.slice(to..from).chars().count() as isize)
+    }
+}
+
+fn move_by_chars(rope: &Rope, mut offset: usize, delta: isize) -> usize {
+    if delta >= 0 {
+        for _ in 0..delta as usize {
+            let next = next_boundary(rope, offset);
+            if next == offset {
+                break;
+            }
+            offset = next;
+        }
+    } else {
+        for _ in 0..delta.unsigned_abs() {
+            let previous = previous_boundary(rope, offset);
+            if previous == offset {
+                break;
+            }
+            offset = previous;
+        }
+    }
+    offset
+}
+
+fn insert_patch_between(
+    before: &Rope,
+    after: &Rope,
+    anchor: usize,
+    cursor: usize,
+) -> Option<VimInsertPatch> {
+    if before == after {
+        return None;
+    }
+
+    let mut before_start = 0;
+    let mut after_start = 0;
+    let mut before_chars = before.chars();
+    let mut after_chars = after.chars();
+    while before_start < anchor {
+        match (before_chars.next(), after_chars.next()) {
+            (Some(left), Some(right)) if left == right => {
+                before_start += left.len_utf8();
+                after_start += right.len_utf8();
+            }
+            _ => break,
+        }
+    }
+
+    let mut before_end = before.len();
+    let mut after_end = after.len();
+    while before_end > before_start && after_end > after_start {
+        let before_previous = previous_boundary(before, before_end);
+        let after_previous = previous_boundary(after, after_end);
+        if before.char_at(before_previous) != after.char_at(after_previous) {
+            break;
+        }
+        before_end = before_previous;
+        after_end = after_previous;
+    }
+
+    Some(VimInsertPatch {
+        start_delta: signed_char_distance(before, anchor, before_start),
+        end_delta: signed_char_distance(before, anchor, before_end),
+        replacement: after.slice(after_start..after_end).to_string(),
+        cursor_delta: signed_char_distance(after, after_start, cursor),
+    })
+}
+
+fn rope_replacement_between(before: &Rope, after: &Rope) -> Option<(Range<usize>, String)> {
+    if before == after {
+        return None;
+    }
+
+    let mut before_start = 0;
+    let mut after_start = 0;
+    let mut before_chars = before.chars();
+    let mut after_chars = after.chars();
+    loop {
+        match (before_chars.next(), after_chars.next()) {
+            (Some(left), Some(right)) if left == right => {
+                before_start += left.len_utf8();
+                after_start += right.len_utf8();
+            }
+            _ => break,
+        }
+    }
+
+    let mut before_end = before.len();
+    let mut after_end = after.len();
+    while before_end > before_start && after_end > after_start {
+        let before_previous = previous_boundary(before, before_end);
+        let after_previous = previous_boundary(after, after_end);
+        if before.char_at(before_previous) != after.char_at(after_previous) {
+            break;
+        }
+        before_end = before_previous;
+        after_end = after_previous;
+    }
+
+    Some((
+        before_start..before_end,
+        after.slice(after_start..after_end).to_string(),
+    ))
+}
+
+fn combined_operator_count(vim: &mut VimState) -> Option<u32> {
+    let operator = vim.operator_count.take();
+    let motion = vim.count.take();
     vim.pending_operator = None;
-    operator.saturating_mul(motion).min(MAX_COUNT)
+    match (operator, motion) {
+        (None, None) => None,
+        (Some(count), None) | (None, Some(count)) => Some(count),
+        (Some(operator), Some(motion)) => Some(operator.saturating_mul(motion).min(MAX_COUNT)),
+    }
 }
 
 fn motion_for_key(
     rope: &Rope,
     cursor: usize,
     key: VimKey,
-    count: u32,
+    count: Option<u32>,
     preferred_column: Option<u32>,
 ) -> Option<Motion> {
+    let count_value = count.unwrap_or(1);
     let target = match key {
         VimKey::Left => {
             let line_start = rope.line_start_offset(row_at(rope, cursor));
-            repeat_motion(cursor, count, |offset| {
+            repeat_motion(cursor, count_value, |offset| {
                 previous_boundary(rope, offset).max(line_start)
             })
         }
-        VimKey::Right => repeat_motion(cursor, count, |offset| {
+        VimKey::Right => repeat_motion(cursor, count_value, |offset| {
             next_boundary(rope, offset).min(normal_line_end(rope, row_at(rope, cursor)))
         }),
         VimKey::Down | VimKey::Up => {
             let row = row_at(rope, cursor);
             let delta = if key == VimKey::Down {
-                i64::from(count)
+                i64::from(count_value)
             } else {
-                -i64::from(count)
+                -i64::from(count_value)
             };
             let target_row =
                 (row as i64 + delta).clamp(0, rope.lines_len().saturating_sub(1) as i64) as usize;
@@ -1088,41 +2203,41 @@ fn motion_for_key(
             let target = rope.position_to_offset(&Position::new(target_row as u32, column));
             target.min(normal_line_end(rope, target_row))
         }
-        VimKey::WordForward => repeat_motion(cursor, count, |offset| next_word_start(rope, offset)),
-        VimKey::WordBackward => {
-            repeat_motion(cursor, count, |offset| previous_word_start(rope, offset))
+        VimKey::WordForward => {
+            repeat_motion(cursor, count_value, |offset| next_word_start(rope, offset))
         }
-        VimKey::WordEnd => repeat_motion(cursor, count, |offset| word_end(rope, offset)),
-        VimKey::BigWordForward => {
-            repeat_motion(cursor, count, |offset| next_big_word_start(rope, offset))
-        }
-        VimKey::BigWordBackward => repeat_motion(cursor, count, |offset| {
+        VimKey::WordBackward => repeat_motion(cursor, count_value, |offset| {
+            previous_word_start(rope, offset)
+        }),
+        VimKey::WordEnd => repeat_motion(cursor, count_value, |offset| word_end(rope, offset)),
+        VimKey::BigWordForward => repeat_motion(cursor, count_value, |offset| {
+            next_big_word_start(rope, offset)
+        }),
+        VimKey::BigWordBackward => repeat_motion(cursor, count_value, |offset| {
             previous_big_word_start(rope, offset)
         }),
-        VimKey::BigWordEnd => repeat_motion(cursor, count, |offset| big_word_end(rope, offset)),
+        VimKey::BigWordEnd => {
+            repeat_motion(cursor, count_value, |offset| big_word_end(rope, offset))
+        }
         VimKey::LineStart => rope.line_start_offset(row_at(rope, cursor)),
         VimKey::FirstNonBlank => first_non_blank(rope, cursor),
         VimKey::LineEnd => {
             let row = row_at(rope, cursor)
-                .saturating_add(count as usize)
+                .saturating_add(count_value as usize)
                 .saturating_sub(1)
                 .min(rope.lines_len().saturating_sub(1));
             normal_line_end(rope, row)
         }
         VimKey::Go => {
-            let row = if count > 1 {
-                (count as usize - 1).min(rope.lines_len().saturating_sub(1))
-            } else {
-                0
-            };
+            let row = count
+                .map(|count| (count as usize - 1).min(rope.lines_len().saturating_sub(1)))
+                .unwrap_or(0);
             rope.line_start_offset(row)
         }
         VimKey::DocumentEnd => {
-            let row = if count > 1 {
-                (count as usize - 1).min(rope.lines_len().saturating_sub(1))
-            } else {
-                rope.lines_len().saturating_sub(1)
-            };
+            let row = count
+                .map(|count| (count as usize - 1).min(rope.lines_len().saturating_sub(1)))
+                .unwrap_or_else(|| rope.lines_len().saturating_sub(1));
             rope.line_start_offset(row)
         }
         _ => return None,
@@ -1261,6 +2376,40 @@ fn line_content_end(rope: &Rope, row: usize) -> usize {
         end = previous_boundary(rope, end);
     }
     end
+}
+
+fn line_break_after_row(rope: &Rope, row: usize) -> Option<&'static str> {
+    if row + 1 >= rope.lines_len() {
+        return None;
+    }
+    let offset = line_content_end(rope, row);
+    match rope.char_at(offset) {
+        Some('\r') if rope.char_at(next_boundary(rope, offset)) == Some('\n') => Some("\r\n"),
+        Some('\n') => Some("\n"),
+        _ => None,
+    }
+}
+
+fn line_break_for_row(rope: &Rope, row: usize) -> &'static str {
+    if let Some(line_break) = line_break_after_row(rope, row) {
+        return line_break;
+    }
+    for distance in 1..rope.lines_len() {
+        if let Some(line_break) = row
+            .checked_sub(distance)
+            .and_then(|row| line_break_after_row(rope, row))
+        {
+            return line_break;
+        }
+        if let Some(line_break) = row
+            .checked_add(distance)
+            .filter(|row| *row < rope.lines_len())
+            .and_then(|row| line_break_after_row(rope, row))
+        {
+            return line_break;
+        }
+    }
+    "\n"
 }
 
 fn normal_line_end(rope: &Rope, row: usize) -> usize {
@@ -1614,8 +2763,11 @@ fn is_text_object_key(key: VimKey) -> bool {
             | VimKey::SingleQuote
             | VimKey::Backtick
             | VimKey::Parenthesis
+            | VimKey::ParenthesisClose
             | VimKey::Bracket
+            | VimKey::BracketClose
             | VimKey::Brace
+            | VimKey::BraceClose
     )
 }
 
@@ -1631,9 +2783,15 @@ fn text_object_range(
         VimKey::DoubleQuote => quote_text_object_range(rope, cursor, prefix, '"'),
         VimKey::SingleQuote => quote_text_object_range(rope, cursor, prefix, '\''),
         VimKey::Backtick => quote_text_object_range(rope, cursor, prefix, '`'),
-        VimKey::Parenthesis => pair_text_object_range(rope, cursor, prefix, '(', ')'),
-        VimKey::Bracket => pair_text_object_range(rope, cursor, prefix, '[', ']'),
-        VimKey::Brace => pair_text_object_range(rope, cursor, prefix, '{', '}'),
+        VimKey::Parenthesis | VimKey::ParenthesisClose => {
+            pair_text_object_range(rope, cursor, prefix, '(', ')')
+        }
+        VimKey::Bracket | VimKey::BracketClose => {
+            pair_text_object_range(rope, cursor, prefix, '[', ']')
+        }
+        VimKey::Brace | VimKey::BraceClose => {
+            pair_text_object_range(rope, cursor, prefix, '{', '}')
+        }
         _ => cursor..cursor,
     }
 }
@@ -1760,7 +2918,6 @@ mod tests {
     use super::*;
     use crate::{DB, app_settings::AppSettings, test_alloc};
     use entity::note;
-    use gpui::AppContext as _;
     use gpui_component::input::InputEvent;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
@@ -2000,31 +3157,42 @@ mod tests {
     }
 
     #[test]
+    fn line_break_inference_prefers_the_current_then_nearest_line() {
+        let mixed = Rope::from("one\r\ntwo\nthree");
+        assert_eq!(line_break_for_row(&mixed, 0), "\r\n");
+        assert_eq!(line_break_for_row(&mixed, 1), "\n");
+        assert_eq!(line_break_for_row(&mixed, 2), "\n");
+
+        assert_eq!(line_break_for_row(&Rope::from("one"), 0), "\n");
+    }
+
+    #[test]
     fn motions_cover_lines_tabs_unicode_and_document_edges() {
         let rope = Rope::from("one two\n\t中 x\nlast");
         let cases = [
-            (0, VimKey::WordForward, 1, 4),
-            (6, VimKey::WordBackward, 1, 4),
-            (0, VimKey::WordEnd, 1, 2),
-            (0, VimKey::BigWordForward, 2, 9),
-            (13, VimKey::BigWordBackward, 1, 9),
-            (8, VimKey::BigWordEnd, 1, 9),
-            (8, VimKey::Left, 1, 8),
-            (6, VimKey::Right, 1, 6),
-            (8, VimKey::FirstNonBlank, 1, 9),
-            (9, VimKey::LineEnd, 1, 13),
-            (0, VimKey::Down, 1, 8),
-            (13, VimKey::Go, 1, 0),
-            (13, VimKey::Go, 2, 8),
-            (0, VimKey::DocumentEnd, 1, 15),
-            (0, VimKey::DocumentEnd, 2, 8),
+            (0, VimKey::WordForward, Some(1), 4),
+            (6, VimKey::WordBackward, Some(1), 4),
+            (0, VimKey::WordEnd, Some(1), 2),
+            (0, VimKey::BigWordForward, Some(2), 9),
+            (13, VimKey::BigWordBackward, Some(1), 9),
+            (8, VimKey::BigWordEnd, Some(1), 9),
+            (8, VimKey::Left, Some(1), 8),
+            (6, VimKey::Right, Some(1), 6),
+            (8, VimKey::FirstNonBlank, Some(1), 9),
+            (9, VimKey::LineEnd, Some(1), 13),
+            (0, VimKey::Down, Some(1), 8),
+            (13, VimKey::Go, None, 0),
+            (13, VimKey::Go, Some(2), 8),
+            (0, VimKey::DocumentEnd, None, 15),
+            (15, VimKey::DocumentEnd, Some(1), 0),
+            (0, VimKey::DocumentEnd, Some(2), 8),
         ];
 
         for (cursor, key, count, expected) in cases {
             assert_eq!(
                 motion_for_key(&rope, cursor, key, count, None).map(|motion| motion.target),
                 Some(expected),
-                "unexpected target for {key:?} from {cursor} with count {count}"
+                "unexpected target for {key:?} from {cursor} with count {count:?}"
             );
         }
     }
@@ -2045,13 +3213,13 @@ mod tests {
     #[test]
     fn operator_ranges_distinguish_characterwise_and_linewise_motions() {
         let rope = Rope::from("one two\nthree\nfour");
-        let right = motion_for_key(&rope, 4, VimKey::Right, 1, None)
+        let right = motion_for_key(&rope, 4, VimKey::Right, Some(1), None)
             .map(|motion| operator_range(&rope, 4, motion));
-        let word_end = motion_for_key(&rope, 4, VimKey::WordEnd, 1, None)
+        let word_end = motion_for_key(&rope, 4, VimKey::WordEnd, Some(1), None)
             .map(|motion| operator_range(&rope, 4, motion));
-        let big_word_end = motion_for_key(&rope, 0, VimKey::BigWordEnd, 1, None)
+        let big_word_end = motion_for_key(&rope, 0, VimKey::BigWordEnd, Some(1), None)
             .map(|motion| operator_range(&rope, 0, motion));
-        let down = motion_for_key(&rope, 4, VimKey::Down, 1, None)
+        let down = motion_for_key(&rope, 4, VimKey::Down, Some(1), None)
             .map(|motion| linewise_motion_range(&rope, 4, motion.target));
 
         assert_eq!(right, Some(4..5));
@@ -2072,11 +3240,15 @@ mod tests {
         let mut vim = VimState::new(true);
         vim.operator_count = Some(2);
         vim.count = Some(3);
-        assert_eq!(combined_operator_count(&mut vim), 6);
+        assert_eq!(combined_operator_count(&mut vim), Some(6));
 
         vim.operator_count = Some(MAX_COUNT);
         vim.count = Some(MAX_COUNT);
-        assert_eq!(combined_operator_count(&mut vim), MAX_COUNT);
+        assert_eq!(combined_operator_count(&mut vim), Some(MAX_COUNT));
+
+        let mut no_count = VimState::new(true);
+        no_count.pending_operator = Some(VimOperator::Delete);
+        assert_eq!(combined_operator_count(&mut no_count), None);
 
         let mut digits = VimState::new(true);
         for _ in 0..12 {
@@ -2118,6 +3290,111 @@ mod tests {
     }
 
     #[test]
+    fn character_find_motions_cover_directions_counts_unicode_and_line_edges() {
+        let cases = [
+            ("a-b-a-b", 0, VimFindKind::Forward, "b", 1, Some(2)),
+            ("a-b-a-b", 0, VimFindKind::Forward, "b", 2, Some(6)),
+            ("a-b-a-b", 0, VimFindKind::TillForward, "b", 1, Some(1)),
+            ("a-b-a-b", 6, VimFindKind::Backward, "a", 1, Some(4)),
+            ("a-b-a-b", 6, VimFindKind::TillBackward, "a", 1, Some(5)),
+            ("a中b中", 0, VimFindKind::Forward, "中", 2, Some(5)),
+            ("x\r\nyx", 0, VimFindKind::Forward, "x", 1, None),
+            ("\t a\t", 0, VimFindKind::Forward, "\t", 1, Some(3)),
+            ("", 0, VimFindKind::Forward, "x", 1, None),
+        ];
+        for (text, cursor, kind, target, count, expected) in cases {
+            let rope = Rope::from(text);
+            assert_eq!(
+                find_char_motion(&rope, cursor, kind, target, count, false)
+                    .map(|motion| motion.target),
+                expected,
+                "unexpected {kind:?} result for {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_till_motions_skip_the_previous_adjacent_target() {
+        let rope = Rope::from("a,x,x");
+        let first = find_char_motion(&rope, 0, VimFindKind::TillForward, "x", 1, false)
+            .expect("first till should find x");
+        assert_eq!(first.target, 1);
+        let repeated =
+            find_char_motion(&rope, first.target, VimFindKind::TillForward, "x", 1, true)
+                .expect("repeat should skip the x already used by t");
+        assert_eq!(repeated.target, 3);
+
+        let backward = find_char_motion(&rope, 4, VimFindKind::TillBackward, "x", 1, true)
+            .expect("reverse till repeat should find the previous x");
+        assert_eq!(backward.target, 3);
+    }
+
+    #[test]
+    fn find_motions_preserve_operator_inclusivity() {
+        let rope = Rope::from("abXcdXef");
+        let forward = find_char_motion(&rope, 0, VimFindKind::Forward, "X", 1, false)
+            .expect("f should find X");
+        let till = find_char_motion(&rope, 0, VimFindKind::TillForward, "X", 1, false)
+            .expect("t should find X");
+        let backward = find_char_motion(&rope, 7, VimFindKind::Backward, "X", 1, false)
+            .expect("F should find X");
+        let till_backward = find_char_motion(&rope, 7, VimFindKind::TillBackward, "X", 1, false)
+            .expect("T should find X");
+
+        assert_eq!(operator_range(&rope, 0, forward), 0..3);
+        assert_eq!(operator_range(&rope, 0, till), 0..2);
+        assert_eq!(operator_range(&rope, 7, backward), 5..7);
+        assert_eq!(operator_range(&rope, 7, till_backward), 6..7);
+    }
+
+    #[test]
+    fn visual_replacement_preserves_line_breaks_and_repeats_unicode_targets() {
+        assert_eq!(replace_visual_text("ab\r\n中", "λ"), "λλ\r\nλ");
+        assert_eq!(replace_visual_text("abc", "\n"), "\n");
+        assert_eq!(replace_visual_text("", "x"), "");
+    }
+
+    #[test]
+    fn repeat_recipes_combine_counts_without_losing_zero_motions() {
+        let (steps, count) = normalized_replay_steps(&[
+            VimReplayStep::Key(VimKey::Digit(2)),
+            VimReplayStep::Key(VimKey::Delete),
+            VimReplayStep::Key(VimKey::Digit(3)),
+            VimReplayStep::Key(VimKey::WordForward),
+        ]);
+        assert_eq!(count, 6);
+        assert!(matches!(
+            steps.as_slice(),
+            [
+                VimReplayStep::Key(VimKey::Delete),
+                VimReplayStep::Key(VimKey::WordForward)
+            ]
+        ));
+
+        let (steps, count) = normalized_replay_steps(&[
+            VimReplayStep::Key(VimKey::Delete),
+            VimReplayStep::Key(VimKey::Digit(0)),
+        ]);
+        assert_eq!(count, 1);
+        assert!(matches!(
+            steps.last(),
+            Some(VimReplayStep::Key(VimKey::Digit(0)))
+        ));
+    }
+
+    #[test]
+    fn insert_patch_tracks_unicode_edits_relative_to_the_insert_anchor() {
+        let before = Rope::from("a中c");
+        let after = Rope::from("aλ中c");
+        let patch = insert_patch_between(&before, &after, 1, "aλ".len())
+            .expect("insert should produce a patch");
+        assert_eq!(patch.start_delta, 0);
+        assert_eq!(patch.end_delta, 0);
+        assert_eq!(patch.replacement, "λ");
+        assert_eq!(patch.cursor_delta, 1);
+    }
+
+    #[test]
     fn local_motion_on_a_large_rope_does_not_materialize_the_document() {
         let rope = Rope::from(format!("{}target word", "line\n".repeat(500_000)));
         let start = rope.len() - "target word".len();
@@ -2139,6 +3416,596 @@ mod tests {
             previous_word_start(&rope, rope.len()),
             start + "target ".len()
         );
+    }
+
+    #[test]
+    fn find_and_repeat_planning_on_a_large_rope_stay_local() {
+        let prefix = "line\n".repeat(500_000);
+        let line_start = prefix.len();
+        let rope = Rope::from(format!("{prefix}alpha,target,target"));
+        let mut edited = rope.clone();
+        let insert_at = line_start + "alpha".len();
+        edited.insert(insert_at, "λ");
+        let steps = [
+            VimReplayStep::Key(VimKey::Digit(2)),
+            VimReplayStep::Key(VimKey::Delete),
+            VimReplayStep::Key(VimKey::Digit(3)),
+            VimReplayStep::Key(VimKey::FindForward),
+            VimReplayStep::Literal(",".to_string()),
+        ];
+
+        let allocation = test_alloc::start_measurement();
+        for _ in 0..128 {
+            std::hint::black_box(find_char_motion(
+                &rope,
+                line_start,
+                VimFindKind::Forward,
+                ",",
+                2,
+                false,
+            ));
+        }
+        let patch = insert_patch_between(&rope, &edited, insert_at, insert_at + "λ".len())
+            .expect("local insertion should produce a repeat patch");
+        let (normalized, count) = normalized_replay_steps(&steps);
+        let allocation = allocation.finish();
+
+        assert!(
+            allocation.allocated_bytes < rope.len() / 4,
+            "find and repeat planning allocated {} bytes for a {} byte rope",
+            allocation.allocated_bytes,
+            rope.len()
+        );
+        assert_eq!(patch.replacement, "λ");
+        assert_eq!(count, 6);
+        assert_eq!(normalized.len(), 3);
+    }
+
+    fn with_vim_editor(
+        cx: &mut gpui::TestAppContext,
+        initial_content: &str,
+        test: impl FnOnce(gpui::Entity<DocumentEditorView>, &mut gpui::VisualTestContext),
+    ) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("Vim test".into()),
+                    cached_content: Set(initial_content.into()),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("Vim test database should initialize");
+        let settings_dir = std::env::temp_dir().join(format!(
+            "castle-vim-mode-focused-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos()
+        ));
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(AppSettings::load(settings_dir));
+            AppSettings::set_editor_vim_mode(true, cx);
+            AppSettings::set_editor_status_line_visible(false, cx);
+            crate::keymap::init(cx);
+            cx.set_global(DB {
+                conn: Arc::new(db),
+                data_dir: PathBuf::new(),
+            });
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("Vim test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            view.read_with(&cx, |editor, _| !editor.is_loading),
+            "Vim test editor should finish loading"
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.replace_content_for_test(initial_content, window, cx);
+                editor.reset_vim_command();
+                editor.focus_source_mode(window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        test(view, &mut cx);
+    }
+
+    fn set_vim_test_content(
+        view: &gpui::Entity<DocumentEditorView>,
+        content: &str,
+        position: Position,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.replace_content_for_test(content, window, cx);
+                editor.editor.update(cx, |input, cx| {
+                    input.set_cursor_position(position, window, cx);
+                });
+                editor.reset_vim_command();
+                editor.focus_source_mode(window, cx);
+            });
+        });
+    }
+
+    fn vim_test_value(
+        view: &gpui::Entity<DocumentEditorView>,
+        cx: &gpui::VisualTestContext,
+    ) -> String {
+        view.read_with(cx, |editor, cx| editor.editor.read(cx).value().to_string())
+    }
+
+    #[gpui::test]
+    fn counted_linewise_yank_and_paste_execute_through_the_keymap(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "one two\nthree four\nfive", |view, cx| {
+            cx.simulate_keystrokes("2 y y");
+
+            assert_eq!(vim_test_value(&view, cx), "one two\nthree four\nfive");
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+                Some("one two\nthree four\n".to_string())
+            );
+
+            cx.simulate_keystrokes("shift-g p");
+
+            assert_eq!(
+                vim_test_value(&view, cx),
+                "one two\nthree four\nfive\none two\nthree four"
+            );
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                "one two\nthree four\nfive\n".len()
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn insert_line_start_open_line_and_direct_changes_round_trip(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "  alpha\nbeta", |view, cx| {
+            cx.simulate_keystrokes("shift-i");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "  Xalpha\nbeta");
+
+            set_vim_test_content(&view, "alpha beta\ngamma", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("shift-d");
+            assert_eq!(vim_test_value(&view, cx), "\ngamma");
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+                Some("alpha beta".to_string())
+            );
+
+            set_vim_test_content(&view, "alpha beta\ngamma", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("shift-c");
+            assert_eq!(
+                view.read_with(cx, |editor, _| editor.vim_mode()),
+                VimMode::Insert
+            );
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "X\ngamma");
+
+            set_vim_test_content(&view, "alpha\ngamma", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("o");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "alpha\nX\ngamma");
+        });
+    }
+
+    #[gpui::test]
+    fn visual_paste_replaces_the_inclusive_selection(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "abcd", |view, cx| {
+            cx.update(|_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+                    "X".to_string(),
+                    VIM_CLIPBOARD_CHARACTERWISE.to_string(),
+                ));
+            });
+
+            cx.simulate_keystrokes("v l p");
+
+            assert_eq!(vim_test_value(&view, cx), "Xcd");
+            assert_eq!(
+                view.read_with(cx, |editor, _| editor.vim_mode()),
+                VimMode::Normal
+            );
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                0
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn explicit_line_counts_distinguish_g_from_bare_g_in_motions_and_operators(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "first\nmiddle\nlast", |view, cx| {
+            cx.simulate_keystrokes("shift-g");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                "first\nmiddle\n".len()
+            );
+
+            cx.simulate_keystrokes("1 shift-g");
+
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                0
+            );
+
+            cx.simulate_keystrokes("2 shift-g");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                "first\n".len()
+            );
+
+            set_vim_test_content(&view, "first\nmiddle\nlast", Position::new(1, 0), cx);
+            cx.simulate_keystrokes("d 1 shift-g");
+            assert_eq!(vim_test_value(&view, cx), "last");
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+                Some("first\nmiddle\n".to_string())
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn invalid_operator_sequences_consume_the_key_and_clear_counts(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "abc", |view, cx| {
+            cx.update(|_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+                    "X".to_string(),
+                    VIM_CLIPBOARD_CHARACTERWISE.to_string(),
+                ));
+            });
+
+            cx.simulate_keystrokes("d p");
+
+            assert_eq!(vim_test_value(&view, cx), "abc");
+            assert_eq!(
+                view.read_with(cx, |editor, _| editor.vim.command_text()),
+                ""
+            );
+            cx.simulate_keystrokes("x");
+            assert_eq!(vim_test_value(&view, cx), "bc");
+
+            set_vim_test_content(&view, "abc", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("2 d p x");
+            assert_eq!(vim_test_value(&view, cx), "bc");
+
+            set_vim_test_content(&view, "abc", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("d x");
+            assert_eq!(vim_test_value(&view, cx), "abc");
+            cx.simulate_keystrokes("x");
+            assert_eq!(vim_test_value(&view, cx), "bc");
+        });
+    }
+
+    #[gpui::test]
+    fn open_line_preserves_crlf_above_below_and_at_the_final_line(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "one\r\ntwo", |view, cx| {
+            cx.simulate_keystrokes("o");
+            assert_eq!(vim_test_value(&view, cx), "one\r\n\r\ntwo");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "one\r\nX\r\ntwo");
+
+            set_vim_test_content(&view, "one\r\ntwo", Position::new(1, 0), cx);
+            cx.simulate_keystrokes("shift-o");
+            assert_eq!(vim_test_value(&view, cx), "one\r\n\r\ntwo");
+            cx.simulate_input("Y");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "one\r\nY\r\ntwo");
+
+            set_vim_test_content(&view, "one\r\ntwo", Position::new(1, 0), cx);
+            cx.simulate_keystrokes("o");
+            assert_eq!(vim_test_value(&view, cx), "one\r\ntwo\r\n");
+            cx.simulate_input("Z");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "one\r\ntwo\r\nZ");
+
+            set_vim_test_content(&view, "one\r\ntwo", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("shift-o");
+            assert_eq!(vim_test_value(&view, cx), "\r\none\r\ntwo");
+            cx.simulate_input("A");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "A\r\none\r\ntwo");
+        });
+    }
+
+    #[gpui::test]
+    fn character_find_repeats_reverses_and_composes_with_operators(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "a-b-a-b tail", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("f b");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                2
+            );
+            cx.simulate_keystrokes(";");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                6
+            );
+            cx.simulate_keystrokes(",");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                2
+            );
+
+            cx.simulate_keystrokes("f z");
+            cx.simulate_keystrokes(";");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                6,
+                "a failed find must preserve the previous successful find"
+            );
+
+            set_vim_test_content(&view, "abXcdXef", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("d t shift-x->X");
+            assert_eq!(vim_test_value(&view, cx), "XcdXef");
+            set_vim_test_content(&view, "abXcdXef", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("d 2 f shift-x->X");
+            assert_eq!(vim_test_value(&view, cx), "ef");
+
+            set_vim_test_content(&view, "(a)b", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("f shift-0->)");
+            assert_eq!(
+                view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+                2
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn replace_character_handles_counts_unicode_crlf_visual_ranges_and_failure(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "a中bc", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("2 r x");
+            assert_eq!(vim_test_value(&view, cx), "xxbc");
+            assert_eq!(
+                cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+                Some("a中".to_string())
+            );
+
+            set_vim_test_content(&view, "abc", Position::new(0, 1), cx);
+            cx.simulate_keystrokes("r λ");
+            assert_eq!(vim_test_value(&view, cx), "aλc");
+
+            set_vim_test_content(&view, "ab\r\ncd", Position::new(0, 1), cx);
+            cx.simulate_keystrokes("r enter");
+            assert_eq!(vim_test_value(&view, cx), "a\r\n\r\ncd");
+
+            set_vim_test_content(&view, "abcd\r\nef", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("v 2 l r z");
+            assert_eq!(vim_test_value(&view, cx), "zzzd\r\nef");
+
+            set_vim_test_content(&view, "ab", Position::new(0, 1), cx);
+            cx.simulate_keystrokes("2 r x");
+            assert_eq!(vim_test_value(&view, cx), "ab", "r must fail atomically");
+        });
+    }
+
+    #[gpui::test]
+    fn dot_repeats_normal_operator_find_and_visual_changes(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("x");
+            cx.simulate_keystrokes("w .");
+            assert_eq!(vim_test_value(&view, cx), "ne wo");
+            cx.simulate_keystrokes("u");
+            assert_eq!(vim_test_value(&view, cx), "ne two");
+
+            set_vim_test_content(&view, "one\ntwo\nthree\n", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("d d .");
+            assert_eq!(vim_test_value(&view, cx), "three\n");
+
+            set_vim_test_content(&view, "aXbXcX", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("d f shift-x->X .");
+            assert_eq!(vim_test_value(&view, cx), "cX");
+
+            set_vim_test_content(&view, "abcdef", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("v l d l .");
+            assert_eq!(vim_test_value(&view, cx), "cf");
+        });
+    }
+
+    #[gpui::test]
+    fn dot_replays_insert_change_open_line_unicode_and_replacement(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("3 i");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            assert_eq!(vim_test_value(&view, cx), "XXXone two");
+
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("i");
+            cx.simulate_input("λ");
+            cx.simulate_keystrokes("escape w .");
+            assert_eq!(vim_test_value(&view, cx), "λone λtwo");
+
+            set_vim_test_content(&view, "one two three", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("c w");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape w .");
+            assert_eq!(vim_test_value(&view, cx), "Xtwo X");
+
+            set_vim_test_content(&view, "one\r\ntwo", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("o");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape shift-g .");
+            assert_eq!(vim_test_value(&view, cx), "one\r\nX\r\ntwo\r\nX");
+
+            set_vim_test_content(&view, "abcd", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("r x l .");
+            assert_eq!(vim_test_value(&view, cx), "xxcd");
+        });
+    }
+
+    #[gpui::test]
+    fn dot_count_overrides_the_original_count_and_failed_commands_do_not_replace_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "abcdefghij", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("2 x l 3 .");
+            assert_eq!(vim_test_value(&view, cx), "cghij");
+
+            set_vim_test_content(&view, "abcdef", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("x d p .");
+            assert_eq!(vim_test_value(&view, cx), "cdef");
+        });
+    }
+
+    #[gpui::test]
+    fn dot_repeats_text_objects_line_changes_paste_and_join(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "say \"one\" then \"two\"", Position::new(0, 6), cx);
+            cx.simulate_keystrokes("d i shift-'->\" w w .");
+            assert_eq!(vim_test_value(&view, cx), "say \"\" then \"\"");
+
+            set_vim_test_content(&view, "one tail\nnext tail", Position::new(0, 4), cx);
+            cx.simulate_keystrokes("shift-c");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape j 0 w .");
+            assert_eq!(vim_test_value(&view, cx), "one X\nnext X");
+
+            set_vim_test_content(&view, "a\n  b\nc\n  d", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("shift-j j .");
+            assert_eq!(vim_test_value(&view, cx), "a b\nc d");
+
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("y w shift-4->$ p .");
+            assert_eq!(vim_test_value(&view, cx), "one twoone one ");
+        });
+    }
+
+    #[gpui::test]
+    fn dot_captures_insert_backspace_markdown_continuation_and_insert_counts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "", |view, cx| {
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("i");
+            cx.simulate_input("abc");
+            cx.simulate_keystrokes("backspace escape w .");
+            assert_eq!(vim_test_value(&view, cx), "abone abtwo");
+
+            set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("i");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape w 3 .");
+            assert_eq!(vim_test_value(&view, cx), "Xone XXXtwo");
+
+            cx.update(|window, cx| {
+                view.update(cx, |editor, cx| {
+                    editor.kind = super::super::DocumentKind::Markdown;
+                    editor.replace_content_for_test("- one\n- two", window, cx);
+                    editor.editor.update(cx, |input, cx| {
+                        input.set_cursor_position(Position::new(0, 5), window, cx);
+                    });
+                    editor.reset_vim_command();
+                    editor.focus_source_mode(window, cx);
+                });
+            });
+            cx.simulate_keystrokes("shift-a enter");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape shift-g .");
+            assert_eq!(vim_test_value(&view, cx), "- one\n- X\n- two\n- X");
+
+            set_vim_test_content(&view, "one", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("o");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape 2 .");
+            assert_eq!(vim_test_value(&view, cx), "one\nX\nX\nX");
+        });
+    }
+
+    #[gpui::test]
+    fn visual_line_dot_is_one_modal_undo_step_and_redoes_as_one_step(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "one\ntwo\nthree\nfour\n", |view, cx| {
+            cx.simulate_keystrokes("shift-v j d .");
+            assert_eq!(vim_test_value(&view, cx), "");
+            cx.simulate_keystrokes("u");
+            assert_eq!(vim_test_value(&view, cx), "three\nfour\n");
+            cx.simulate_keystrokes("ctrl-r");
+            assert_eq!(vim_test_value(&view, cx), "");
+        });
+    }
+
+    #[gpui::test]
+    fn compound_dot_replay_emits_one_editor_change(cx: &mut gpui::TestAppContext) {
+        with_vim_editor(cx, "one two", |view, cx| {
+            let changes = Rc::new(Cell::new(0));
+            cx.update(|_, cx| {
+                let input = view.read(cx).editor.clone();
+                let changes = changes.clone();
+                cx.subscribe(&input, move |_, event: &InputEvent, _| {
+                    if matches!(event, InputEvent::Change) {
+                        changes.set(changes.get() + 1);
+                    }
+                })
+                .detach();
+            });
+
+            cx.simulate_keystrokes("c i w");
+            cx.simulate_input("X");
+            cx.simulate_keystrokes("escape");
+            changes.set(0);
+
+            cx.simulate_keystrokes("w .");
+            assert_eq!(vim_test_value(&view, cx), "X X");
+            assert_eq!(changes.get(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn cancelled_and_failed_character_arguments_preserve_the_last_change(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        with_vim_editor(cx, "abcdef", |view, cx| {
+            cx.simulate_keystrokes("x f escape l .");
+            assert_eq!(vim_test_value(&view, cx), "bdef");
+
+            set_vim_test_content(&view, "abc", Position::new(0, 0), cx);
+            cx.simulate_keystrokes("x 9 r z .");
+            assert_eq!(vim_test_value(&view, cx), "c");
+        });
     }
 
     #[gpui::test]

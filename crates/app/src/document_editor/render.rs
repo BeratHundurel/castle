@@ -1000,6 +1000,7 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
             .on_action(cx.listener(Self::apply_format))
             .on_action(cx.listener(Self::on_action_vim_key))
+            .capture_key_down(cx.listener(Self::on_vim_key_down))
             .capture_action(cx.listener(Self::on_action_vim_insert_escape))
             .child(
                 div()
