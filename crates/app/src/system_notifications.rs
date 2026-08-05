@@ -45,7 +45,7 @@ async fn deliver_due_reminders(db: &DatabaseConnection) -> anyhow::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn show_system_notification(reminder: &DueReminder) -> anyhow::Result<()> {
-    use winrt_notification::{Scenario, Sound, Toast};
+    use tauri_winrt_notification::{Scenario, Sound, Toast};
 
     fn build(app_id: &str, reminder: &DueReminder) -> Toast {
         Toast::new(app_id)

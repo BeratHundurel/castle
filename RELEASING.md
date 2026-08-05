@@ -8,8 +8,9 @@ Castle releases are built by GitHub Actions for Windows x86-64 and ARM64. Each r
 2. Refresh the lockfile and verify the release build:
 
    ```sh
-   cargo check
-   cargo build --release --bin castle --bin castle-mcp
+   cargo check --workspace --all-targets
+   cargo build --locked --release --package app --bin castle
+   cargo build --locked --release --package castle-mcp --bin castle-mcp
    ```
 
 3. Commit the version change:
