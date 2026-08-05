@@ -19,6 +19,7 @@ mod m20260723_000016_project_folder_path;
 mod m20260727_000017_note_links;
 mod m20260727_000018_board_properties_and_views;
 mod m20260805_000019_board_templates;
+mod m20260805_000020_repair_card_board_foreign_key;
 
 pub struct Migrator;
 
@@ -45,6 +46,69 @@ impl MigratorTrait for Migrator {
             Box::new(m20260727_000017_note_links::Migration),
             Box::new(m20260727_000018_board_properties_and_views::Migration),
             Box::new(m20260805_000019_board_templates::Migration),
+            Box::new(m20260805_000020_repair_card_board_foreign_key::Migration),
         ]
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+
+    async fn card_board_reference(db: &sea_orm::DatabaseConnection) -> Result<String, DbErr> {
+        let foreign_keys = db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "PRAGMA foreign_key_list(card)",
+            ))
+            .await?;
+        for foreign_key in foreign_keys {
+            if foreign_key.try_get::<String>("", "from")? == "board_id" {
+                return foreign_key.try_get("", "table");
+            }
+        }
+        Err(DbErr::Custom(
+            "card.board_id foreign key was not found".to_string(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn optional_board_project_migration_keeps_card_reference() -> Result<(), DbErr> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, Some(3)).await?;
+
+        assert_eq!(card_board_reference(&db).await?, "board");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_migration_repairs_stale_card_reference() -> Result<(), DbErr> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, Some(19)).await?;
+        db.execute_unprepared(
+            r#"
+            PRAGMA writable_schema = ON;
+            UPDATE sqlite_schema
+            SET sql = replace(sql, 'REFERENCES "board"', 'REFERENCES "board_old"')
+            WHERE type = 'table' AND name = 'card';
+            PRAGMA writable_schema = RESET;
+            "#,
+        )
+        .await?;
+        assert_eq!(card_board_reference(&db).await?, "board_old");
+
+        Migrator::up(&db, None).await?;
+
+        assert_eq!(card_board_reference(&db).await?, "board");
+        db.execute_unprepared(
+            r#"
+            INSERT INTO board (title) VALUES ('Triage');
+            INSERT INTO card (title, board_id, position) VALUES ('Reported', last_insert_rowid(), 0);
+            "#,
+        )
+        .await?;
+        Ok(())
+    }
+
 }

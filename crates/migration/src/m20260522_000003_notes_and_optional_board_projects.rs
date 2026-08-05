@@ -60,17 +60,14 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
-        db.execute_unprepared("PRAGMA legacy_alter_table = ON")
-            .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS board_old")
-            .await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_board_project_id")
-            .await?;
-        db.execute_unprepared("ALTER TABLE board RENAME TO board_old")
-            .await?;
         db.execute_unprepared(
             r#"
+            PRAGMA foreign_keys = OFF;
+            PRAGMA legacy_alter_table = ON;
+            DROP TABLE IF EXISTS board_old;
+            DROP INDEX IF EXISTS idx_board_project_id;
+            ALTER TABLE board RENAME TO board_old;
+
             CREATE TABLE board (
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                 title VARCHAR NOT NULL,
@@ -79,20 +76,17 @@ impl MigrationTrait for Migration {
                     FOREIGN KEY (project_id)
                     REFERENCES project (id)
                     ON DELETE SET NULL
-            )
+            );
+
+            INSERT INTO board (id, title, project_id)
+            SELECT id, title, project_id FROM board_old;
+            DROP TABLE board_old;
+            CREATE INDEX idx_board_project_id ON board (project_id);
+            PRAGMA legacy_alter_table = OFF;
+            PRAGMA foreign_keys = ON;
             "#,
         )
         .await?;
-        db.execute_unprepared(
-            "INSERT INTO board (id, title, project_id) SELECT id, title, project_id FROM board_old",
-        )
-        .await?;
-        db.execute_unprepared("DROP TABLE board_old").await?;
-        db.execute_unprepared("CREATE INDEX idx_board_project_id ON board (project_id)")
-            .await?;
-        db.execute_unprepared("PRAGMA legacy_alter_table = OFF")
-            .await?;
-        db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
 
         Ok(())
     }
@@ -100,17 +94,14 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
 
-        db.execute_unprepared("PRAGMA foreign_keys = OFF").await?;
-        db.execute_unprepared("PRAGMA legacy_alter_table = ON")
-            .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS board_old")
-            .await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_board_project_id")
-            .await?;
-        db.execute_unprepared("ALTER TABLE board RENAME TO board_old")
-            .await?;
         db.execute_unprepared(
             r#"
+            PRAGMA foreign_keys = OFF;
+            PRAGMA legacy_alter_table = ON;
+            DROP TABLE IF EXISTS board_old;
+            DROP INDEX IF EXISTS idx_board_project_id;
+            ALTER TABLE board RENAME TO board_old;
+
             CREATE TABLE board (
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                 title VARCHAR NOT NULL,
@@ -119,23 +110,17 @@ impl MigrationTrait for Migration {
                     FOREIGN KEY (project_id)
                     REFERENCES project (id)
                     ON DELETE CASCADE
-            )
-            "#,
-        )
-        .await?;
-        db.execute_unprepared(
-            r#"
+            );
+
             INSERT INTO board (id, title, project_id)
-            SELECT id, title, project_id FROM board_old WHERE project_id IS NOT NULL
+            SELECT id, title, project_id FROM board_old WHERE project_id IS NOT NULL;
+            DROP TABLE board_old;
+            CREATE INDEX idx_board_project_id ON board (project_id);
+            PRAGMA legacy_alter_table = OFF;
+            PRAGMA foreign_keys = ON;
             "#,
         )
         .await?;
-        db.execute_unprepared("DROP TABLE board_old").await?;
-        db.execute_unprepared("CREATE INDEX idx_board_project_id ON board (project_id)")
-            .await?;
-        db.execute_unprepared("PRAGMA legacy_alter_table = OFF")
-            .await?;
-        db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
 
         manager
             .drop_table(Table::drop().table(Note::Table).to_owned())
