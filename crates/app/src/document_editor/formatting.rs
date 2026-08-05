@@ -1,12 +1,97 @@
 use gpui::{Context, EntityInputHandler, Window};
-use gpui_component::input::RopeExt;
+use gpui_component::{WindowExt as _, input::RopeExt, notification::Notification};
 use std::ops::Range;
+use std::path::Path;
 
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
 use super::types::EditorMode;
 use super::{DocumentEditorView, DocumentKind};
 
 impl DocumentEditorView {
+    pub(super) fn format_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.kind, DocumentKind::Markdown | DocumentKind::Json) {
+            window.push_notification(
+                Notification::info("Formatting is available for Markdown and JSON documents."),
+                cx,
+            );
+            return;
+        }
+
+        let kind = self.kind;
+        let (source, input_selection) = self.editor.read_with(cx, |editor, _| {
+            (editor.text().to_string(), editor.selected_range())
+        });
+        let vim_selection = self.vim_visual_range(cx);
+        let selection = vim_selection.clone().unwrap_or(input_selection);
+        let background = cx.background_executor().clone();
+
+        self._format_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let (source, result) = background
+                .spawn(async move {
+                    let result = format_document_text(kind, &source);
+                    (source, result)
+                })
+                .await;
+
+            this.update_in(cx, |this, window, cx| {
+                if this.kind != kind || *this.editor.read(cx).text() != source {
+                    window.push_notification(
+                        Notification::warning(
+                            "Formatting was skipped because the document changed.",
+                        ),
+                        cx,
+                    );
+                    cx.notify();
+                    return;
+                }
+
+                match result {
+                    Ok(Some(formatted)) => {
+                        let mapped_selection =
+                            map_range_after_format(&source, &formatted, selection.clone());
+                        let source_mode = this.mode == EditorMode::Source;
+                        this.editor.update(cx, |editor, cx| {
+                            let document_end =
+                                editor.text().offset_to_offset_utf16(editor.text().len());
+                            EntityInputHandler::replace_text_in_range(
+                                editor,
+                                Some(0..document_end),
+                                &formatted,
+                                window,
+                                cx,
+                            );
+                            editor.set_selected_range(mapped_selection.clone(), cx);
+                            if source_mode {
+                                editor.focus(window, cx);
+                            }
+                        });
+
+                        if vim_selection.is_some() {
+                            this.finish_vim_visual_edit(mapped_selection.start, window, cx);
+                        } else {
+                            this.reset_vim_command();
+                        }
+                        window.push_notification(Notification::success("Document formatted."), cx);
+                    }
+                    Ok(None) => {
+                        window.push_notification(
+                            Notification::info("Document is already formatted."),
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        window.push_notification(
+                            Notification::error(format!("Could not format document: {error}")),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     pub(super) fn apply_format(
         &mut self,
         action: &ApplyMarkdownFormat,
@@ -141,6 +226,172 @@ impl DocumentEditorView {
             editor.focus(window, cx);
         });
     }
+}
+
+fn format_document_text(kind: DocumentKind, source: &str) -> Result<Option<String>, String> {
+    match kind {
+        DocumentKind::Markdown => format_markdown(source),
+        DocumentKind::Json => format_json(source),
+        DocumentKind::PlainText => Ok(None),
+    }
+}
+
+fn format_markdown(source: &str) -> Result<Option<String>, String> {
+    use dprint_plugin_markdown::configuration::{ConfigurationBuilder, TextWrap};
+
+    let mut builder = ConfigurationBuilder::new();
+    builder.line_width(80).text_wrap(TextWrap::Maintain);
+    preserve_markdown_newlines(&mut builder, source);
+
+    dprint_plugin_markdown::format_text(source, &builder.build(), |_, _, _| Ok(None))
+        .map_err(|error| error.to_string())
+}
+
+fn format_json(source: &str) -> Result<Option<String>, String> {
+    use dprint_plugin_json::configuration::{ConfigurationBuilder, TrailingCommaKind};
+
+    let mut builder = ConfigurationBuilder::new();
+    builder
+        .line_width(80)
+        .use_tabs(false)
+        .indent_width(2)
+        .array_prefer_single_line(true)
+        .object_prefer_single_line(false)
+        .trailing_commas(TrailingCommaKind::Never);
+    preserve_json_newlines(&mut builder, source);
+
+    let seeded_source = multiline_root_json_object(source);
+    let format_source = seeded_source.as_deref().unwrap_or(source);
+    let formatted = dprint_plugin_json::format_text(
+        Path::new("document.json"),
+        format_source,
+        &builder.build(),
+    )
+    .map_err(|error| error.to_string())?;
+    let formatted = match formatted {
+        Some(formatted) => formatted,
+        None => format_source.to_string(),
+    };
+
+    Ok((formatted != source).then_some(formatted))
+}
+
+fn multiline_root_json_object(source: &str) -> Option<String> {
+    let (opening_index, opening) = source
+        .char_indices()
+        .find(|(_, character)| !character.is_whitespace() && *character != '\u{feff}')?;
+    if opening != '{' {
+        return None;
+    }
+
+    let content_end = source.trim_end_matches(char::is_whitespace).len();
+    let inner = source.get(opening_index + opening.len_utf8()..content_end)?;
+    if inner.contains('\n') || inner.trim_start().starts_with('}') {
+        return None;
+    }
+
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut seeded = String::with_capacity(source.len() + newline.len());
+    seeded.push_str(&source[..opening_index + opening.len_utf8()]);
+    seeded.push_str(newline);
+    seeded.push_str(&source[opening_index + opening.len_utf8()..]);
+    Some(seeded)
+}
+
+fn preserve_markdown_newlines(
+    builder: &mut dprint_plugin_markdown::configuration::ConfigurationBuilder,
+    source: &str,
+) {
+    if source.contains("\r\n")
+        && let Ok(kind) = "crlf".parse()
+    {
+        builder.new_line_kind(kind);
+    }
+}
+
+fn preserve_json_newlines(
+    builder: &mut dprint_plugin_json::configuration::ConfigurationBuilder,
+    source: &str,
+) {
+    if source.contains("\r\n")
+        && let Ok(kind) = "crlf".parse()
+    {
+        builder.new_line_kind(kind);
+    }
+}
+
+fn map_range_after_format(before: &str, after: &str, range: Range<usize>) -> Range<usize> {
+    let start = map_offset_after_format(before, after, range.start);
+    let end = map_offset_after_format(before, after, range.end);
+    start.min(end)..start.max(end)
+}
+
+fn map_offset_after_format(before: &str, after: &str, offset: usize) -> usize {
+    let offset = floor_char_boundary(before, offset.min(before.len()));
+    let prefix = common_prefix_len(before, after);
+    if offset <= prefix {
+        return offset;
+    }
+
+    let suffix = common_suffix_len(&before[prefix..], &after[prefix..]);
+    if offset >= before.len().saturating_sub(suffix) {
+        return after
+            .len()
+            .saturating_sub(before.len().saturating_sub(offset));
+    }
+
+    let significant_chars = before[..offset]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .count();
+    if significant_chars == 0 {
+        return 0;
+    }
+
+    let mut seen = 0;
+    for (index, character) in after.char_indices() {
+        if !character.is_whitespace() {
+            seen += 1;
+            if seen == significant_chars {
+                return index + character.len_utf8();
+            }
+        }
+    }
+
+    after.len()
+}
+
+fn common_prefix_len(left: &str, right: &str) -> usize {
+    let mut length = 0;
+    for ((index, left_character), right_character) in left.char_indices().zip(right.chars()) {
+        if left_character != right_character {
+            break;
+        }
+        length = index + left_character.len_utf8();
+    }
+    length
+}
+
+fn common_suffix_len(left: &str, right: &str) -> usize {
+    let mut length = 0;
+    for (left_character, right_character) in left.chars().rev().zip(right.chars().rev()) {
+        if left_character != right_character {
+            break;
+        }
+        length += left_character.len_utf8();
+    }
+    length
+}
+
+fn floor_char_boundary(value: &str, mut index: usize) -> usize {
+    while !value.is_char_boundary(index) {
+        index = index.saturating_sub(1);
+    }
+    index
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -347,6 +598,96 @@ fn markdown_whitespace_len(rest: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_json_with_prettier_compatible_layout() {
+        let source = r#"{"alpha":1,"array":[1,2,3],"nested":{"x":true,"y":"value"}}"#;
+        let Ok(Some(formatted)) = format_json(source) else {
+            panic!("unformatted valid JSON should produce formatted output");
+        };
+
+        assert_eq!(
+            formatted,
+            concat!(
+                "{\n",
+                "  \"alpha\": 1,\n",
+                "  \"array\": [1, 2, 3],\n",
+                "  \"nested\": { \"x\": true, \"y\": \"value\" }\n",
+                "}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_json_without_replacement_text() {
+        assert!(format_json(r#"{"unfinished": }"#).is_err());
+    }
+
+    #[test]
+    fn formatters_preserve_crlf_documents() {
+        let Ok(Some(json)) = format_json("{\"alpha\":1}\r\n") else {
+            panic!("unformatted valid JSON should produce formatted output");
+        };
+        let Ok(Some(markdown)) = format_markdown("#  Heading\r\n\r\nText\r\n") else {
+            panic!("unformatted Markdown should produce formatted output");
+        };
+
+        assert_eq!(json, "{\r\n  \"alpha\": 1\r\n}\r\n");
+        assert_eq!(markdown, "# Heading\r\n\r\nText\r\n");
+    }
+
+    #[test]
+    fn formats_gfm_without_changing_castle_wikilinks() {
+        let source = concat!(
+            "#  Title\n\n",
+            "_some italic_ and __bold__\n\n",
+            "* one\n* two\n\n",
+            "[[Project/Note]]\n\n",
+            "- [x] task\n\n",
+            "| a|b |\n|--|--|\n|1|2|\n"
+        );
+        let Ok(Some(formatted)) = format_markdown(source) else {
+            panic!("unformatted Markdown should produce formatted output");
+        };
+
+        assert_eq!(
+            formatted,
+            concat!(
+                "# Title\n\n",
+                "_some italic_ and **bold**\n\n",
+                "- one\n- two\n\n",
+                "[[Project/Note]]\n\n",
+                "- [x] task\n\n",
+                "| a | b |\n",
+                "| - | - |\n",
+                "| 1 | 2 |\n"
+            )
+        );
+    }
+
+    #[test]
+    fn maps_cursor_to_the_same_json_content() {
+        let before = r#"{"alpha":1,"beta":2}"#;
+        let after = "{\n  \"alpha\": 1,\n  \"beta\": 2\n}\n";
+        let before_offset = before.find('2').unwrap_or(before.len()) + 1;
+        let after_offset = after.find('2').unwrap_or(after.len()) + 1;
+
+        assert_eq!(
+            map_offset_after_format(before, after, before_offset),
+            after_offset
+        );
+    }
+
+    #[test]
+    fn maps_selection_at_unchanged_document_end() {
+        let before = "#  Heading\nbody";
+        let after = "# Heading\n\nbody\n";
+
+        assert_eq!(
+            map_range_after_format(before, after, before.len()..before.len()),
+            after.len()..after.len()
+        );
+    }
 
     #[test]
     fn continues_bullet_lists() {

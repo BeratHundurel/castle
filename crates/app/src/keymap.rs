@@ -6,10 +6,10 @@ use crate::command_palette::{
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
 use crate::document_editor::action::{
-    ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, MarkdownFormat,
-    OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious, OutlineRight,
-    SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline, ToggleDocumentPreview, VimKey,
-    VimKeyAction,
+    ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
+    MarkdownFormat, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious,
+    OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
+    ToggleDocumentPreview, VimKey, VimKeyAction,
 };
 
 #[derive(Clone)]
@@ -220,6 +220,7 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
+        KeyBinding::new("alt-shift-f", FormatDocument, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-v", ToggleDocumentPreview, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]

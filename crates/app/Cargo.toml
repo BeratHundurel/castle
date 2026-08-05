@@ -29,6 +29,8 @@ storage = { path = "../storage" }
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 dotenvy = "0.15"
+dprint-plugin-json = "0.22.1"
+dprint-plugin-markdown = "0.22.1"
 global-hotkey = "0.8.0"
 raw-window-handle = "0.6.2"
 tray-icon = "0.24.1"

@@ -993,6 +993,7 @@ impl Render for DocumentEditorView {
             .overflow_hidden()
             .on_action(cx.listener(Self::on_action_save))
             .on_action(cx.listener(Self::on_action_save_as))
+            .on_action(cx.listener(Self::on_action_format_document))
             .on_action(cx.listener(Self::on_action_toggle_mode))
             .on_action(cx.listener(Self::on_action_toggle_outline))
             .on_action(cx.listener(Self::on_action_expand_emmet))

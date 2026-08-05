@@ -3,7 +3,12 @@ use serde::Deserialize;
 
 gpui::actions!(
     document_editor,
-    [SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentPreview,]
+    [
+        FormatDocument,
+        SaveDocumentFile,
+        SaveDocumentFileAs,
+        ToggleDocumentPreview,
+    ]
 );
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]

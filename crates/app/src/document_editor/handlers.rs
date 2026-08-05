@@ -138,6 +138,15 @@ impl DocumentEditorView {
         self.save_as(window, cx);
     }
 
+    pub(super) fn on_action_format_document(
+        &mut self,
+        _: &FormatDocument,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.format_document(window, cx);
+    }
+
     pub(super) fn on_action_toggle_mode(
         &mut self,
         _: &ToggleDocumentPreview,
