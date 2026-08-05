@@ -20,6 +20,7 @@ mod m20260727_000017_note_links;
 mod m20260727_000018_board_properties_and_views;
 mod m20260805_000019_board_templates;
 mod m20260805_000020_repair_card_board_foreign_key;
+mod m20260805_000021_hide_imported_note_extensions;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260727_000018_board_properties_and_views::Migration),
             Box::new(m20260805_000019_board_templates::Migration),
             Box::new(m20260805_000020_repair_card_board_foreign_key::Migration),
+            Box::new(m20260805_000021_hide_imported_note_extensions::Migration),
         ]
     }
 }
@@ -111,4 +113,53 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn latest_migration_removes_extensions_only_from_folder_project_notes()
+    -> Result<(), DbErr> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, Some(20)).await?;
+        db.execute_unprepared(
+            r#"
+            INSERT INTO project (id, name, folder_path, archived, position)
+            VALUES (1, 'Vault', 'C:\vault', 0, 0),
+                   (2, 'Castle', NULL, 0, 1);
+            INSERT INTO note (
+                title,
+                project_id,
+                file_path,
+                file_managed_by_app,
+                cached_content,
+                created_at,
+                updated_at
+            )
+            VALUES ('Cover Letter/Turkish Cover Letter.md', 1, 'C:\vault\Cover Letter\Turkish Cover Letter.md', 0, '', 0, 0),
+                   ('Data/Palette.JSON', 1, 'C:\vault\Data\Palette.JSON', 0, '', 0, 0),
+                   ('Managed.md', 1, 'C:\vault\Managed.md', 1, '', 0, 0),
+                   ('Regular.md', 2, NULL, 0, '', 0, 0);
+            "#,
+        )
+        .await?;
+
+        Migrator::up(&db, None).await?;
+
+        let titles = db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT title FROM note ORDER BY id",
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "title"))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            titles,
+            vec![
+                "Cover Letter/Turkish Cover Letter",
+                "Data/Palette",
+                "Managed.md",
+                "Regular.md",
+            ]
+        );
+        Ok(())
+    }
 }

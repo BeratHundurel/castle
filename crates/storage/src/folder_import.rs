@@ -154,11 +154,10 @@ pub fn scan_folder(root: &Path) -> Result<FolderScan> {
             continue;
         };
 
-        let title = path
-            .strip_prefix(&root)
-            .unwrap_or(path.as_path())
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative_path = path.strip_prefix(&root).unwrap_or(path.as_path());
+        let mut title_path = relative_path.to_path_buf();
+        title_path.set_extension("");
+        let title = title_path.to_string_lossy().replace('\\', "/");
 
         total_bytes = total_bytes.saturating_add(file_bytes);
         documents.push(FolderDocument {
@@ -302,6 +301,7 @@ mod tests {
         fs::create_dir_all(directory.path().join("target/debug"))?;
         fs::create_dir_all(directory.path().join(".git"))?;
         fs::write(directory.path().join("README.md"), "# Read me")?;
+        fs::write(directory.path().join("docs/archive.v1.markdown"), "archive")?;
         fs::write(directory.path().join("docs/notes.TXT"), "notes")?;
         fs::write(directory.path().join("data.json"), "{\"ok\":true}")?;
         fs::write(directory.path().join("image.png"), "not an image")?;
@@ -325,7 +325,10 @@ mod tests {
             .map(|document| document.title.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(titles, vec!["data.json", "docs/notes.TXT", "README.md"]);
+        assert_eq!(
+            titles,
+            vec!["data", "docs/archive.v1", "docs/notes", "README"]
+        );
         assert_eq!(scan.skipped_files, 0);
 
         Ok(())
@@ -353,6 +356,7 @@ mod tests {
         let notes = Note::find().all(&db).await?;
         assert_eq!(projects.len(), 1);
         assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "notes");
         assert_eq!(notes[0].cached_content, "second");
         assert!(!notes[0].file_managed_by_app);
 
