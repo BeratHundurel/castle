@@ -68,11 +68,9 @@ impl BoardView {
                                     ((value.entry_id, value.property_id), value.value.clone())
                                 })
                                 .collect();
-                            let active_view = saved_views
-                                .views
-                                .iter()
-                                .find(|view| view.is_default)
-                                .or_else(|| saved_views.views.first());
+                            let active_view = saved_views.selected_view_id.and_then(|view_id| {
+                                saved_views.views.iter().find(|view| view.id == view_id)
+                            });
                             let active_view_id = active_view.map(|view| view.id);
                             let active_view_config = active_view
                                 .map(|view| view.config.clone())

@@ -12,6 +12,7 @@ pub struct Model {
     pub project_id: Option<i64>,
     pub is_pinned: bool,
     pub last_opened_at: Option<i64>,
+    pub last_selected_view_id: i64,
     pub deleted_at: Option<i64>,
     #[sea_orm(has_many)]
     pub cards: HasMany<super::card::Entity>,

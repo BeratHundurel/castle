@@ -21,6 +21,7 @@ mod m20260727_000018_board_properties_and_views;
 mod m20260805_000019_board_templates;
 mod m20260805_000020_repair_card_board_foreign_key;
 mod m20260805_000021_hide_imported_note_extensions;
+mod m20260805_000022_remember_selected_board_view;
 
 pub struct Migrator;
 
@@ -49,6 +50,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260805_000019_board_templates::Migration),
             Box::new(m20260805_000020_repair_card_board_foreign_key::Migration),
             Box::new(m20260805_000021_hide_imported_note_extensions::Migration),
+            Box::new(m20260805_000022_remember_selected_board_view::Migration),
         ]
     }
 }

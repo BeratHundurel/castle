@@ -189,6 +189,7 @@ pub struct BoardView {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoardViews {
     pub views: Vec<BoardView>,
+    pub selected_view_id: Option<i64>,
     pub warnings: Vec<String>,
 }
 
@@ -625,7 +626,7 @@ pub async fn clear_entry_property(
 }
 
 pub async fn load_board_views(db: &DatabaseConnection, board_id: i64) -> Result<BoardViews> {
-    active_board(db, board_id).await?;
+    let board = active_board(db, board_id).await?;
     let models = SavedBoardView::find()
         .filter(saved_board_view::Column::BoardId.eq(board_id))
         .filter(saved_board_view::Column::DeletedAt.is_null())
@@ -642,7 +643,38 @@ pub async fn load_board_views(db: &DatabaseConnection, board_id: i64) -> Result<
             Err(error) => warnings.push(format!("Could not load view {name:?}: {error}")),
         }
     }
-    Ok(BoardViews { views, warnings })
+    let selected_view_id = match board.last_selected_view_id {
+        0 => None,
+        view_id if views.iter().any(|view| view.id == view_id) => Some(view_id),
+        _ => views
+            .iter()
+            .find(|view| view.is_default)
+            .or_else(|| views.first())
+            .map(|view| view.id),
+    };
+    Ok(BoardViews {
+        views,
+        selected_view_id,
+        warnings,
+    })
+}
+
+pub async fn set_selected_board_view(
+    db: &DatabaseConnection,
+    board_id: i64,
+    view_id: Option<i64>,
+) -> Result<()> {
+    let board = active_board(db, board_id).await?;
+    if let Some(view_id) = view_id {
+        let view = active_board_view(db, view_id).await?;
+        if view.board_id != board_id {
+            bail!("board view {view_id} does not belong to board {board_id}");
+        }
+    }
+    let mut active = board.into_active_model();
+    active.last_selected_view_id = Set(view_id.map_or(0, |view_id| view_id));
+    active.update(db).await?;
+    Ok(())
 }
 
 pub async fn create_board_view(
@@ -714,6 +746,10 @@ pub async fn delete_board_view(db: &DatabaseConnection, view_id: i64) -> Result<
     active.deleted_at = Set(Some(Utc::now().timestamp()));
     active.is_default = Set(false);
     active.update(db).await?;
+    let board = active_board(db, board_id).await?;
+    if board.last_selected_view_id == view_id {
+        set_selected_board_view(db, board_id, None).await?;
+    }
     if was_default
         && let Some(next) = SavedBoardView::find()
             .filter(saved_board_view::Column::BoardId.eq(board_id))
@@ -1387,6 +1423,51 @@ mod tests {
         let views = load_board_views(&db, board.id).await?;
         assert_eq!(views.views.len(), 1);
         assert!(views.views[0].is_default);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn selected_board_view_is_restored_independently_from_default() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let (board, _) = board_with_entry(&db, "Views").await?;
+        let first = create_board_view(&db, board.id, "First".into(), Default::default()).await?;
+        let second = create_board_view(&db, board.id, "Second".into(), Default::default()).await?;
+
+        set_default_board_view(&db, first.id).await?;
+        set_selected_board_view(&db, board.id, Some(second.id)).await?;
+
+        let views = load_board_views(&db, board.id).await?;
+        assert_eq!(views.selected_view_id, Some(second.id));
+        assert!(
+            views
+                .views
+                .iter()
+                .find(|view| view.id == first.id)
+                .is_some_and(|view| view.is_default)
+        );
+
+        set_selected_board_view(&db, board.id, None).await?;
+        assert_eq!(
+            load_board_views(&db, board.id).await?.selected_view_id,
+            None
+        );
+
+        set_selected_board_view(&db, board.id, Some(second.id)).await?;
+        delete_board_view(&db, second.id).await?;
+        assert_eq!(
+            load_board_views(&db, board.id).await?.selected_view_id,
+            None
+        );
+
+        let (other_board, _) = board_with_entry(&db, "Other").await?;
+        let other_view =
+            create_board_view(&db, other_board.id, "Other".into(), Default::default()).await?;
+        assert!(
+            set_selected_board_view(&db, board.id, Some(other_view.id))
+                .await
+                .is_err()
+        );
         Ok(())
     }
 

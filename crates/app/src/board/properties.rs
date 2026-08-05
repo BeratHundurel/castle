@@ -998,6 +998,37 @@ impl BoardView {
         self.filters = super::filters::BoardFilters::from_config(&config);
         self.view_config_dirty = false;
         self.view_panel_open = false;
+        let Some(board_id) = self.board_id else {
+            cx.notify();
+            return;
+        };
+        let db = cx.global::<DB>().conn.clone();
+        let runtime = tokio::runtime::Handle::current();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move {
+                    storage::board_properties::set_selected_board_view(
+                        db.as_ref(),
+                        i64::from(board_id),
+                        view_id,
+                    )
+                    .await
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(Ok(())) => this.property_update_error = None,
+                    Ok(Err(error)) => {
+                        this.property_update_error =
+                            Some(format!("Could not remember selected view: {error}").into());
+                    }
+                    Err(error) => this.set_property_task_error(error, cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -1073,13 +1104,20 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::create_board_view(
+                    let view = storage::board_properties::create_board_view(
                         db.as_ref(),
                         i64::from(board_id),
                         name,
                         config,
                     )
-                    .await
+                    .await?;
+                    storage::board_properties::set_selected_board_view(
+                        db.as_ref(),
+                        i64::from(board_id),
+                        Some(view.id),
+                    )
+                    .await?;
+                    Ok::<_, anyhow::Error>(view)
                 })
                 .await;
             this.update(cx, |this, cx| {
