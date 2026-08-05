@@ -225,11 +225,32 @@ impl AppShell {
                 .collect();
 
             this.update(cx, |this, cx| {
+                let note_titles: HashMap<u32, SharedString> = note_choices
+                    .iter()
+                    .map(|note| (note.id, note.title.clone()))
+                    .collect();
+                let mut tab_titles_changed = false;
+                for tab in &mut this.open_tabs {
+                    let OpenTabKind::Note { note_id, .. } = &tab.kind else {
+                        continue;
+                    };
+                    let Some(title) = note_titles.get(note_id) else {
+                        continue;
+                    };
+                    if tab.title != *title {
+                        tab.title.clone_from(title);
+                        tab_titles_changed = true;
+                    }
+                }
+
                 this.workspace_refreshing = false;
                 this.projects = project_choices;
                 this.boards = board_choices;
                 this.notes = note_choices;
                 this.rebuild_command_palette_workspace_commands();
+                if tab_titles_changed {
+                    this.persist_tab_session(cx);
+                }
                 if std::mem::take(&mut this.workspace_refresh_pending) {
                     this.refresh_workspace(cx);
                 }
