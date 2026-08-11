@@ -17,8 +17,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not delete card", true, async move {
             crate::trash::move_to_trash(
                 db.as_ref(),
                 crate::trash::MoveToTrash {
@@ -33,31 +32,7 @@ impl BoardView {
     }
 
     pub(in crate::board) fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
-        let positions: Vec<(u32, i32)> = self
-            .cards
-            .iter_mut()
-            .enumerate()
-            .map(|(index, card)| {
-                card.position = index as i32;
-                (card.id, card.position)
-            })
-            .collect();
-
-        cx.notify();
-
-        let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
-            for (card_id, position) in positions {
-                let model = card::ActiveModel {
-                    id: Set(card_id as i64),
-                    position: Set(position),
-                    ..Default::default()
-                };
-                model.update(&*db).await?;
-            }
-
-            Ok::<(), sea_orm::DbErr>(())
-        });
+        self.persist_board_layout(cx);
     }
 
     pub(in crate::board) fn move_card(
@@ -117,8 +92,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not delete list", true, async move {
             crate::trash::move_to_trash(
                 db.as_ref(),
                 crate::trash::MoveToTrash {

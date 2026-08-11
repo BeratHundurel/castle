@@ -1,11 +1,68 @@
 use gpui::{Context, SharedString};
 use sea_orm::{DatabaseConnection, DbErr};
+use std::{future::Future, sync::Arc};
 
 use crate::DB;
 
-use super::{BoardView, dto::*};
+use super::{BoardView, BoardViewEvent, dto::*};
 
 impl BoardView {
+    pub(in crate::board) fn emit_data_committed(
+        &self,
+        cx: &mut Context<Self>,
+        links_changed: bool,
+    ) {
+        if let Some(board_id) = self.board_id {
+            cx.emit(BoardViewEvent::DataCommitted {
+                board_id,
+                links_changed,
+            });
+        }
+    }
+
+    pub(in crate::board) fn commit_board_mutation<F>(
+        &mut self,
+        cx: &mut Context<Self>,
+        failure_context: &'static str,
+        links_changed: bool,
+        mutation: F,
+    ) where
+        F: Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+        let runtime = cx.global::<DB>().runtime.clone();
+        cx.spawn(async move |this, cx| {
+            let result = runtime.spawn(mutation).await;
+            this.update(cx, |this, cx| {
+                if this.board_id != Some(board_id) {
+                    return;
+                }
+                match result {
+                    Ok(Ok(())) => {
+                        this.mutation_error = None;
+                        cx.emit(BoardViewEvent::DataCommitted {
+                            board_id,
+                            links_changed,
+                        });
+                    }
+                    Ok(Err(error)) => {
+                        this.mutation_error = Some(format!("{failure_context}: {error}").into());
+                        this.enrich_board_async(cx, board_id);
+                    }
+                    Err(error) => {
+                        this.mutation_error =
+                            Some(format!("{failure_context} task failed: {error}").into());
+                        this.enrich_board_async(cx, board_id);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     #[cfg(test)]
     pub(crate) fn loaded_card_count(&self) -> usize {
         self.cards.len()
@@ -20,6 +77,9 @@ impl BoardView {
     }
 
     pub(crate) fn reload_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
+        if self.board_id != Some(board_id) {
+            self.mutation_error = None;
+        }
         self.board_id = Some(board_id);
         self.load_error = None;
         self.is_adding_list = false;
@@ -29,13 +89,22 @@ impl BoardView {
 
     pub(super) fn enrich_board_async(&mut self, cx: &mut Context<Self>, board_id: u32) {
         self.load_generation = self.load_generation.saturating_add(1);
+        self.loaded_generation = None;
         let generation = self.load_generation;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let local_mutation_generation = self.local_mutation_generation;
+        let app_db = cx.global::<DB>();
+        let db = app_db.conn.clone();
+        let board_layout_persistence = app_db.board_layout_persistence.clone();
+        let runtime = app_db.runtime.clone();
 
-        cx.spawn(async move |this, cx| {
-            let result = match runtime
-                .spawn(async move {
+        let task = cx.spawn(async move |this, cx| {
+            let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
+            let load = runtime.spawn(async move {
+                tokio::select! {
+                    biased;
+                    _ = cancelled => None,
+                    result = async move {
+                    let _ = board_layout_persistence.wait_for_pending(board_id).await;
                     let board_data = async {
                         load_board_data(db.as_ref(), board_id)
                             .await
@@ -47,20 +116,60 @@ impl BoardView {
                     );
                     let views =
                         storage::board_properties::load_board_views(db.as_ref(), board_id as i64);
-                    let ((cards, labels), properties, views) =
-                        tokio::try_join!(board_data, properties, views)?;
-                    Ok::<_, anyhow::Error>((cards, labels, properties, views))
-                })
-                .await
-            {
-                Ok(result) => result,
-                Err(err) => Err(anyhow::Error::from(err)),
+                    let link_catalog =
+                        storage::workspace_links::load_workspace_link_catalog(db.as_ref());
+                    let ((cards, labels), properties, views, link_catalog) =
+                        tokio::try_join!(board_data, properties, views, link_catalog)?;
+                    let mut related_targets = vec![storage::workspace_links::WorkspaceItemRef {
+                        kind: storage::workspace_links::WorkspaceItemKind::Board,
+                        id: i64::from(board_id),
+                    }];
+                    related_targets.extend(cards.iter().map(|list| {
+                        storage::workspace_links::WorkspaceItemRef {
+                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                            id: i64::from(list.id),
+                        }
+                    }));
+                    let related_notes = storage::workspace_links::load_related_notes_for_items(
+                        db.as_ref(),
+                        &related_targets,
+                    )
+                    .await?;
+                    Ok::<_, anyhow::Error>((
+                        cards,
+                        labels,
+                        properties,
+                        views,
+                        link_catalog,
+                        related_notes,
+                    ))
+                    } => Some(result),
+                }
+            });
+            let result = match load.await {
+                Ok(Some(result)) => result,
+                Ok(None) => return,
+                Err(error) => Err(anyhow::Error::from(error)),
             };
+            drop(cancel_on_drop);
 
             this.update(cx, |this, cx| {
                 if this.board_id == Some(board_id) && this.load_generation == generation {
+                    this.loaded_generation = Some(generation);
+                    if this.local_mutation_generation != local_mutation_generation {
+                        cx.notify();
+                        cx.emit(super::BoardViewEvent::LoadFinished(board_id));
+                        return;
+                    }
                     match result {
-                        Ok((cards, board_labels, board_properties, saved_views)) => {
+                        Ok((
+                            cards,
+                            board_labels,
+                            board_properties,
+                            saved_views,
+                            link_catalog,
+                            related_notes,
+                        )) => {
                             let property_values = board_properties
                                 .values
                                 .iter()
@@ -89,6 +198,22 @@ impl BoardView {
                             this.board_properties = board_properties;
                             this.property_values = property_values;
                             this.saved_views = saved_views.views;
+                            let workspace_link_catalog = Arc::new(link_catalog);
+                            let project_id = workspace_link_catalog
+                                .iter()
+                                .find(|entry| {
+                                    entry.item.kind
+                                        == storage::workspace_links::WorkspaceItemKind::Board
+                                        && entry.item.id == i64::from(board_id)
+                                })
+                                .and_then(|entry| entry.project_id);
+                            this.entry_wikilink_completion_provider
+                                .update_for_workspace_source(
+                                    project_id,
+                                    workspace_link_catalog.clone(),
+                                );
+                            this.workspace_link_catalog = workspace_link_catalog;
+                            this.related_notes_by_item = related_notes;
                             this.active_view_id = active_view_id;
                             this.active_view_config = active_view_config.clone();
                             this.filters =
@@ -105,6 +230,8 @@ impl BoardView {
                             this.board_properties = Default::default();
                             this.property_values.clear();
                             this.saved_views.clear();
+                            this.workspace_link_catalog = Arc::new(Vec::new());
+                            this.related_notes_by_item.clear();
                             this.active_view_id = None;
                             this.active_view_config = super::filters::default_view_config();
                             this.filters.clear();
@@ -117,8 +244,8 @@ impl BoardView {
                 }
             })
             .ok();
-        })
-        .detach();
+        });
+        self._load_task = Some(task);
     }
 }
 
@@ -148,8 +275,8 @@ mod tests {
     };
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{
-        ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, Database, DbBackend,
-        EntityTrait, QueryFilter, Statement,
+        ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
+        DbBackend, EntityTrait, QueryFilter, Statement,
     };
     use std::{path::PathBuf, sync::Arc, time::Instant};
 
@@ -308,10 +435,7 @@ mod tests {
             })
             .expect("board restore setup should succeed");
 
-        let db = crate::DB {
-            conn: Arc::new(db),
-            data_dir: PathBuf::new(),
-        };
+        let db = crate::DB::new(Arc::new(db), PathBuf::new());
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
@@ -337,6 +461,116 @@ mod tests {
             assert_eq!(board.cards.len(), 1);
             assert_eq!(board.cards[0].entries.len(), 1);
         });
+    }
+
+    #[gpui::test]
+    fn pending_reload_does_not_overwrite_a_local_card_move(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let (db, board_id, destination_id, entry_id) = runtime
+            .block_on(async {
+                let mut options = ConnectOptions::new("sqlite::memory:");
+                options.max_connections(1).min_connections(1);
+                let db = Database::connect(options).await?;
+                Migrator::up(&db, None).await?;
+                let board = board::ActiveModel {
+                    title: Set("Move race".to_string()),
+                    project_id: Set(None),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let source = card::ActiveModel {
+                    title: Set("Todo".to_string()),
+                    board_id: Set(board.id),
+                    position: Set(0),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let destination = card::ActiveModel {
+                    title: Set("Done".to_string()),
+                    board_id: Set(board.id),
+                    position: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let entry = entry::ActiveModel {
+                    title: Set("Move me".to_string()),
+                    description: Set(String::new()),
+                    card_id: Set(source.id),
+                    position: Set(0),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((
+                    Arc::new(db),
+                    board.id as u32,
+                    destination.id as u32,
+                    entry.id as u32,
+                ))
+            })
+            .expect("board move race setup should succeed");
+
+        let app_db = crate::DB::new(db.clone(), PathBuf::new());
+        let position_persistence = app_db.board_layout_persistence.clone();
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = super::BoardView::view(window, cx);
+                view.update(cx, |board, cx| board.load_board(board_id, cx));
+                view
+            })
+            .expect("board test window should open")
+        });
+        let view = window.root(cx).expect("board view should exist");
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(cx, |board, _| board.cards.len() == 2) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let held_connection = runtime
+            .block_on(db.get_sqlite_connection_pool().acquire())
+            .expect("test should reserve the only SQLite connection");
+        view.update(cx, |board, cx| board.reload_board(board_id, cx));
+        cx.run_until_parked();
+        view.update(cx, |board, cx| {
+            board.move_entry_to_list_end(entry_id, destination_id, cx)
+        });
+        assert!(view.read_with(cx, |board, _| {
+            board.cards.iter().any(|list| {
+                list.id == destination_id && list.entries.iter().any(|entry| entry.id == entry_id)
+            })
+        }));
+
+        drop(held_connection);
+        runtime
+            .block_on(tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                position_persistence.wait_for_pending(board_id),
+            ))
+            .expect("the moved position should persist without a debounce delay")
+            .expect("the moved position should be committed");
+        cx.run_until_parked();
+
+        assert!(view.read_with(cx, |board, _| {
+            board.cards.iter().any(|list| {
+                list.id == destination_id && list.entries.iter().any(|entry| entry.id == entry_id)
+            })
+        }));
+        let stored = runtime
+            .block_on(entry::Entity::find_by_id(i64::from(entry_id)).one(db.as_ref()))
+            .expect("moved entry should remain queryable")
+            .expect("moved entry should exist");
+        assert_eq!(stored.card_id, i64::from(destination_id));
     }
 
     #[tokio::test]
@@ -555,5 +789,120 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("change revision row is missing"))?;
         assert_eq!(revision.try_get::<i64>("", "revision")?, 0);
         Ok(())
+    }
+
+    #[gpui::test]
+    fn rendered_card_drop_reorders_repeatedly_without_stalling(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let (db, board_id, first_entry_id, second_entry_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let board = board::ActiveModel {
+                    title: Set("Rendered drag board".to_string()),
+                    project_id: Set(None),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let list = card::ActiveModel {
+                    title: Set("Todo".to_string()),
+                    board_id: Set(board.id),
+                    position: Set(0),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let first = entry::ActiveModel {
+                    title: Set("First".to_string()),
+                    description: Set(String::new()),
+                    card_id: Set(list.id),
+                    position: Set(0),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                let second = entry::ActiveModel {
+                    title: Set("Second".to_string()),
+                    description: Set(String::new()),
+                    card_id: Set(list.id),
+                    position: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((
+                    Arc::new(db),
+                    board.id as u32,
+                    first.id as u32,
+                    second.id as u32,
+                ))
+            })
+            .expect("rendered drag setup should succeed");
+
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::DB::new(db, PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = super::BoardView::view(window, cx);
+                view.update(cx, |board, cx| board.load_board(board_id, cx));
+                view
+            })
+            .expect("board drag test window should open")
+        });
+        let view = window.root(cx).expect("board view should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |board, _| {
+                board
+                    .cards
+                    .first()
+                    .is_some_and(|list| list.entries.len() == 2)
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        for iteration in 0..40 {
+            let source = cx
+                .debug_bounds("board-entry-1")
+                .expect("first rendered card should have bounds")
+                .center();
+            let target = cx
+                .debug_bounds("board-entry-2")
+                .expect("second rendered card should have bounds")
+                .center();
+
+            cx.simulate_mouse_down(source, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_move(target, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_up(target, gpui::MouseButton::Left, gpui::Modifiers::default());
+
+            assert_eq!(
+                view.read_with(&cx, |board, _| {
+                    board.cards[0]
+                        .entries
+                        .iter()
+                        .map(|entry| entry.id)
+                        .collect::<Vec<_>>()
+                }),
+                if iteration % 2 == 0 {
+                    vec![second_entry_id, first_entry_id]
+                } else {
+                    vec![first_entry_id, second_entry_id]
+                },
+                "rendered drop {iteration} should reach the card reorder handler"
+            );
+            assert!(
+                cx.update(|_, cx| !cx.has_active_drag()),
+                "drop {iteration} must clear GPUI's active drag state"
+            );
+        }
     }
 }

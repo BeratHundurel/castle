@@ -2,6 +2,65 @@ use super::*;
 use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
+    pub(crate) fn active_note_view(&self) -> Option<Entity<DocumentEditorView>> {
+        self.open_tabs
+            .get(self.active_tab_index)
+            .and_then(|tab| match &tab.kind {
+                OpenTabKind::Note { view, .. } => Some(view.clone()),
+                _ => None,
+            })
+    }
+
+    pub(crate) fn open_workspace_target(
+        &mut self,
+        target: crate::workspace_navigation::WorkspaceNavigationTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+                note_id,
+                source_offset,
+            } => {
+                let Some(note) = self.notes.iter().find(|note| note.id == note_id) else {
+                    window.push_notification(
+                        Notification::warning("The linked note is no longer available."),
+                        cx,
+                    );
+                    return;
+                };
+                self.open_note_tab(note_id, note.project_id, note.title.clone(), window, cx);
+                if let Some(offset) = source_offset
+                    && let Some(view) = self.note_views.get(&note_id)
+                {
+                    view.update(cx, |editor, cx| {
+                        editor.navigate_to_offset(offset, window, cx)
+                    });
+                }
+            }
+            crate::workspace_navigation::WorkspaceNavigationTarget::Board { board_id, .. } => {
+                let Some(board) = self.boards.iter().find(|board| board.id == board_id) else {
+                    window.push_notification(
+                        Notification::warning("The linked board is no longer available."),
+                        cx,
+                    );
+                    return;
+                };
+                let view = self.open_board_tab(
+                    board_id,
+                    board.project_id,
+                    board.title.clone(),
+                    window,
+                    cx,
+                );
+                view.update(cx, |board, cx| {
+                    board.queue_reveal_target(target, cx);
+                    board.apply_pending_reveal(window, cx);
+                });
+            }
+        }
+    }
+
     pub(super) fn cancel_pending_board_open(&mut self) {
         let Some(pending) = self.pending_board_open.take() else {
             return;
@@ -19,8 +78,6 @@ impl AppShell {
     }
 
     pub(super) fn persist_tab_session(&mut self, cx: &mut Context<Self>) {
-        self.tab_session_save_generation = self.tab_session_save_generation.saturating_add(1);
-        let generation = self.tab_session_save_generation;
         let tabs = self
             .open_tabs
             .iter()
@@ -52,18 +109,7 @@ impl AppShell {
             active_tab_index: self.active_tab_index,
             active_project_id: self.active_project_id,
         };
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(250))
-                .await;
-            this.update(cx, |this, cx| {
-                if this.tab_session_save_generation == generation {
-                    AppSettings::set_tab_session(session, cx);
-                }
-            })
-            .ok();
-        })
-        .detach();
+        AppSettings::set_tab_session(session, cx);
     }
 
     pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -415,7 +461,7 @@ impl AppShell {
             })
             .generation;
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let save_lock = self.workspace_title_save_lock.clone();
 
         cx.spawn(async move |this, cx| {
@@ -493,7 +539,7 @@ impl AppShell {
             .map(|(target, pending)| (target, pending.title))
             .collect::<Vec<_>>();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let save_lock = self.workspace_title_save_lock.clone();
 
         async move {
@@ -555,21 +601,7 @@ impl AppShell {
         self.cancel_pending_board_open();
 
         let view = BoardView::view(window, cx);
-        cx.subscribe_in(
-            &view,
-            window,
-            |this, loaded_view, event: &BoardViewEvent, window, cx| {
-                let BoardViewEvent::LoadFinished(board_id) = event;
-                let is_current = this.pending_board_open.as_ref().is_some_and(|pending| {
-                    pending.board_id == *board_id
-                        && pending.view.entity_id() == loaded_view.entity_id()
-                });
-                if is_current {
-                    this.finish_pending_board_open(window, cx);
-                }
-            },
-        )
-        .detach();
+        Self::observe_board_view(&view, window, cx);
         let replaced_chooser_id = self
             .open_tabs
             .get(self.active_tab_index)
@@ -597,7 +629,11 @@ impl AppShell {
         view
     }
 
-    fn finish_pending_board_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn finish_pending_board_open(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(pending) = self.pending_board_open.take() else {
             return;
         };

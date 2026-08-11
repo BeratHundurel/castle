@@ -237,7 +237,7 @@ impl BoardView {
         }
         let kind = self.new_property_kind;
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -256,6 +256,7 @@ impl BoardView {
                         this.board_properties.definitions.push(property);
                         this.property_form_open = false;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -297,7 +298,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -317,6 +318,7 @@ impl BoardView {
                         }
                         this.renaming_property_id = None;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -363,7 +365,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -376,11 +378,15 @@ impl BoardView {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if let Ok(Err(error)) = result {
-                    this.property_update_error =
-                        Some(format!("Could not reorder properties: {error}").into());
-                    cx.notify();
+                match result {
+                    Ok(Ok(())) => this.emit_data_committed(cx, false),
+                    Ok(Err(error)) => {
+                        this.property_update_error =
+                            Some(format!("Could not reorder properties: {error}").into());
+                    }
+                    Err(error) => this.set_property_task_error(error, cx),
                 }
+                cx.notify();
             })
             .ok();
         })
@@ -440,7 +446,7 @@ impl BoardView {
 
     fn delete_property(&mut self, property_id: i64, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -465,6 +471,7 @@ impl BoardView {
                             remove_property_from_config(&mut view.config, property_id);
                         }
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -491,7 +498,7 @@ impl BoardView {
             .map(|property| OPTION_COLORS[property.options.len() % OPTION_COLORS.len()].to_string())
             .unwrap_or_else(|| "blue".to_string());
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -517,6 +524,7 @@ impl BoardView {
                         }
                         this.adding_property_option_id = None;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -559,7 +567,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -581,6 +589,7 @@ impl BoardView {
                         }
                         this.renaming_property_option_id = None;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -610,7 +619,7 @@ impl BoardView {
             .unwrap_or(0);
         let color = OPTION_COLORS[(index + 1) % OPTION_COLORS.len()].to_string();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -632,6 +641,7 @@ impl BoardView {
                         .find(|current| current.id == option_id)
                 {
                     *current = option;
+                    this.emit_data_committed(cx, false);
                 }
                 cx.notify();
             })
@@ -676,7 +686,7 @@ impl BoardView {
             .map(|option| option.id)
             .collect::<Vec<_>>();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -689,11 +699,15 @@ impl BoardView {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if let Ok(Err(error)) = result {
-                    this.property_update_error =
-                        Some(format!("Could not reorder options: {error}").into());
-                    cx.notify();
+                match result {
+                    Ok(Ok(())) => this.emit_data_committed(cx, false),
+                    Ok(Err(error)) => {
+                        this.property_update_error =
+                            Some(format!("Could not reorder options: {error}").into());
+                    }
+                    Err(error) => this.set_property_task_error(error, cx),
                 }
+                cx.notify();
             })
             .ok();
         })
@@ -761,7 +775,7 @@ impl BoardView {
 
     fn delete_property_option(&mut self, option_id: i64, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -786,6 +800,7 @@ impl BoardView {
                         for view in &mut this.saved_views {
                             remove_option_from_config(&mut view.config, option_id);
                         }
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -817,7 +832,7 @@ impl BoardView {
         self.property_update_revisions.insert(key, revision);
         let persisted_revisions = self.persisted_property_revisions.clone();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -861,6 +876,7 @@ impl BoardView {
                 match result {
                     Ok(Ok(())) => {
                         this.property_field_errors.remove(&key);
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.apply_local_property_value(entry_id, property_id, previous);
@@ -1003,7 +1019,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1054,7 +1070,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1073,6 +1089,7 @@ impl BoardView {
                         }
                         this.renaming_view_id = None;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -1100,7 +1117,7 @@ impl BoardView {
         self.filters.sync_config(&mut self.active_view_config);
         let config = self.active_view_config.clone();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1129,6 +1146,7 @@ impl BoardView {
                         this.view_config_dirty = false;
                         this.new_view_form_open = false;
                         this.property_update_error = None;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -1150,7 +1168,7 @@ impl BoardView {
         self.filters.sync_config(&mut self.active_view_config);
         let config = self.active_view_config.clone();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1169,6 +1187,7 @@ impl BoardView {
                         }
                         this.active_view_config = view.config;
                         this.view_config_dirty = false;
+                        this.emit_data_committed(cx, false);
                     }
                     Ok(Err(error)) => {
                         this.property_update_error =
@@ -1185,7 +1204,7 @@ impl BoardView {
 
     pub(super) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1207,7 +1226,7 @@ impl BoardView {
 
     pub(super) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1217,6 +1236,7 @@ impl BoardView {
             this.update(cx, |this, cx| {
                 if matches!(result, Ok(Ok(()))) {
                     this.saved_views.retain(|view| view.id != view_id);
+                    this.emit_data_committed(cx, false);
                     if this.active_view_id == Some(view_id) {
                         this.select_saved_view(None, cx);
                     } else {

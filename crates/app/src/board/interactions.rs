@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::DB;
 use entity::{
     board_label, board_label::Entity as BoardLabel, card, card::Entity as Card, entry,
     entry::Entity as Entry, entry_checklist_item,
@@ -16,13 +16,11 @@ use gpui_component::{
     v_flex,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
-    ExprTrait, QueryFilter, TransactionTrait, sea_query::Expr,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, ExprTrait, QueryFilter,
+    TransactionTrait, sea_query::Expr,
 };
 
-use crate::DB;
-
-use super::{BoardView, drag::*, dto::*};
+use super::{BoardView, BoardViewEvent, drag::*, dto::*};
 
 mod checklist;
 mod create;
@@ -78,24 +76,6 @@ fn normalize_entry_positions(cards: &mut [CardDTO]) -> Vec<(u32, u32, i32)> {
         .collect()
 }
 
-async fn persist_entry_positions_in_db(
-    db: &DatabaseConnection,
-    positions: Vec<(u32, u32, i32)>,
-) -> Result<(), DbErr> {
-    let txn = db.begin().await?;
-    for (entry_id, card_id, position) in positions {
-        entry::ActiveModel {
-            id: Set(entry_id as i64),
-            card_id: Set(card_id as i64),
-            position: Set(position),
-            ..Default::default()
-        }
-        .update(&txn)
-        .await?;
-    }
-    txn.commit().await
-}
-
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
@@ -103,10 +83,11 @@ mod tests {
     use gpui::SharedString;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use storage::board_positions::{BoardLayoutPersistence, BoardLayoutSnapshot};
 
     use super::{
         BoardLabelDTO, CardDTO, ChecklistItemDTO, EntryDTO, move_entry_to_list_end_in_memory,
-        normalize_entry_positions, persist_entry_positions_in_db,
+        normalize_entry_positions,
     };
     use crate::board::persistence::load_board_data;
 
@@ -122,6 +103,7 @@ mod tests {
             labels: vec![],
             checklist_items: vec![],
             attachments: vec![],
+            related_notes: vec![],
         }
     }
 
@@ -285,7 +267,22 @@ mod tests {
         ));
 
         let positions = normalize_entry_positions(&mut cards);
-        persist_entry_positions_in_db(&db, positions).await?;
+        let persistence = BoardLayoutPersistence::default();
+        let revision = persistence.submit(
+            board.id as u32,
+            std::sync::Arc::new(db.clone()),
+            BoardLayoutSnapshot {
+                lists: cards
+                    .iter()
+                    .enumerate()
+                    .map(|(position, card)| (card.id, position as i32))
+                    .collect(),
+                entries: positions,
+            },
+        )?;
+        persistence
+            .wait_for_revision(board.id as u32, revision)
+            .await?;
 
         let (reloaded_cards, _) = load_board_data(&db, board.id as u32).await?;
         assert!(reloaded_cards[0].entries.is_empty());

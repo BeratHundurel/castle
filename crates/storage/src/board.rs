@@ -35,6 +35,7 @@ pub struct EntryRecord {
     pub labels: Vec<LabelRecord>,
     pub checklist_items: Vec<ChecklistItemRecord>,
     pub attachments: Vec<AttachmentRecord>,
+    pub related_notes: Vec<crate::workspace_links::RelatedNote>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +138,7 @@ pub async fn load_board_snapshot(
         Vec::new()
     } else {
         EntryChecklistItem::find()
-            .filter(entry_checklist_item::Column::EntryId.is_in(entry_ids))
+            .filter(entry_checklist_item::Column::EntryId.is_in(entry_ids.clone()))
             .order_by_asc(entry_checklist_item::Column::Position)
             .order_by_asc(entry_checklist_item::Column::Id)
             .all(db)
@@ -151,6 +152,11 @@ pub async fn load_board_snapshot(
             .push(ChecklistItemRecord::from(item));
     }
 
+    let mut related_notes_by_entry =
+        crate::workspace_links::load_related_notes_for_entries(db, &entry_ids)
+            .await
+            .map_err(|error| DbErr::Custom(error.to_string()))?;
+
     for card in &mut cards {
         for entry in &mut card.entries {
             entry.labels = labels_by_entry
@@ -160,6 +166,9 @@ pub async fn load_board_snapshot(
                 .remove(&(entry.id as i64))
                 .unwrap_or_default();
             entry.attachments = attachments_by_entry
+                .remove(&(entry.id as i64))
+                .unwrap_or_default();
+            entry.related_notes = related_notes_by_entry
                 .remove(&(entry.id as i64))
                 .unwrap_or_default();
         }
@@ -201,6 +210,7 @@ impl From<entity::entry::ModelEx> for EntryRecord {
             labels: Vec::new(),
             checklist_items: Vec::new(),
             attachments: Vec::new(),
+            related_notes: Vec::new(),
         }
     }
 }

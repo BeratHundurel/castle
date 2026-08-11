@@ -1,5 +1,21 @@
 use super::*;
 
+fn accepts_entry_card_drop(value: &dyn std::any::Any) -> bool {
+    value.is::<DragInfo>()
+        || value
+            .downcast_ref::<SidebarDragInfo>()
+            .and_then(SidebarDragInfo::note_id)
+            .is_some()
+}
+
+fn accepts_list_header_drop(value: &dyn std::any::Any) -> bool {
+    value.is::<CardDragInfo>()
+        || value
+            .downcast_ref::<SidebarDragInfo>()
+            .and_then(SidebarDragInfo::note_id)
+            .is_some()
+}
+
 impl BoardView {
     pub(super) fn render_card(
         &self,
@@ -44,6 +60,9 @@ impl BoardView {
             .bg(theme.secondary)
             .text_color(theme.secondary_foreground)
             .rounded(theme.radius)
+            .when(self.revealed_list_id == Some(card_id), |this| {
+                this.border_2().border_color(theme.primary).shadow_md()
+            })
             .when(!cards_are_filterable, |this| {
                 this.drag_over::<DragInfo>(|this, _, _, cx| {
                     this.border_2()
@@ -95,6 +114,25 @@ impl BoardView {
             .font_weight(FontWeight::MEDIUM)
             .cursor_move()
             .hover(|this| this.text_color(theme.foreground))
+            .can_drop(|value, _, _| accepts_list_header_drop(value))
+            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+                this.rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().primary)
+                    .bg(cx.theme().drop_target)
+            })
+            .on_drop(cx.listener(move |this, info: &SidebarDragInfo, _, cx| {
+                if let Some(note_id) = info.note_id() {
+                    this.link_note_to_item(
+                        storage::workspace_links::WorkspaceItemRef {
+                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                            id: i64::from(card_id),
+                        },
+                        note_id,
+                        cx,
+                    );
+                }
+            }))
             .on_drag(card_drag_info, |info: &CardDragInfo, position, _, cx| {
                 cx.new(|_| info.clone().position(position))
             })
@@ -114,45 +152,86 @@ impl BoardView {
                 |this| this.child(card.title.clone()),
             )
             .child(
-                Button::new(("card-menu", card_id as usize))
-                    .icon(IconName::Ellipsis)
-                    .ghost()
-                    .compact()
-                    .tooltip("List actions")
-                    .dropdown_menu_with_anchor(Anchor::LeftCenter, move |menu, _, cx| {
-                        let muted = cx.theme().muted_foreground;
+                h_flex()
+                    .gap_0p5()
+                    .child(self.render_related_notes_popover(
+                        storage::workspace_links::WorkspaceItemRef {
+                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                            id: i64::from(card_id),
+                        },
+                        SharedString::from(format!("list-{card_id}")),
+                        cx,
+                    ))
+                    .child(
+                        Button::new(("card-menu", card_id as usize))
+                            .icon(IconName::Ellipsis)
+                            .ghost()
+                            .compact()
+                            .tooltip("List actions")
+                            .dropdown_menu_with_anchor(Anchor::LeftCenter, move |menu, _, cx| {
+                                let muted = cx.theme().muted_foreground;
 
-                        menu.menu_element(Box::new(EditCardAction(card_id)), move |_, _| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child("Rename list")
-                                .child(Icon::new(IconName::Replace).xsmall().text_color(muted))
-                        })
-                        .menu_element(Box::new(DuplicateCardAction(card_id)), move |_, _| {
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .items_center()
-                                .justify_between()
-                                .child("Duplicate list")
-                                .child(Icon::new(IconName::Copy).xsmall().text_color(muted))
-                        })
-                        .menu_element(
-                            Box::new(DeleteCardAction(card_id)),
-                            move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .items_center()
-                                    .justify_between()
-                                    .child("Delete list")
-                                    .child(Icon::new(IconName::Delete).xsmall().text_color(muted))
-                            },
-                        )
-                    }),
+                                menu.menu_element(Box::new(EditCardAction(card_id)), move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .gap_2()
+                                        .items_center()
+                                        .justify_between()
+                                        .child("Rename list")
+                                        .child(
+                                            Icon::new(IconName::Replace).xsmall().text_color(muted),
+                                        )
+                                })
+                                .menu_element(
+                                    Box::new(DuplicateCardAction(card_id)),
+                                    move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .items_center()
+                                            .justify_between()
+                                            .child("Duplicate list")
+                                            .child(
+                                                Icon::new(IconName::Copy)
+                                                    .xsmall()
+                                                    .text_color(muted),
+                                            )
+                                    },
+                                )
+                                .menu_element(
+                                    Box::new(CopyListInternalLinkAction(card_id)),
+                                    move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .items_center()
+                                            .justify_between()
+                                            .child("Copy internal link")
+                                            .child(
+                                                Icon::new(IconName::Copy)
+                                                    .xsmall()
+                                                    .text_color(muted),
+                                            )
+                                    },
+                                )
+                                .menu_element(
+                                    Box::new(DeleteCardAction(card_id)),
+                                    move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .items_center()
+                                            .justify_between()
+                                            .child("Delete list")
+                                            .child(
+                                                Icon::new(IconName::Delete)
+                                                    .xsmall()
+                                                    .text_color(muted),
+                                            )
+                                    },
+                                )
+                            }),
+                    ),
             )
     }
 
@@ -178,6 +257,25 @@ impl BoardView {
 
         div()
             .id(entry.id as usize)
+            .debug_selector(move || format!("board-entry-{entry_id}"))
+            .can_drop(|value, _, _| accepts_entry_card_drop(value))
+            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+                this.border_2()
+                    .border_color(cx.theme().primary)
+                    .bg(cx.theme().drop_target)
+            })
+            .on_drop(cx.listener(move |this, info: &SidebarDragInfo, _, cx| {
+                if let Some(note_id) = info.note_id() {
+                    this.link_note_to_item(
+                        storage::workspace_links::WorkspaceItemRef {
+                            kind: storage::workspace_links::WorkspaceItemKind::Card,
+                            id: i64::from(entry_id),
+                        },
+                        note_id,
+                        cx,
+                    );
+                }
+            }))
             .when_else(
                 compact,
                 |this| this.px_2().py_1p5(),

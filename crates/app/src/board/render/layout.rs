@@ -35,6 +35,7 @@ impl BoardView {
         let scrollable = h_flex()
             .id("scrollable-container")
             .size_full()
+            .track_scroll(&self.board_scroll_handle)
             .overflow_x_scrollbar()
             .gap_4()
             .p_4()
@@ -61,6 +62,19 @@ impl BoardView {
             v_flex()
                 .size_full()
                 .overflow_hidden()
+                .when_some(self.mutation_error.clone(), |this, error| {
+                    this.child(
+                        div()
+                            .px_4()
+                            .py_2()
+                            .border_b_1()
+                            .border_color(theme.danger.opacity(0.35))
+                            .bg(theme.danger.opacity(0.08))
+                            .text_sm()
+                            .text_color(theme.danger)
+                            .child(error),
+                    )
+                })
                 .child(self.render_filter_toolbar(cx))
                 .child(scrollable)
                 .into_any_element()
@@ -79,6 +93,29 @@ impl BoardView {
             .border_b_1()
             .border_color(cx.theme().border.opacity(0.72))
             .bg(cx.theme().background)
+            .can_drop(|value, _, _| {
+                value
+                    .downcast_ref::<SidebarDragInfo>()
+                    .and_then(SidebarDragInfo::note_id)
+                    .is_some()
+            })
+            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+                this.border_1()
+                    .border_color(cx.theme().primary)
+                    .bg(cx.theme().drop_target)
+            })
+            .on_drop(cx.listener(|this, info: &SidebarDragInfo, _, cx| {
+                if let (Some(board_id), Some(note_id)) = (this.board_id, info.note_id()) {
+                    this.link_note_to_item(
+                        storage::workspace_links::WorkspaceItemRef {
+                            kind: storage::workspace_links::WorkspaceItemKind::Board,
+                            id: i64::from(board_id),
+                        },
+                        note_id,
+                        cx,
+                    );
+                }
+            }))
             .child(self.render_view_picker(cx))
             .child(
                 div()
@@ -113,6 +150,19 @@ impl BoardView {
                         })),
                 )
             })
+            .when_some(self.filters.related_notes, |this, _| {
+                this.child(
+                    Button::new("active-related-notes-filter")
+                        .icon(IconName::Close)
+                        .label("Related notes")
+                        .ghost()
+                        .xsmall()
+                        .tooltip("Remove related notes filter")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.set_related_notes_filter(None, cx);
+                        })),
+                )
+            })
             .children(self.filters.custom.iter().filter_map(|filter| {
                 let storage::board_properties::PropertyKey::Custom(property_id) = &filter.property
                 else {
@@ -133,6 +183,16 @@ impl BoardView {
                     })),
                 )
             }))
+            .when_some(self.board_id, |this, board_id| {
+                this.child(self.render_related_notes_popover(
+                    storage::workspace_links::WorkspaceItemRef {
+                        kind: storage::workspace_links::WorkspaceItemKind::Board,
+                        id: i64::from(board_id),
+                    },
+                    "board".into(),
+                    cx,
+                ))
+            })
             .child(div().flex_1())
             .when(
                 self.filters.is_active() || self.active_view_config.sort.is_some(),
@@ -178,6 +238,16 @@ impl BoardView {
             })
             .child(self.render_sort_picker(cx))
             .child(self.render_fields_picker(cx))
+            .child(
+                Button::new("copy-board-internal-link")
+                    .icon(IconName::Copy)
+                    .ghost()
+                    .small()
+                    .tooltip("Copy board internal link")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(CopyBoardInternalLinkAction), cx);
+                    }),
+            )
             .child(
                 Button::new("save-board-template")
                     .icon(IconName::Copy)
@@ -273,6 +343,54 @@ impl BoardView {
                     ),
             )
             .child(self.render_custom_filter_controls(cx))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .px_4()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(cx.theme().border.opacity(0.72))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Related notes"),
+                    )
+                    .child(
+                        Checkbox::new("filter-related-notes-present")
+                            .checked(self.filters.related_notes == Some(true))
+                            .small()
+                            .w_full()
+                            .label("Is not empty")
+                            .on_click({
+                                let board_view = board_view.clone();
+                                move |selected, _, cx| {
+                                    board_view.update(cx, |this, cx| {
+                                        this.set_related_notes_filter(selected.then_some(true), cx);
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Checkbox::new("filter-related-notes-empty")
+                            .checked(self.filters.related_notes == Some(false))
+                            .small()
+                            .w_full()
+                            .label("Is empty")
+                            .on_click({
+                                let board_view = board_view.clone();
+                                move |selected, _, cx| {
+                                    board_view.update(cx, |this, cx| {
+                                        this.set_related_notes_filter(
+                                            selected.then_some(false),
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }),
+                    ),
+            )
             .child(
                 v_flex()
                     .gap_2()

@@ -8,10 +8,10 @@ impl BoardView {
 
         let color = self.selected_label_color.to_string();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
-        cx.spawn(async move |this, cx| -> Result<()> {
-            let inserted = runtime
+        cx.spawn(async move |this, cx| {
+            let result = runtime
                 .spawn(async move {
                     board_label::ActiveModel {
                         board_id: Set(board_id as i64),
@@ -22,17 +22,34 @@ impl BoardView {
                     .insert(&*db)
                     .await
                 })
-                .await??;
+                .await;
 
-            this.update(cx, |this, cx| {
-                if this.board_id == Some(board_id) {
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(inserted)) if this.board_id == Some(board_id) => {
+                    this.mutation_error = None;
                     this.board_labels.push(BoardLabelDTO::from(inserted));
+                    cx.emit(BoardViewEvent::DataCommitted {
+                        board_id,
+                        links_changed: false,
+                    });
                     cx.notify();
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    this.mutation_error = Some(format!("Could not create label: {error}").into());
+                    if this.board_id == Some(board_id) {
+                        this.enrich_board_async(cx, board_id);
+                    }
+                }
+                Err(error) => {
+                    this.mutation_error =
+                        Some(format!("Label creation task failed: {error}").into());
+                    if this.board_id == Some(board_id) {
+                        this.enrich_board_async(cx, board_id);
+                    }
                 }
             })
             .ok();
-
-            Ok(())
         })
         .detach();
     }
@@ -62,7 +79,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not rename label", false, async move {
             board_label::ActiveModel {
                 id: Set(label_id as i64),
                 name: Set(name),
@@ -70,7 +87,7 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -115,7 +132,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not update card label", false, async move {
             if assigned {
                 entry_label::ActiveModel {
                     entry_id: Set(entry_id as i64),
@@ -132,7 +149,7 @@ impl BoardView {
                     .await?;
             }
 
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -147,9 +164,9 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not delete label", false, async move {
             BoardLabel::delete_by_id(label_id as i64).exec(&*db).await?;
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 }

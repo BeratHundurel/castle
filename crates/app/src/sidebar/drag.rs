@@ -14,7 +14,7 @@ pub(super) enum SidebarDragKind {
 }
 
 #[derive(Clone)]
-pub(super) struct SidebarDragInfo {
+pub(crate) struct SidebarDragInfo {
     pub(super) kind: SidebarDragKind,
     position: Point<Pixels>,
     title: SharedString,
@@ -24,6 +24,12 @@ pub(super) struct SidebarDragInfo {
 }
 
 impl SidebarDragInfo {
+    pub(crate) fn note_id(&self) -> Option<i64> {
+        match &self.kind {
+            SidebarDragKind::Content(SidebarContentItem::Note { id, .. }) => Some(i64::from(*id)),
+            _ => None,
+        }
+    }
     pub(super) fn project(
         id: u32,
         source_index: usize,

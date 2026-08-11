@@ -103,6 +103,7 @@ pub struct BoardProperties {
 pub enum PropertyKey {
     DueDate,
     Labels,
+    RelatedNotes,
     Custom(i64),
 }
 
@@ -934,6 +935,10 @@ fn validate_view_filter(
             }
             (FilterOperator::IsEmpty | FilterOperator::IsNotEmpty, None) => Ok(()),
             _ => bail!("due date filter has an incompatible operator or value"),
+        },
+        PropertyKey::RelatedNotes => match (&filter.operator, &filter.operand) {
+            (FilterOperator::IsEmpty | FilterOperator::IsNotEmpty, None) => Ok(()),
+            _ => bail!("related notes filter has an incompatible operator or value"),
         },
         PropertyKey::Custom(property_id) => {
             let kind = property_kinds

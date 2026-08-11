@@ -153,6 +153,18 @@ impl AppShell {
                 icon: IconName::Search,
                 kind: PaletteCommandKind::SearchWorkspace,
             },
+            PaletteCommand {
+                label: "Create card from selection".into(),
+                subtitle: "Link the current note to a new card".into(),
+                icon: IconName::Plus,
+                kind: PaletteCommandKind::CreateCardFromSelection,
+            },
+            PaletteCommand {
+                label: "Insert board view".into(),
+                subtitle: "Embed a read-only board projection in this note".into(),
+                icon: IconName::LayoutDashboard,
+                kind: PaletteCommandKind::InsertBoardView,
+            },
         ]);
 
         if query.is_empty() || explicit_new_command.is_some() {

@@ -73,6 +73,7 @@ pub struct ChangeRevision {
     pub revision: i64,
     pub board_revision: i64,
     pub note_revision: i64,
+    pub link_revision: i64,
 }
 
 fn visible_project_ids_query() -> SelectStatement {
@@ -181,8 +182,58 @@ pub async fn create_managed_note(
     file_path: String,
     content: String,
 ) -> Result<WorkspaceItem, DbErr> {
+    let txn = db.begin().await?;
+    let note = insert_managed_note(&txn, project_id, title, file_path, content.clone()).await?;
+    crate::note_links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    txn.commit().await?;
+
+    Ok(WorkspaceItem {
+        id: note.id as u32,
+        title: note.title,
+    })
+}
+
+pub async fn create_managed_linked_note(
+    db: &DatabaseConnection,
+    project_id: Option<u32>,
+    title: String,
+    file_path: String,
+    content: String,
+    item: crate::workspace_links::WorkspaceItemRef,
+) -> Result<WorkspaceItem, DbErr> {
+    let txn = db.begin().await?;
+    let note = insert_managed_note(&txn, project_id, title, file_path, content.clone()).await?;
+    crate::note_links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    crate::workspace_links::set_manual_note_link_in_connection(
+        &txn,
+        note.id,
+        item,
+        true,
+        note.updated_at,
+    )
+    .await
+    .map_err(|error| DbErr::Custom(error.to_string()))?;
+    txn.commit().await?;
+
+    Ok(WorkspaceItem {
+        id: note.id as u32,
+        title: note.title,
+    })
+}
+
+async fn insert_managed_note(
+    db: &impl ConnectionTrait,
+    project_id: Option<u32>,
+    title: String,
+    file_path: String,
+    content: String,
+) -> Result<note::Model, DbErr> {
     let now = now_ts();
-    let note = note::ActiveModel {
+    note::ActiveModel {
         title: Set(title),
         project_id: Set(project_id.map(i64::from)),
         file_path: Set(Some(file_path)),
@@ -194,12 +245,7 @@ pub async fn create_managed_note(
         ..Default::default()
     }
     .insert(db)
-    .await?;
-
-    Ok(WorkspaceItem {
-        id: note.id as u32,
-        title: note.title,
-    })
+    .await
 }
 
 pub async fn import_external_note(
@@ -208,6 +254,7 @@ pub async fn import_external_note(
     file_path: String,
     content: String,
 ) -> Result<WorkspaceItem, DbErr> {
+    let indexed_content = content.clone();
     let existing = Note::find()
         .filter(note::Column::FilePath.eq(file_path.clone()))
         .one(db)
@@ -240,6 +287,9 @@ pub async fn import_external_note(
         .insert(db)
         .await?
     };
+    crate::note_links::index_note_links(db, note.id, &indexed_content, note.updated_at)
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
 
     Ok(WorkspaceItem {
         id: note.id as u32,
@@ -438,7 +488,7 @@ pub async fn load_change_revision(db: &DatabaseConnection) -> Result<ChangeRevis
     let row = db
         .query_one_raw(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT revision, board_revision, note_revision
+            "SELECT revision, board_revision, note_revision, link_revision
              FROM castle_change_revision WHERE id = 1",
         ))
         .await?
@@ -448,6 +498,7 @@ pub async fn load_change_revision(db: &DatabaseConnection) -> Result<ChangeRevis
         revision: row.try_get("", "revision")?,
         board_revision: row.try_get("", "board_revision")?,
         note_revision: row.try_get("", "note_revision")?,
+        link_revision: row.try_get("", "link_revision")?,
     })
 }
 

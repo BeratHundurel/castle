@@ -48,7 +48,7 @@ impl BoardView {
                         }
 
                         let db = cx.global::<DB>().conn.clone();
-                        let runtime = tokio::runtime::Handle::current();
+                        let runtime = cx.global::<DB>().runtime.clone();
                         board_view.update(cx, |_, cx| {
                             cx.spawn_in(window, async move |_, window| {
                                 let result = runtime

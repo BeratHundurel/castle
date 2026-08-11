@@ -518,6 +518,9 @@ impl SidebarView {
             })
             .menu_element(item.edit_action(), move |_window, _cx| {
                 Self::render_context_menu_row("Rename", IconName::Replace, muted)
+            })
+            .menu_element(item.copy_internal_link_action(), move |_window, _cx| {
+                Self::render_context_menu_row("Copy internal link", IconName::Copy, muted)
             });
 
         if item.can_move_to(None) {
@@ -772,6 +775,8 @@ impl Render for SidebarView {
             .on_action(cx.listener(Self::on_move_note_action))
             .on_action(cx.listener(Self::on_delete_note_action))
             .on_action(cx.listener(Self::on_edit_note_action))
+            .on_action(cx.listener(Self::on_copy_board_internal_link_action))
+            .on_action(cx.listener(Self::on_copy_note_internal_link_action))
             .on_action(cx.listener(Self::on_rename_project_action))
             .on_action(cx.listener(Self::on_delete_project_action))
             .on_action(cx.listener(Self::on_toggle_board_pinned_action))

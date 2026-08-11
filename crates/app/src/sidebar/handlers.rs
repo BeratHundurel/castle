@@ -1,4 +1,4 @@
-use gpui::{Context, Styled, Window};
+use gpui::{ClipboardItem, Context, Styled, Window};
 use gpui_component::{
     ActiveTheme, Icon, IconName, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants as _},
@@ -11,6 +11,56 @@ use super::{SidebarView, action::*};
 struct TrashUndoNotification;
 
 impl SidebarView {
+    pub(super) fn on_copy_board_internal_link_action(
+        &mut self,
+        action: &CopyBoardInternalLinkAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = self
+            .projects
+            .iter()
+            .flat_map(|project| project.boards.iter())
+            .chain(self.standalone_boards.iter())
+            .find(|board| board.id == action.0)
+            .map(|board| board.title.as_ref())
+            .unwrap_or("Board");
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            storage::workspace_links::stable_workspace_link(
+                storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::Board,
+                    id: i64::from(action.0),
+                },
+                title,
+            ),
+        ));
+    }
+
+    pub(super) fn on_copy_note_internal_link_action(
+        &mut self,
+        action: &CopyNoteInternalLinkAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = self
+            .projects
+            .iter()
+            .flat_map(|project| project.notes.iter())
+            .chain(self.standalone_notes.iter())
+            .find(|note| note.id == action.0)
+            .map(|note| note.title.as_ref())
+            .unwrap_or("Note");
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            storage::workspace_links::stable_workspace_link(
+                storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::Note,
+                    id: i64::from(action.0),
+                },
+                title,
+            ),
+        ));
+    }
+
     pub(super) fn on_toggle_board_pinned_action(
         &mut self,
         action: &ToggleBoardPinnedAction,

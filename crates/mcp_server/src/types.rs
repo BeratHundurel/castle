@@ -123,6 +123,34 @@ pub(crate) struct NoteInput {
     pub note_id: i64,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceItemKindInput {
+    Board,
+    List,
+    Card,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct NoteWorkspaceRelationInput {
+    pub note_id: i64,
+    pub kind: WorkspaceItemKindInput,
+    pub item_id: i64,
+    #[schemars(description = "Required parent board ID for list and card targets")]
+    pub board_id: Option<i64>,
+    #[schemars(description = "Required parent list ID for card targets")]
+    pub list_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct WorkspaceRelationsInput {
+    pub note_id: Option<i64>,
+    pub kind: Option<WorkspaceItemKindInput>,
+    pub item_id: Option<i64>,
+    pub board_id: Option<i64>,
+    pub list_id: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchNotesInput {
     #[schemars(description = "Case-insensitive text matched against note titles and content")]
@@ -285,6 +313,7 @@ pub(crate) struct ListDetail {
     pub title: String,
     pub position: i32,
     pub entries: Vec<EntryDetail>,
+    pub related_items: Vec<RelatedItemDetail>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -295,6 +324,7 @@ pub(crate) struct BoardDetail {
     pub project_name: Option<String>,
     pub labels: Vec<LabelDetail>,
     pub lists: Vec<ListDetail>,
+    pub related_items: Vec<RelatedItemDetail>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -314,6 +344,7 @@ pub(crate) struct EntryDetail {
     pub labels: Vec<LabelDetail>,
     pub checklist_items: Vec<ChecklistItemDetail>,
     pub attachments: Vec<AttachmentDetail>,
+    pub related_items: Vec<RelatedItemDetail>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -339,6 +370,17 @@ pub(crate) struct NoteDetail {
     pub is_pinned: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    pub related_items: Vec<RelatedItemDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct RelatedItemDetail {
+    pub kind: String,
+    pub id: i64,
+    pub title: String,
+    pub breadcrumb: String,
+    pub stable_link: String,
+    pub origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -356,8 +398,11 @@ pub(crate) struct NoteLinkDetail {
     pub target_note_id: Option<i64>,
     pub target_title: Option<String>,
     pub target_project_name: Option<String>,
+    pub target_kind: Option<String>,
     pub raw_target: String,
     pub display_text: Option<String>,
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub line_number: usize,
 }
 

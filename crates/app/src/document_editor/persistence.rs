@@ -1,15 +1,16 @@
 use entity::{note, note::Entity as Note};
-use gpui::{Context, SharedString, Task, Window};
+use gpui::{Context, EntityInputHandler, SharedString, Task, Window};
 use gpui_component::{WindowExt as _, input::RopeExt as _, notification::Notification};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, TransactionTrait};
 use std::{
     fs::read_to_string,
     fs::{create_dir_all, remove_file, write},
     path::PathBuf,
 };
 
-use crate::DB;
+use crate::{DB, app_settings::AppSettings};
 
+use super::formatting::{format_document_text, map_range_after_format};
 use super::outline::DocumentOutline;
 use super::types::{DocumentKind, DocumentStats, SaveState};
 use super::util::{
@@ -25,30 +26,36 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |this, window| {
             let query_db = db.clone();
-            let model = match runtime
-                .spawn(async move { Note::find_by_id(note_id as i64).one(&*query_db).await })
-                .await
-            {
-                Ok(Ok(Some(model))) => model,
-                Ok(Ok(None)) => {
+            let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
+            let load = runtime.spawn(async move {
+                tokio::select! {
+                    biased;
+                    _ = cancelled => None,
+                    result = Note::find_by_id(note_id as i64).one(&*query_db) => Some(result),
+                }
+            });
+            let model = match load.await {
+                Ok(Some(Ok(Some(model)))) => model,
+                Ok(Some(Ok(None))) => {
                     let message = format!("Note {note_id} was not found.");
                     eprintln!("{message}");
                     this.update_in(window, |this, _, cx| this.fail_load(message, cx))
                         .ok();
                     return;
                 }
-                Ok(Err(err)) => {
+                Ok(Some(Err(err))) => {
                     let message = format!("Failed to load note {note_id}: {err}");
                     eprintln!("{message}");
                     this.update_in(window, |this, _, cx| this.fail_load(message, cx))
                         .ok();
                     return;
                 }
+                Ok(None) => return,
                 Err(err) => {
                     let message = format!("Failed to load note {note_id}: {err}");
                     eprintln!("{message}");
@@ -57,6 +64,7 @@ impl DocumentEditorView {
                     return;
                 }
             };
+            drop(cancel_on_drop);
 
             let path = model.file_path.as_ref().map(PathBuf::from);
             let cached_content = model.cached_content.clone();
@@ -92,6 +100,7 @@ impl DocumentEditorView {
                         let update_content = content.clone();
                         let _ = runtime
                             .spawn(async move {
+                                let txn = update_db.begin().await?;
                                 let updated = note::ActiveModel {
                                     id: Set(note_id as i64),
                                     cached_content: Set(update_content.clone()),
@@ -99,15 +108,16 @@ impl DocumentEditorView {
                                     updated_at: Set(now_ts()),
                                     ..Default::default()
                                 }
-                                .update(&*update_db)
+                                .update(&txn)
                                 .await?;
-                                storage::note_links::index_note_links(
-                                    update_db.as_ref(),
+                                storage::note_links::index_note_links_in_connection(
+                                    &txn,
                                     note_id as i64,
                                     &update_content,
                                     updated.updated_at,
                                 )
                                 .await?;
+                                txn.commit().await?;
                                 Ok::<(), anyhow::Error>(())
                             })
                             .await;
@@ -175,6 +185,8 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.workspace_relation_signature =
+            storage::workspace_links::workspace_relation_signature(&content);
         self.title = model.title.into();
         self.project_id = model.project_id;
         self.current_path = model.file_path.map(PathBuf::from);
@@ -185,8 +197,10 @@ impl DocumentEditorView {
             self.project_id,
             self.kind == DocumentKind::Markdown,
             self.note_link_catalog.clone(),
+            self.workspace_link_catalog.clone(),
         );
         self.file_managed_by_app = model.file_managed_by_app;
+        self.auto_save_format_change = None;
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = is_loading;
         self.load_error = None;
@@ -216,6 +230,7 @@ impl DocumentEditorView {
         self.reset_vim_command();
         self.focus_source_mode(window, cx);
         self.schedule_document_analysis(false, cx);
+        self.refresh_board_embeds(cx);
 
         cx.notify();
     }
@@ -235,7 +250,7 @@ impl DocumentEditorView {
         cx.notify();
     }
 
-    pub(super) fn update_from_editor(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_loading {
             return;
         }
@@ -252,19 +267,28 @@ impl DocumentEditorView {
         }
 
         self.schedule_document_analysis(true, cx);
-        self.schedule_auto_save(cx);
+        self.refresh_board_embeds(cx);
+        self.schedule_auto_save(window, cx);
     }
 
-    pub(super) fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn consume_auto_save_format_change(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(expected) = self.auto_save_format_change.take() else {
+            return false;
+        };
+
+        self.editor.read(cx).value() == expected
+    }
+
+    pub(super) fn schedule_auto_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         let epoch = self.auto_save_epoch;
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
-        self._auto_save_task = Some(cx.spawn(async move |this, cx| {
+        self._auto_save_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
 
             let save_request = this
-                .update(cx, |this, cx| {
+                .update_in(cx, |this, _window, cx| {
                     if this.auto_save_epoch != epoch {
                         return None;
                     }
@@ -273,18 +297,84 @@ impl DocumentEditorView {
                     let path = this.current_path.clone();
                     let is_missing = matches!(this.save_state, SaveState::Missing);
                     let content = this.editor.read(cx).value();
+                    let selection = this.editor.read(cx).selected_range();
+                    let format_on_auto_save = AppSettings::format_on_auto_save(cx)
+                        && matches!(this.kind, DocumentKind::Markdown | DocumentKind::Json);
+
+                    Some((
+                        note_id,
+                        path,
+                        is_missing,
+                        this.kind,
+                        content,
+                        selection,
+                        format_on_auto_save,
+                    ))
+                })
+                .ok()
+                .flatten();
+
+            let Some((note_id, path, is_missing, kind, content, selection, format_on_auto_save)) =
+                save_request
+            else {
+                return;
+            };
+
+            let source = content.to_string();
+            let formatted = if format_on_auto_save {
+                cx.background_executor()
+                    .spawn({
+                        let source = source.clone();
+                        async move { format_document_text(kind, &source).ok().flatten() }
+                    })
+                    .await
+            } else {
+                None
+            };
+
+            let content = this
+                .update_in(cx, |this, window, cx| {
+                    if this.auto_save_epoch != epoch
+                        || this.kind != kind
+                        || *this.editor.read(cx).text() != source
+                    {
+                        return None;
+                    }
+
+                    let content = if let Some(formatted) = formatted {
+                        let mapped_selection =
+                            map_range_after_format(&source, &formatted, selection);
+                        this.auto_save_format_change = Some(formatted.clone().into());
+                        this.editor.update(cx, |editor, cx| {
+                            let document_end =
+                                editor.text().offset_to_offset_utf16(editor.text().len());
+                            EntityInputHandler::replace_text_in_range(
+                                editor,
+                                Some(0..document_end),
+                                &formatted,
+                                window,
+                                cx,
+                            );
+                            editor.set_selected_range(mapped_selection, cx);
+                        });
+                        this.reset_vim_command();
+                        this.schedule_document_analysis(false, cx);
+                        formatted.into()
+                    } else {
+                        content.clone()
+                    };
 
                     if path.is_some() && !is_missing {
                         this.save_state = SaveState::Saving;
                         cx.notify();
                     }
 
-                    Some((note_id, path, is_missing, content))
+                    Some(content)
                 })
                 .ok()
                 .flatten();
 
-            let Some((note_id, path, is_missing, content)) = save_request else {
+            let Some(content) = content else {
                 return;
             };
 
@@ -316,6 +406,7 @@ impl DocumentEditorView {
                         let save_db = db.clone();
                         match runtime
                             .spawn(async move {
+                                let txn = save_db.begin().await?;
                                 let updated = note::ActiveModel {
                                     id: Set(note_id as i64),
                                     cached_content: Set(persisted_content.to_string()),
@@ -323,15 +414,16 @@ impl DocumentEditorView {
                                     updated_at: Set(now_ts()),
                                     ..Default::default()
                                 }
-                                .update(&*save_db)
+                                .update(&txn)
                                 .await?;
-                                storage::note_links::index_note_links(
-                                    save_db.as_ref(),
+                                storage::note_links::index_note_links_in_connection(
+                                    &txn,
                                     note_id as i64,
                                     persisted_content.as_ref(),
                                     updated.updated_at,
                                 )
                                 .await?;
+                                txn.commit().await?;
                                 Ok::<(), anyhow::Error>(())
                             })
                             .await
@@ -347,21 +439,23 @@ impl DocumentEditorView {
                 let persisted_content = content.clone();
                 match runtime
                     .spawn(async move {
+                        let txn = db.begin().await?;
                         let updated = note::ActiveModel {
                             id: Set(note_id as i64),
                             cached_content: Set(persisted_content.to_string()),
                             updated_at: Set(now_ts()),
                             ..Default::default()
                         }
-                        .update(&*db)
+                        .update(&txn)
                         .await?;
-                        storage::note_links::index_note_links(
-                            db.as_ref(),
+                        storage::note_links::index_note_links_in_connection(
+                            &txn,
                             note_id as i64,
                             persisted_content.as_ref(),
                             updated.updated_at,
                         )
                         .await?;
+                        txn.commit().await?;
                         Ok::<(), anyhow::Error>(())
                     })
                     .await
@@ -375,10 +469,18 @@ impl DocumentEditorView {
             match result {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
+                        let workspace_relation_signature =
+                            storage::workspace_links::workspace_relation_signature(&content);
+                        let workspace_links_changed =
+                            this.workspace_relation_signature != workspace_relation_signature;
+                        this.workspace_relation_signature = workspace_relation_signature;
                         this.save_state = this.resolve_save_state(&content, cx);
                         if this.save_state == SaveState::Saved {
-                            this.refresh_note_links(cx);
+                            this.refresh_note_links_with_runtime(runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
+                            if workspace_links_changed {
+                                cx.emit(DocumentEditorEvent::WorkspaceLinksChanged);
+                            }
                         }
                     })
                     .ok();
@@ -501,7 +603,7 @@ impl DocumentEditorView {
         let note_id = self.note_id;
         let db = cx.global::<DB>().conn.clone();
         let background_executor = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let saved_path = path.clone();
         let path_string = path.display().to_string();
 
@@ -524,6 +626,7 @@ impl DocumentEditorView {
                     let persisted_content = content.clone();
                     match runtime
                         .spawn(async move {
+                            let txn = db.begin().await?;
                             let updated = note::ActiveModel {
                                 id: Set(note_id as i64),
                                 file_path: Set(Some(path_string)),
@@ -533,15 +636,16 @@ impl DocumentEditorView {
                                 updated_at: Set(now_ts()),
                                 ..Default::default()
                             }
-                            .update(&*db)
+                            .update(&txn)
                             .await?;
-                            storage::note_links::index_note_links(
-                                db.as_ref(),
+                            storage::note_links::index_note_links_in_connection(
+                                &txn,
                                 note_id as i64,
                                 persisted_content.as_ref(),
                                 updated.updated_at,
                             )
                             .await?;
+                            txn.commit().await?;
                             Ok::<(), anyhow::Error>(())
                         })
                         .await
@@ -574,10 +678,18 @@ impl DocumentEditorView {
                         this.current_path = Some(saved_path);
                         this.file_managed_by_app = file_managed_by_app;
                         this.is_loading = false;
+                        let workspace_relation_signature =
+                            storage::workspace_links::workspace_relation_signature(&content);
+                        let workspace_links_changed =
+                            this.workspace_relation_signature != workspace_relation_signature;
+                        this.workspace_relation_signature = workspace_relation_signature;
                         this.save_state = this.resolve_save_state(&content, cx);
                         if this.save_state == SaveState::Saved {
-                            this.refresh_note_links(cx);
+                            this.refresh_note_links_with_runtime(runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
+                            if workspace_links_changed {
+                                cx.emit(DocumentEditorEvent::WorkspaceLinksChanged);
+                            }
                         }
                         let path = this.current_path.clone();
                         this.apply_document_kind(path.as_deref(), cx);

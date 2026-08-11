@@ -15,7 +15,7 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
@@ -49,7 +49,7 @@ impl SidebarView {
         }
         cx.notify();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -89,7 +89,7 @@ impl SidebarView {
         }
         cx.notify();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -155,7 +155,7 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
                 kind: crate::trash::TrashItemKind::Board,
@@ -222,7 +222,7 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -260,7 +260,7 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
                 kind: crate::trash::TrashItemKind::Note,
@@ -327,7 +327,7 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -432,7 +432,7 @@ impl SidebarView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -496,7 +496,7 @@ impl SidebarView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -601,7 +601,7 @@ impl SidebarView {
         });
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -633,7 +633,7 @@ impl SidebarView {
 
     pub(super) fn delete_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
@@ -753,7 +753,7 @@ impl SidebarView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {

@@ -28,9 +28,10 @@ use crate::types::{
     CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput, CreateNoteInput,
     CreateProjectInput, EntryDetail, EntryPropertyValueDetail, LabelDetail, ListDetail,
     MoveEntryInput, MoveNoteInput, NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary,
-    ProjectSummary, RenameBoardInput, RenameListInput, RenameProjectInput, SearchEntriesInput,
-    SearchNotesInput, SetEntryLabelInput, SetEntryPropertyInput, SetEntryReminderInput,
-    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput,
+    NoteWorkspaceRelationInput, ProjectSummary, RelatedItemDetail, RenameBoardInput,
+    RenameListInput, RenameProjectInput, SearchEntriesInput, SearchNotesInput, SetEntryLabelInput,
+    SetEntryPropertyInput, SetEntryReminderInput, UpdateChecklistItemInput, UpdateEntryInput,
+    UpdateNoteInput, WorkspaceItemKindInput, WorkspaceRelationsInput,
 };
 
 #[derive(Clone)]
@@ -43,6 +44,7 @@ pub(crate) enum ChangeDomain {
     Workspace,
     Board,
     Note,
+    Link,
 }
 
 impl CastleStore {
@@ -131,6 +133,9 @@ impl CastleStore {
             ChangeDomain::Workspace => "revision = revision + 1",
             ChangeDomain::Board => "revision = revision + 1, board_revision = board_revision + 1",
             ChangeDomain::Note => "revision = revision + 1, note_revision = note_revision + 1",
+            ChangeDomain::Link => {
+                "revision = revision + 1, board_revision = board_revision + 1, note_revision = note_revision + 1, link_revision = link_revision + 1"
+            }
         };
         self.db
             .execute_raw(Statement::from_string(
@@ -245,8 +250,78 @@ impl CastleStore {
         Ok(NoteLinksDetail {
             inbound: links.inbound.into_iter().map(note_link_detail).collect(),
             outbound: links.outbound.into_iter().map(note_link_detail).collect(),
-            unresolved: links.unresolved.into_iter().map(note_link_detail).collect(),
+            unresolved: links
+                .unresolved
+                .into_iter()
+                .map(unresolved_link_detail)
+                .collect(),
         })
+    }
+
+    pub(crate) async fn list_workspace_relations(
+        &self,
+        input: WorkspaceRelationsInput,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        match (input.note_id, input.kind, input.item_id) {
+            (Some(note_id), None, None) => {
+                self.active_note(note_id).await?;
+                self.related_items_for_note(note_id).await
+            }
+            (None, Some(kind), Some(item_id)) => {
+                let relation = NoteWorkspaceRelationInput {
+                    note_id: 0,
+                    kind,
+                    item_id,
+                    board_id: input.board_id,
+                    list_id: input.list_id,
+                };
+                let item = self.validate_relation_target(&relation).await?;
+                self.related_items_for_workspace_item(item).await
+            }
+            _ => {
+                bail!("provide either note_id, or kind and item_id with the required hierarchy IDs")
+            }
+        }
+    }
+
+    pub(crate) async fn link_note_to_workspace_item(
+        &self,
+        input: NoteWorkspaceRelationInput,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        self.active_note(input.note_id).await?;
+        let item = self.validate_relation_target(&input).await?;
+        Ok(storage::workspace_links::set_manual_note_link(
+            &self.db,
+            input.note_id,
+            item,
+            true,
+            now_ts(),
+        )
+        .await?
+        .related_notes
+        .into_iter()
+        .map(related_note_detail)
+        .collect())
+    }
+
+    pub(crate) async fn unlink_note_from_workspace_item(
+        &self,
+        input: NoteWorkspaceRelationInput,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        self.active_note(input.note_id).await?;
+        let item = self.validate_relation_target(&input).await?;
+        Ok(storage::workspace_links::set_manual_note_link(
+            &self.db,
+            input.note_id,
+            item,
+            false,
+            now_ts(),
+        )
+        .await?
+        .related_notes
+        .into_iter()
+        .map(related_note_detail)
+        .collect())
     }
 
     pub(crate) async fn search_notes(&self, input: SearchNotesInput) -> Result<Vec<NoteSummary>> {
@@ -293,6 +368,7 @@ impl CastleStore {
             None => None,
         };
         let now = now_ts();
+        let txn = self.db.begin().await?;
         let note = note::ActiveModel {
             title: Set(title),
             project_id: Set(input.project_id),
@@ -304,10 +380,17 @@ impl CastleStore {
             updated_at: Set(now),
             ..Default::default()
         }
-        .insert(&self.db)
+        .insert(&txn)
         .await?;
-        storage::note_links::index_note_links(&self.db, note.id, &input.content, note.updated_at)
-            .await?;
+        storage::note_links::index_note_links_in_connection(
+            &txn,
+            note.id,
+            &input.content,
+            note.updated_at,
+        )
+        .await?;
+        txn.commit().await?;
+        let related_items = self.related_items_for_note(note.id).await?;
         Ok(NoteDetail {
             id: note.id,
             title: note.title,
@@ -320,6 +403,7 @@ impl CastleStore {
             is_pinned: note.is_pinned,
             created_at: note.created_at,
             updated_at: note.updated_at,
+            related_items,
         })
     }
 
@@ -375,11 +459,18 @@ impl CastleStore {
             active.is_pinned = Set(is_pinned);
         }
         active.updated_at = Set(next_updated_at(current_updated_at));
-        let note = active.update(&self.db).await?;
+        let txn = self.db.begin().await?;
+        let note = active.update(&txn).await?;
         if let Some(content) = content_for_index {
-            storage::note_links::index_note_links(&self.db, note.id, &content, note.updated_at)
-                .await?;
+            storage::note_links::index_note_links_in_connection(
+                &txn,
+                note.id,
+                &content,
+                note.updated_at,
+            )
+            .await?;
         }
+        txn.commit().await?;
         self.note_detail(note).await
     }
 
@@ -405,55 +496,71 @@ impl CastleStore {
             Some(project_id) => Some(self.active_project(project_id).await?.name),
             None => None,
         };
-        let labels = BoardLabel::find()
-            .filter(board_label::Column::BoardId.eq(board.id))
-            .order_by_asc(board_label::Column::Id)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(label_detail)
-            .collect();
-
-        let lists = Card::find()
-            .filter(card::Column::BoardId.eq(board.id))
-            .filter(card::Column::DeletedAt.is_null())
-            .order_by_asc(card::Column::Position)
-            .order_by_asc(card::Column::Id)
-            .all(&self.db)
-            .await?;
-
-        let mut details = Vec::with_capacity(lists.len());
-        for list in lists {
-            let entry_models = Entry::find()
-                .filter(entry::Column::CardId.eq(list.id))
-                .filter(entry::Column::DeletedAt.is_null())
-                .order_by_asc(entry::Column::Position)
-                .order_by_asc(entry::Column::Id)
-                .all(&self.db)
+        let board_id = u32::try_from(board.id)
+            .with_context(|| format!("board id {} is outside the supported range", board.id))?;
+        let snapshot = storage::board::load_board_snapshot(&self.db, board_id).await?;
+        let board_item = storage::workspace_links::WorkspaceItemRef {
+            kind: storage::workspace_links::WorkspaceItemKind::Board,
+            id: board.id,
+        };
+        let mut relation_items = Vec::with_capacity(snapshot.cards.len() + 1);
+        relation_items.push(board_item);
+        relation_items.extend(snapshot.cards.iter().map(|list| {
+            storage::workspace_links::WorkspaceItemRef {
+                kind: storage::workspace_links::WorkspaceItemKind::List,
+                id: i64::from(list.id),
+            }
+        }));
+        let mut related_notes =
+            storage::workspace_links::load_related_notes_for_items(&self.db, &relation_items)
                 .await?;
 
-            let mut entries = Vec::with_capacity(entry_models.len());
-            for entry in entry_models {
-                entries.push(
-                    self.entry_detail_with_context(entry, &list, &board, project_name.clone())
-                        .await?,
-                );
-            }
-            details.push(ListDetail {
-                id: list.id,
-                title: list.title,
-                position: list.position,
-                entries,
-            });
-        }
+        let details = snapshot
+            .cards
+            .into_iter()
+            .map(|list| {
+                let list_item = storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::List,
+                    id: i64::from(list.id),
+                };
+                ListDetail {
+                    id: i64::from(list.id),
+                    title: list.title.clone(),
+                    position: list.position,
+                    entries: list
+                        .entries
+                        .into_iter()
+                        .map(|entry| {
+                            entry_record_detail(entry, &list.title, &board, project_name.clone())
+                        })
+                        .collect(),
+                    related_items: related_notes
+                        .remove(&list_item)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(related_note_detail)
+                        .collect(),
+                }
+            })
+            .collect();
 
         Ok(BoardDetail {
             id: board.id,
             title: board.title,
             project_id: board.project_id,
             project_name,
-            labels,
+            labels: snapshot
+                .labels
+                .into_iter()
+                .map(label_record_detail)
+                .collect(),
             lists: details,
+            related_items: related_notes
+                .remove(&board_item)
+                .unwrap_or_default()
+                .into_iter()
+                .map(related_note_detail)
+                .collect(),
         })
     }
 
@@ -631,6 +738,7 @@ impl CastleStore {
             title: list.title,
             position: list.position,
             entries: Vec::new(),
+            related_items: Vec::new(),
         })
     }
 
@@ -660,16 +768,26 @@ impl CastleStore {
             .filter(entry::Column::DeletedAt.is_null())
             .count(&self.db)
             .await? as i32;
+        let description = input.description;
+        let txn = self.db.begin().await?;
         let entry = entry::ActiveModel {
             title: Set(title),
-            description: Set(input.description),
+            description: Set(description.clone()),
             card_id: Set(input.list_id),
             position: Set(position),
             due_on: Set(input.due_on),
             ..Default::default()
         }
-        .insert(&self.db)
+        .insert(&txn)
         .await?;
+        storage::workspace_links::index_entry_workspace_links_in_connection(
+            &txn,
+            entry.id,
+            &description,
+            now_ts(),
+        )
+        .await?;
+        txn.commit().await?;
         self.entry_detail(entry).await
     }
 
@@ -695,7 +813,16 @@ impl CastleStore {
         } else if let Some(due_on) = input.due_on {
             active.due_on = Set(Some(due_on));
         }
-        let entry = active.update(&self.db).await?;
+        let txn = self.db.begin().await?;
+        let entry = active.update(&txn).await?;
+        storage::workspace_links::index_entry_workspace_links_in_connection(
+            &txn,
+            entry.id,
+            &entry.description,
+            now_ts(),
+        )
+        .await?;
+        txn.commit().await?;
         self.entry_detail(entry).await
     }
 
@@ -871,6 +998,116 @@ impl CastleStore {
         self.entry_detail(moved).await
     }
 
+    async fn validate_relation_target(
+        &self,
+        input: &NoteWorkspaceRelationInput,
+    ) -> Result<storage::workspace_links::WorkspaceItemRef> {
+        let kind = match input.kind {
+            WorkspaceItemKindInput::Board => storage::workspace_links::WorkspaceItemKind::Board,
+            WorkspaceItemKindInput::List => storage::workspace_links::WorkspaceItemKind::List,
+            WorkspaceItemKindInput::Card => storage::workspace_links::WorkspaceItemKind::Card,
+        };
+        let catalog = storage::workspace_links::load_workspace_link_catalog(&self.db).await?;
+        let target = catalog
+            .iter()
+            .find(|entry| entry.item.kind == kind && entry.item.id == input.item_id)
+            .with_context(|| format!("active {} {} was not found", kind.as_str(), input.item_id))?;
+        match kind {
+            storage::workspace_links::WorkspaceItemKind::Board => {
+                if input
+                    .board_id
+                    .is_some_and(|board_id| board_id != input.item_id)
+                    || input.list_id.is_some()
+                {
+                    bail!(
+                        "board target hierarchy does not match item_id {}",
+                        input.item_id
+                    );
+                }
+            }
+            storage::workspace_links::WorkspaceItemKind::List => {
+                let board_id = input
+                    .board_id
+                    .context("board_id is required for a list target")?;
+                if target.board_id != Some(board_id) || input.list_id.is_some() {
+                    bail!(
+                        "list {} does not belong to board {}",
+                        input.item_id,
+                        board_id
+                    );
+                }
+            }
+            storage::workspace_links::WorkspaceItemKind::Card => {
+                let board_id = input
+                    .board_id
+                    .context("board_id is required for a card target")?;
+                let list_id = input
+                    .list_id
+                    .context("list_id is required for a card target")?;
+                if target.board_id != Some(board_id) || target.list_id != Some(list_id) {
+                    bail!(
+                        "card {} does not belong to board {} and list {}",
+                        input.item_id,
+                        board_id,
+                        list_id
+                    );
+                }
+            }
+            storage::workspace_links::WorkspaceItemKind::Note => {
+                bail!("note targets are not manual workspace relationships")
+            }
+        }
+        Ok(target.item)
+    }
+
+    async fn related_items_for_note(&self, note_id: i64) -> Result<Vec<RelatedItemDetail>> {
+        let links = storage::workspace_links::load_note_workspace_links(&self.db, note_id).await?;
+        let mut grouped = HashMap::<
+            storage::workspace_links::WorkspaceItemRef,
+            (storage::workspace_links::WorkspaceCatalogEntry, Vec<String>),
+        >::new();
+        for reference in links.references {
+            let origin = workspace_origin_label(reference.origin);
+            let row = grouped
+                .entry(reference.item.item)
+                .or_insert_with(|| (reference.item.clone(), Vec::new()));
+            if !row.1.iter().any(|existing| existing == origin) {
+                row.1.push(origin.to_string());
+            }
+        }
+        let mut details = grouped
+            .into_values()
+            .map(|(entry, origins)| related_item_detail(entry, origins))
+            .collect::<Vec<_>>();
+        details.sort_by_key(|detail| (detail.kind.clone(), detail.breadcrumb.to_lowercase()));
+        Ok(details)
+    }
+
+    async fn related_items_for_workspace_item(
+        &self,
+        item: storage::workspace_links::WorkspaceItemRef,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        let related = storage::workspace_links::load_related_notes(&self.db, item).await?;
+        let catalog = storage::workspace_links::load_workspace_link_catalog(&self.db).await?;
+        Ok(related
+            .into_iter()
+            .filter_map(|note| {
+                let entry = catalog.iter().find(|entry| {
+                    entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note
+                        && entry.item.id == note.note_id
+                })?;
+                Some(related_item_detail(
+                    entry.clone(),
+                    note.origins
+                        .into_iter()
+                        .map(workspace_origin_label)
+                        .map(str::to_string)
+                        .collect(),
+                ))
+            })
+            .collect())
+    }
+
     async fn active_note(&self, note_id: i64) -> Result<note::Model> {
         let note = Note::find_by_id(note_id)
             .filter(note::Column::DeletedAt.is_null())
@@ -895,6 +1132,7 @@ impl CastleStore {
             },
             None => (note.cached_content.clone(), false),
         };
+        let related_items = self.related_items_for_note(note.id).await?;
         Ok(NoteDetail {
             id: note.id,
             title: note.title,
@@ -907,6 +1145,7 @@ impl CastleStore {
             is_pinned: note.is_pinned,
             created_at: note.created_at,
             updated_at: note.updated_at,
+            related_items,
         })
     }
 
@@ -1014,6 +1253,12 @@ impl CastleStore {
                 file_name: attachment.file_name,
             })
             .collect();
+        let related_items = self
+            .related_items_for_workspace_item(storage::workspace_links::WorkspaceItemRef {
+                kind: storage::workspace_links::WorkspaceItemKind::Card,
+                id: entry.id,
+            })
+            .await?;
         Ok(EntryDetail {
             id: entry.id,
             title: entry.title,
@@ -1030,6 +1275,7 @@ impl CastleStore {
             labels,
             checklist_items,
             attachments,
+            related_items,
         })
     }
 }
@@ -1158,9 +1404,130 @@ fn note_link_detail(link: storage::note_links::NoteLinkReference) -> NoteLinkDet
         target_note_id: link.target_note_id,
         target_title: link.target_title,
         target_project_name: link.target_project_name,
+        target_kind: None,
         raw_target: link.raw_target,
         display_text: link.display_text,
+        start_byte: link.start_byte,
+        end_byte: link.end_byte,
         line_number: link.line_number,
+    }
+}
+
+fn unresolved_link_detail(link: storage::note_links::UnresolvedLinkReference) -> NoteLinkDetail {
+    NoteLinkDetail {
+        source_note_id: link.source_note_id,
+        source_title: link.source_title,
+        source_project_name: link.source_project_name,
+        target_note_id: None,
+        target_title: None,
+        target_project_name: None,
+        target_kind: link.target_kind.map(|kind| kind.as_str().to_string()),
+        raw_target: link.raw_target,
+        display_text: link.display_text,
+        start_byte: link.start_byte,
+        end_byte: link.end_byte,
+        line_number: link.line_number,
+    }
+}
+
+fn workspace_origin_label(origin: storage::workspace_links::WorkspaceLinkOrigin) -> &'static str {
+    match origin {
+        storage::workspace_links::WorkspaceLinkOrigin::Manual => "manual",
+        storage::workspace_links::WorkspaceLinkOrigin::Wikilink => "wikilink",
+        storage::workspace_links::WorkspaceLinkOrigin::Embed => "embed",
+    }
+}
+
+fn related_item_detail(
+    entry: storage::workspace_links::WorkspaceCatalogEntry,
+    origins: Vec<String>,
+) -> RelatedItemDetail {
+    RelatedItemDetail {
+        kind: entry.item.kind.as_str().to_string(),
+        id: entry.item.id,
+        title: entry.title.clone(),
+        breadcrumb: entry.breadcrumb(),
+        stable_link: entry.stable_link(),
+        origins,
+    }
+}
+
+fn related_note_detail(note: storage::workspace_links::RelatedNote) -> RelatedItemDetail {
+    let item = storage::workspace_links::WorkspaceItemRef {
+        kind: storage::workspace_links::WorkspaceItemKind::Note,
+        id: note.note_id,
+    };
+    RelatedItemDetail {
+        kind: item.kind.as_str().to_string(),
+        id: item.id,
+        title: note.title.clone(),
+        breadcrumb: note
+            .project_name
+            .as_ref()
+            .map(|project| format!("{project} / {}", note.title))
+            .unwrap_or_else(|| note.title.clone()),
+        stable_link: storage::workspace_links::stable_workspace_link(item, &note.title),
+        origins: note
+            .origins
+            .into_iter()
+            .map(workspace_origin_label)
+            .map(str::to_string)
+            .collect(),
+    }
+}
+
+fn label_record_detail(label: storage::board::LabelRecord) -> LabelDetail {
+    LabelDetail {
+        id: i64::from(label.id),
+        board_id: i64::from(label.board_id),
+        name: label.name,
+        color: label.color,
+    }
+}
+
+fn entry_record_detail(
+    entry: storage::board::EntryRecord,
+    list_title: &str,
+    board: &board::Model,
+    project_name: Option<String>,
+) -> EntryDetail {
+    EntryDetail {
+        id: i64::from(entry.id),
+        title: entry.title,
+        description: entry.description,
+        due_on: entry.due_on,
+        reminder_enabled: entry.reminder_enabled,
+        position: entry.position,
+        list_id: i64::from(entry.card_id),
+        list_title: list_title.to_string(),
+        board_id: board.id,
+        board_title: board.title.clone(),
+        project_id: board.project_id,
+        project_name,
+        labels: entry.labels.into_iter().map(label_record_detail).collect(),
+        checklist_items: entry
+            .checklist_items
+            .into_iter()
+            .map(|item| ChecklistItemDetail {
+                id: i64::from(item.id),
+                title: item.title,
+                checked: item.checked,
+                position: item.position,
+            })
+            .collect(),
+        attachments: entry
+            .attachments
+            .into_iter()
+            .map(|attachment| AttachmentDetail {
+                id: i64::from(attachment.id),
+                file_name: attachment.file_name,
+            })
+            .collect(),
+        related_items: entry
+            .related_notes
+            .into_iter()
+            .map(related_note_detail)
+            .collect(),
     }
 }
 
@@ -1255,6 +1622,29 @@ mod tests {
                 assigned: true,
             })
             .await?;
+        let note = store
+            .create_note(CreateNoteInput {
+                title: "Delivery context".to_string(),
+                content: String::new(),
+                project_id: Some(project.id),
+            })
+            .await?;
+        store
+            .link_note_to_workspace_item(NoteWorkspaceRelationInput {
+                note_id: note.id,
+                kind: WorkspaceItemKindInput::Card,
+                item_id: entry.id,
+                board_id: Some(board.id),
+                list_id: Some(first_list.id),
+            })
+            .await?;
+        entry_attachment::ActiveModel {
+            entry_id: Set(entry.id),
+            file_name: Set("context.png".to_string()),
+            ..Default::default()
+        }
+        .insert(&store.db)
+        .await?;
         let property = store
             .create_board_property(CreateBoardPropertyInput {
                 board_id: board.id,
@@ -1297,7 +1687,16 @@ mod tests {
             })
             .await?;
         assert_eq!(moved.list_title, "Selected");
-        assert_eq!(store.get_board(board.id).await?.lists[1].entries.len(), 1);
+        let board_detail = store.get_board(board.id).await?;
+        let moved_entry = &board_detail.lists[1].entries[0];
+        assert_eq!(moved_entry.labels[0].name, "Agent");
+        assert!(moved_entry.checklist_items[0].checked);
+        assert_eq!(moved_entry.attachments[0].file_name, "context.png");
+        assert_eq!(moved_entry.related_items[0].id, note.id);
+        assert_eq!(
+            moved_entry.related_items[0].breadcrumb,
+            "Agent work / Delivery context"
+        );
         Ok(())
     }
 
@@ -1348,6 +1747,87 @@ mod tests {
             .await?;
         assert_eq!(standalone.project_id, None);
         assert_eq!(standalone.content, "# Roadmap\n\nNotes are supported.");
+
+        let missing = store
+            .create_note(CreateNoteInput {
+                title: "Missing target".to_string(),
+                content: "See [[card:999|Unavailable card]]".to_string(),
+                project_id: None,
+            })
+            .await?;
+        let links = store.get_note_links(missing.id).await?;
+        assert_eq!(links.unresolved.len(), 1);
+        assert_eq!(links.unresolved[0].target_kind.as_deref(), Some("card"));
+        assert_eq!(links.unresolved[0].start_byte, 4);
+        assert_eq!(links.unresolved[0].end_byte, 33);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn workspace_relations_validate_hierarchy_and_reindex_card_descriptions() -> Result<()> {
+        let store = store().await?;
+        let board = store
+            .create_board(CreateBoardInput {
+                title: "Roadmap".to_string(),
+                project_id: None,
+            })
+            .await?;
+        let list = store
+            .create_list(CreateListInput {
+                board_id: board.id,
+                title: "Current".to_string(),
+            })
+            .await?;
+        let card = store
+            .create_entry(CreateEntryInput {
+                list_id: list.id,
+                title: "Research API".to_string(),
+                description: String::new(),
+                due_on: None,
+            })
+            .await?;
+        let note = store
+            .create_note(CreateNoteInput {
+                title: "API research".to_string(),
+                content: String::new(),
+                project_id: None,
+            })
+            .await?;
+        let relation = NoteWorkspaceRelationInput {
+            note_id: note.id,
+            kind: WorkspaceItemKindInput::Card,
+            item_id: card.id,
+            board_id: Some(board.id),
+            list_id: Some(list.id),
+        };
+        let related = store
+            .link_note_to_workspace_item(NoteWorkspaceRelationInput { ..relation })
+            .await?;
+        assert_eq!(related.len(), 1);
+        assert!(related[0].origins.iter().any(|origin| origin == "manual"));
+
+        let invalid = store
+            .link_note_to_workspace_item(NoteWorkspaceRelationInput {
+                board_id: Some(board.id + 1),
+                ..relation
+            })
+            .await;
+        assert!(invalid.is_err());
+
+        store
+            .update_entry(UpdateEntryInput {
+                entry_id: card.id,
+                title: None,
+                description: Some(format!("See [[note:{}|API research]]", note.id)),
+                due_on: None,
+                clear_due_on: false,
+            })
+            .await?;
+        let related = store
+            .unlink_note_from_workspace_item(NoteWorkspaceRelationInput { ..relation })
+            .await?;
+        assert_eq!(related.len(), 1);
+        assert!(related[0].origins.iter().any(|origin| origin == "wikilink"));
         Ok(())
     }
 
@@ -1393,7 +1873,7 @@ mod tests {
             .db
             .query_one_raw(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT revision, board_revision, note_revision FROM castle_change_revision WHERE id = 1",
+                "SELECT revision, board_revision, note_revision, link_revision FROM castle_change_revision WHERE id = 1",
             ))
             .await?
             .context("revision row was not found")?;

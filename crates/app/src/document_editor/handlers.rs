@@ -6,6 +6,50 @@ use super::emmet::parse_emmet_abbreviation;
 use super::{DocumentEditorView, DocumentKind};
 
 impl DocumentEditorView {
+    pub(super) fn on_action_create_card_from_selection(
+        &mut self,
+        _: &CreateCardFromSelectionAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_card_from_selection(cx);
+    }
+
+    pub(crate) fn create_card_from_selection(&mut self, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        let selected = editor.selected_value().to_string();
+        let source = if selected.trim().is_empty() {
+            let text = editor.text().to_string();
+            current_line(&text, editor.cursor()).to_string()
+        } else {
+            selected
+        };
+        let Some(title) = card_title_from_source(&source) else {
+            return;
+        };
+        cx.emit(super::DocumentEditorEvent::CreateCardFromSelection {
+            note_id: self.note_id,
+            title,
+        });
+    }
+
+    pub(super) fn on_action_insert_board_view(
+        &mut self,
+        _: &InsertBoardViewAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_insert_board_view(cx);
+    }
+
+    pub(crate) fn request_insert_board_view(&mut self, cx: &mut Context<Self>) {
+        if self.kind == DocumentKind::Markdown {
+            cx.emit(super::DocumentEditorEvent::InsertBoardView {
+                note_id: self.note_id,
+            });
+        }
+    }
+
     pub(super) fn on_action_toggle_outline(
         &mut self,
         _: &ToggleDocumentOutline,
@@ -283,5 +327,53 @@ impl DocumentEditorView {
                 .update(cx, |editor, cx| editor.focus(window, cx));
             cx.notify();
         }
+    }
+}
+
+fn current_line(text: &str, cursor: usize) -> &str {
+    let cursor = cursor.min(text.len());
+    let start = text[..cursor].rfind('\n').map_or(0, |index| index + 1);
+    let end = text[cursor..]
+        .find('\n')
+        .map_or(text.len(), |index| cursor + index);
+    &text[start..end]
+}
+
+fn card_title_from_source(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let mut line = line.trim();
+        while let Some(rest) = line.strip_prefix('#').or_else(|| line.strip_prefix('>')) {
+            line = rest.trim_start();
+        }
+        for marker in ["- [ ] ", "- [x] ", "- [X] ", "- ", "* ", "+ "] {
+            if let Some(rest) = line.strip_prefix(marker) {
+                line = rest.trim_start();
+                break;
+            }
+        }
+        if let Some(separator) = line.find(['.', ')']) {
+            let prefix = &line[..separator];
+            if !prefix.is_empty() && prefix.chars().all(|character| character.is_ascii_digit()) {
+                line = line[separator + 1..].trim_start();
+            }
+        }
+        (!line.is_empty()).then(|| line.to_string())
+    })
+}
+
+#[cfg(test)]
+mod integration_action_tests {
+    use super::card_title_from_source;
+
+    #[test]
+    fn card_title_strips_common_markdown_markers() {
+        assert_eq!(
+            card_title_from_source("\n## - [ ] Research API\nMore"),
+            Some("Research API".to_string())
+        );
+        assert_eq!(
+            card_title_from_source("12. Ship the release"),
+            Some("Ship the release".to_string())
+        );
     }
 }

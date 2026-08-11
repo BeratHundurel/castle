@@ -179,8 +179,8 @@ pub async fn import_folder(
     db: &DatabaseConnection,
     scan: FolderScan,
 ) -> Result<FolderImportResult> {
-    Ok(db
-        .transaction::<_, FolderImportResult, anyhow::Error>(|txn| {
+    let (result, indexed_notes) = db
+        .transaction::<_, (FolderImportResult, Vec<(i64, String, i64)>), anyhow::Error>(|txn| {
             Box::pin(async move {
                 let folder_path = scan.root.to_string_lossy().into_owned();
                 let existing_project = Project::find()
@@ -218,6 +218,7 @@ pub async fn import_folder(
                 let mut inserted_count = 0usize;
                 let mut updated_count = 0usize;
                 let mut skipped_count = scan.skipped_files;
+                let mut indexed_notes = Vec::new();
 
                 for document in scan.documents {
                     let path_string = document.path.to_string_lossy().into_owned();
@@ -234,7 +235,8 @@ pub async fn import_folder(
                             continue;
                         }
 
-                        note::ActiveModel {
+                        let indexed_content = document.content.clone();
+                        let updated = note::ActiveModel {
                             id: Set(existing.id),
                             title: Set(document.title),
                             project_id: Set(Some(project_id)),
@@ -247,10 +249,12 @@ pub async fn import_folder(
                         }
                         .update(txn)
                         .await?;
+                        indexed_notes.push((updated.id, indexed_content, updated.updated_at));
                         updated_count = updated_count.saturating_add(1);
                     } else {
                         let now = now_ts();
-                        note::ActiveModel {
+                        let indexed_content = document.content.clone();
+                        let inserted = note::ActiveModel {
                             title: Set(document.title),
                             project_id: Set(Some(project_id)),
                             file_path: Set(Some(path_string)),
@@ -263,20 +267,28 @@ pub async fn import_folder(
                         }
                         .insert(txn)
                         .await?;
+                        indexed_notes.push((inserted.id, indexed_content, inserted.updated_at));
                         inserted_count = inserted_count.saturating_add(1);
                     }
                 }
 
-                Ok(FolderImportResult {
-                    project_name,
-                    inserted: inserted_count,
-                    updated: updated_count,
-                    skipped: skipped_count,
-                    created_project,
-                })
+                Ok((
+                    FolderImportResult {
+                        project_name,
+                        inserted: inserted_count,
+                        updated: updated_count,
+                        skipped: skipped_count,
+                        created_project,
+                    },
+                    indexed_notes,
+                ))
             })
         })
-        .await?)
+        .await?;
+    for (note_id, content, updated_at) in indexed_notes {
+        crate::note_links::index_note_links(db, note_id, &content, updated_at).await?;
+    }
+    Ok(result)
 }
 
 fn now_ts() -> i64 {
@@ -346,7 +358,7 @@ mod tests {
         assert!(first.created_project);
         assert_eq!(first.inserted, 1);
 
-        fs::write(&note_path, "second")?;
+        fs::write(&note_path, "second [[Missing note]]")?;
         let second = import_folder(&db, scan_folder(directory.path())?).await?;
         assert!(!second.created_project);
         assert_eq!(second.inserted, 0);
@@ -357,8 +369,10 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].title, "notes");
-        assert_eq!(notes[0].cached_content, "second");
+        assert_eq!(notes[0].cached_content, "second [[Missing note]]");
         assert!(!notes[0].file_managed_by_app);
+        let links = crate::note_links::load_note_links(&db, notes[0].id).await?;
+        assert_eq!(links.unresolved.len(), 1);
 
         Ok(())
     }

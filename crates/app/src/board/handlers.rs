@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use gpui::{Context, Styled, Window};
+use gpui::{ClipboardItem, Context, Styled, Window};
 use gpui_component::{
     ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, calendar::Date,
     dialog::DialogButtonProps,
@@ -9,6 +9,81 @@ use super::filters::DueDateFilter;
 use super::{BoardView, action::*};
 
 impl BoardView {
+    pub(super) fn on_copy_board_internal_link_action(
+        &mut self,
+        _: &CopyBoardInternalLinkAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+
+        let title = self
+            .workspace_link_catalog
+            .iter()
+            .find(|entry| {
+                entry.item.kind == storage::workspace_links::WorkspaceItemKind::Board
+                    && entry.item.id == i64::from(board_id)
+            })
+            .map(|entry| entry.title.as_str())
+            .unwrap_or("Board");
+
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            storage::workspace_links::stable_workspace_link(
+                storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::Board,
+                    id: i64::from(board_id),
+                },
+                title,
+            ),
+        ));
+    }
+
+    pub(super) fn on_copy_list_internal_link_action(
+        &mut self,
+        action: &CopyListInternalLinkAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = self
+            .cards
+            .iter()
+            .find(|list| list.id == action.0)
+            .map(|list| list.title.as_ref())
+            .unwrap_or("List");
+
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            storage::workspace_links::stable_workspace_link(
+                storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::List,
+                    id: i64::from(action.0),
+                },
+                title,
+            ),
+        ));
+    }
+
+    pub(super) fn on_copy_card_internal_link_action(
+        &mut self,
+        _: &CopyCardInternalLinkAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, entry)) = self.selected_entry() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            storage::workspace_links::stable_workspace_link(
+                storage::workspace_links::WorkspaceItemRef {
+                    kind: storage::workspace_links::WorkspaceItemKind::Card,
+                    id: i64::from(entry.id),
+                },
+                entry.title.as_ref(),
+            ),
+        ));
+    }
+
     pub(super) fn on_rename_board_view_action(
         &mut self,
         action: &RenameBoardViewAction,
@@ -137,6 +212,13 @@ impl BoardView {
 
     pub(super) fn clear_label_filters(&mut self, cx: &mut Context<Self>) {
         self.filters.label_ids.clear();
+        self.filters.sync_config(&mut self.active_view_config);
+        self.view_config_dirty = true;
+        cx.notify();
+    }
+
+    pub(super) fn set_related_notes_filter(&mut self, value: Option<bool>, cx: &mut Context<Self>) {
+        self.filters.related_notes = value;
         self.filters.sync_config(&mut self.active_view_config);
         self.view_config_dirty = true;
         cx.notify();

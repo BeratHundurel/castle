@@ -5,8 +5,8 @@ use entity::{
     card::Entity as Card, entry, entry::Entity as Entry,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,32 +86,233 @@ pub fn built_in_templates() -> Vec<BoardTemplate> {
         built_in(
             "kanban",
             "Kanban",
-            "A simple flow for everyday work.",
-            &["To do", "In progress", "Done"],
+            "A focused workflow with starter cards for planning, doing, and reflecting.",
+            &[
+                (
+                    "To do",
+                    &[
+                        (
+                            "Clarify the next outcome",
+                            "Write down what success looks like before starting the work.",
+                        ),
+                        (
+                            "Break work into small steps",
+                            "Turn the outcome into cards that can move independently.",
+                        ),
+                    ],
+                ),
+                (
+                    "In progress",
+                    &[(
+                        "Focus on one active item",
+                        "Keep work in progress small so blocked work stays visible.",
+                    )],
+                ),
+                (
+                    "Done",
+                    &[(
+                        "Review what shipped",
+                        "Capture follow-ups and move completed work here.",
+                    )],
+                ),
+            ],
         ),
         built_in(
             "personal-tasks",
             "Personal tasks",
-            "Capture tasks, choose what matters, and finish the day clearly.",
-            &["Inbox", "This week", "Today", "Done"],
+            "Capture loose ends, plan the week, and keep today's commitments realistic.",
+            &[
+                (
+                    "Inbox",
+                    &[
+                        (
+                            "Capture loose ends",
+                            "Add anything competing for your attention without sorting it yet.",
+                        ),
+                        (
+                            "Collect errands and reminders",
+                            "Keep quick obligations here until the next planning pass.",
+                        ),
+                    ],
+                ),
+                (
+                    "This week",
+                    &[
+                        (
+                            "Plan the week",
+                            "Choose a few outcomes worth finishing before the week ends.",
+                        ),
+                        (
+                            "Make time for something restorative",
+                            "Protect time for rest, learning, or people you care about.",
+                        ),
+                    ],
+                ),
+                (
+                    "Today",
+                    &[(
+                        "Choose today's focus",
+                        "Pick the smallest set of commitments that would make today feel complete.",
+                    )],
+                ),
+                (
+                    "Done",
+                    &[(
+                        "Review completed work",
+                        "Move finished cards here and clear the column during your weekly reset.",
+                    )],
+                ),
+            ],
         ),
         built_in(
             "project-plan",
             "Project plan",
-            "Move scoped work from planning through review.",
-            &["Backlog", "Planned", "In progress", "Review", "Done"],
+            "Shape a project from its first questions through delivery and follow-up.",
+            &[
+                (
+                    "Backlog",
+                    &[
+                        (
+                            "Define the problem",
+                            "Describe who is affected, what is happening, and why it matters.",
+                        ),
+                        (
+                            "Collect requirements",
+                            "Record essential needs, constraints, open questions, and non-goals.",
+                        ),
+                    ],
+                ),
+                (
+                    "Planned",
+                    &[
+                        (
+                            "Set milestones",
+                            "Split delivery into meaningful checkpoints with clear outcomes.",
+                        ),
+                        (
+                            "Identify risks and dependencies",
+                            "Note what could block progress and who can help resolve it.",
+                        ),
+                    ],
+                ),
+                (
+                    "In progress",
+                    &[(
+                        "Build the first milestone",
+                        "Keep implementation notes, decisions, and links together on this card.",
+                    )],
+                ),
+                (
+                    "Review",
+                    &[(
+                        "Review with stakeholders",
+                        "Confirm the outcome meets the agreed scope and capture requested changes.",
+                    )],
+                ),
+                (
+                    "Done",
+                    &[(
+                        "Share the outcome",
+                        "Document what changed, where to find it, and any follow-up work.",
+                    )],
+                ),
+            ],
         ),
         built_in(
             "content-calendar",
             "Content calendar",
-            "Track ideas through drafting and publication.",
-            &["Ideas", "Drafting", "Review", "Scheduled", "Published"],
+            "Develop a balanced publishing pipeline from idea to performance review.",
+            &[
+                (
+                    "Ideas",
+                    &[
+                        (
+                            "Answer a recurring audience question",
+                            "List the question, the audience, and the useful takeaway.",
+                        ),
+                        (
+                            "Tell a customer story",
+                            "Capture the challenge, turning point, result, and permission needed.",
+                        ),
+                    ],
+                ),
+                (
+                    "Drafting",
+                    &[(
+                        "Create the first draft",
+                        "Add an outline, working headline, key examples, and call to action.",
+                    )],
+                ),
+                (
+                    "Review",
+                    &[(
+                        "Editorial review",
+                        "Check accuracy, voice, accessibility, links, and supporting visuals.",
+                    )],
+                ),
+                (
+                    "Scheduled",
+                    &[(
+                        "Prepare distribution",
+                        "Set the publish date and adapt the message for each channel.",
+                    )],
+                ),
+                (
+                    "Published",
+                    &[(
+                        "Review performance",
+                        "Record what resonated, what to improve, and ideas worth reusing.",
+                    )],
+                ),
+            ],
         ),
         built_in(
             "bug-triage",
             "Bug triage",
-            "Keep reported issues visible from confirmation to resolution.",
-            &["Reported", "Confirmed", "In progress", "Verify", "Resolved"],
+            "Turn incoming reports into reproducible, verified fixes with clear context.",
+            &[
+                (
+                    "Reported",
+                    &[
+                        (
+                            "Capture a new report",
+                            "Include the observed behavior, expected behavior, environment, and impact.",
+                        ),
+                        (
+                            "Request missing details",
+                            "Ask for reproduction steps, screenshots, logs, or a sample file.",
+                        ),
+                    ],
+                ),
+                (
+                    "Confirmed",
+                    &[(
+                        "Reproduce and assess",
+                        "Record the smallest reproduction, severity, affected area, and likely owner.",
+                    )],
+                ),
+                (
+                    "In progress",
+                    &[(
+                        "Implement a focused fix",
+                        "Note the root cause and add regression coverage for the failing behavior.",
+                    )],
+                ),
+                (
+                    "Verify",
+                    &[(
+                        "Verify the original scenario",
+                        "Retest the reproduction and check neighboring edge cases for regressions.",
+                    )],
+                ),
+                (
+                    "Resolved",
+                    &[(
+                        "Record the resolution",
+                        "Summarize the fix, validation performed, and any remaining follow-up.",
+                    )],
+                ),
+            ],
         ),
     ]
 }
@@ -145,19 +346,43 @@ pub async fn create_board_from_template(
     title: String,
     definition: BoardTemplateDefinition,
 ) -> Result<WorkspaceItem> {
+    let transaction = db.begin().await?;
+    let board =
+        create_board_from_template_in_transaction(&transaction, project_id, title, definition)
+            .await?;
+    transaction.commit().await?;
+    let snapshot = crate::board::load_board_snapshot(db, board.id).await?;
+    let indexed_at = Utc::now().timestamp();
+    for entry in snapshot.cards.into_iter().flat_map(|list| list.entries) {
+        crate::workspace_links::index_entry_workspace_links(
+            db,
+            i64::from(entry.id),
+            &entry.description,
+            indexed_at,
+        )
+        .await?;
+    }
+    Ok(board)
+}
+
+pub(crate) async fn create_board_from_template_in_transaction(
+    transaction: &DatabaseTransaction,
+    project_id: Option<u32>,
+    title: String,
+    definition: BoardTemplateDefinition,
+) -> Result<WorkspaceItem> {
     let title = title.trim();
     if title.is_empty() {
         bail!("board name cannot be empty");
     }
     validate_definition(&definition)?;
 
-    let transaction = db.begin().await?;
     let board = entity::board::ActiveModel {
         title: Set(title.to_string()),
         project_id: Set(project_id.map(i64::from)),
         ..Default::default()
     }
-    .insert(&transaction)
+    .insert(transaction)
     .await?;
 
     for (column_position, template_column) in definition.columns.into_iter().enumerate() {
@@ -167,7 +392,7 @@ pub async fn create_board_from_template(
             position: Set(column_position as i32),
             ..Default::default()
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await?;
 
         for (entry_position, template_entry) in template_column.entries.into_iter().enumerate() {
@@ -178,12 +403,11 @@ pub async fn create_board_from_template(
                 position: Set(entry_position as i32),
                 ..Default::default()
             }
-            .insert(&transaction)
+            .insert(transaction)
             .await?;
         }
     }
 
-    transaction.commit().await?;
     Ok(WorkspaceItem {
         id: board.id as u32,
         title: board.title,
@@ -271,7 +495,12 @@ pub async fn delete_custom_template(db: &DatabaseConnection, template_id: i64) -
     Ok(())
 }
 
-fn built_in(id: &'static str, name: &str, description: &str, columns: &[&str]) -> BoardTemplate {
+fn built_in(
+    id: &'static str,
+    name: &str,
+    description: &str,
+    columns: &[(&str, &[(&str, &str)])],
+) -> BoardTemplate {
     BoardTemplate {
         id: BoardTemplateId::BuiltIn(id),
         name: name.to_string(),
@@ -279,9 +508,15 @@ fn built_in(id: &'static str, name: &str, description: &str, columns: &[&str]) -
         definition: BoardTemplateDefinition {
             columns: columns
                 .iter()
-                .map(|title| BoardTemplateColumn {
+                .map(|(title, entries)| BoardTemplateColumn {
                     title: (*title).to_string(),
-                    entries: Vec::new(),
+                    entries: entries
+                        .iter()
+                        .map(|(title, description)| BoardTemplateEntry {
+                            title: (*title).to_string(),
+                            description: (*description).to_string(),
+                        })
+                        .collect(),
                 })
                 .collect(),
         },
@@ -337,17 +572,47 @@ mod tests {
     #[test]
     fn built_ins_keep_blank_and_structured_starting_points() {
         let templates = built_in_templates();
-        assert!(templates.iter().any(|template| {
-            template.id == BoardTemplateId::BuiltIn("blank") && template.column_count() == 0
+        let blank = templates
+            .iter()
+            .find(|template| template.id == BoardTemplateId::BuiltIn("blank"));
+        assert!(blank.is_some_and(|template| template.column_count() == 0));
+
+        let kanban = templates
+            .iter()
+            .find(|template| template.id == BoardTemplateId::BuiltIn("kanban"));
+        assert!(kanban.is_some_and(|template| {
+            template
+                .definition
+                .columns
+                .iter()
+                .map(|column| column.title.as_str())
+                .eq(["To do", "In progress", "Done"])
+                && template.entry_count() == 4
         }));
-        assert!(templates.iter().any(|template| {
-            template.id == BoardTemplateId::BuiltIn("kanban")
-                && template
-                    .definition
-                    .columns
-                    .iter()
-                    .map(|column| column.title.as_str())
-                    .eq(["To do", "In progress", "Done"])
+    }
+
+    #[test]
+    fn structured_built_ins_include_described_starter_cards() {
+        let templates = built_in_templates();
+        let structured = templates
+            .iter()
+            .filter(|template| template.id != BoardTemplateId::BuiltIn("blank"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(structured.len(), 5);
+        assert!(
+            structured
+                .iter()
+                .all(|template| template.entry_count() >= 4)
+        );
+        assert!(structured.iter().all(|template| {
+            template.definition.columns.iter().all(|column| {
+                !column.entries.is_empty()
+                    && column
+                        .entries
+                        .iter()
+                        .all(|entry| !entry.description.trim().is_empty())
+            })
         }));
     }
 

@@ -22,6 +22,49 @@ pub(crate) struct EntryDTO {
     pub(crate) labels: Vec<BoardLabelDTO>,
     pub(crate) checklist_items: Vec<ChecklistItemDTO>,
     pub(crate) attachments: Vec<EntryAttachmentDTO>,
+    pub(crate) related_notes: Vec<storage::workspace_links::RelatedNote>,
+}
+
+impl storage::board_projection::BoardViewEntry for EntryDTO {
+    fn view_id(&self) -> i64 {
+        i64::from(self.id)
+    }
+
+    fn view_position(&self) -> i32 {
+        self.position
+    }
+
+    fn view_due_on(&self) -> Option<&str> {
+        self.due_on.as_deref()
+    }
+
+    fn view_has_labels(&self) -> bool {
+        !self.labels.is_empty()
+    }
+
+    fn view_has_any_label(&self, label_ids: &[i64]) -> bool {
+        self.labels
+            .iter()
+            .any(|label| label_ids.contains(&i64::from(label.id)))
+    }
+
+    fn view_has_no_labels(&self, label_ids: &[i64]) -> bool {
+        self.labels
+            .iter()
+            .all(|label| !label_ids.contains(&i64::from(label.id)))
+    }
+
+    fn view_label_sort_key(&self) -> String {
+        self.labels
+            .iter()
+            .map(|label| label.name.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("\0")
+    }
+
+    fn view_related_note_count(&self) -> usize {
+        self.related_notes.len()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +125,7 @@ impl From<entry::Model> for EntryDTO {
             labels: vec![],
             checklist_items: vec![],
             attachments: vec![],
+            related_notes: vec![],
         }
     }
 }
@@ -99,6 +143,7 @@ impl From<entry::ModelEx> for EntryDTO {
             labels: vec![],
             checklist_items: vec![],
             attachments: vec![],
+            related_notes: vec![],
         }
     }
 }
@@ -169,6 +214,7 @@ impl From<storage::board::EntryRecord> for EntryDTO {
                 .into_iter()
                 .map(EntryAttachmentDTO::from)
                 .collect(),
+            related_notes: entry.related_notes,
         }
     }
 }

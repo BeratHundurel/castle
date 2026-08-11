@@ -31,9 +31,9 @@ impl BoardView {
         self.next_checklist_item_position = position.saturating_add(1);
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
-        cx.spawn(async move |this, cx| -> Result<()> {
-            let inserted = runtime
+        let runtime = cx.global::<DB>().runtime.clone();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
                 .spawn(async move {
                     entry_checklist_item::ActiveModel {
                         entry_id: Set(entry_id as i64),
@@ -45,20 +45,38 @@ impl BoardView {
                     .insert(&*db)
                     .await
                 })
-                .await??;
-            this.update(cx, |this, cx| {
-                if let Some(entry) = this
-                    .cards
-                    .iter_mut()
-                    .flat_map(|list| list.entries.iter_mut())
-                    .find(|card| card.id == entry_id)
-                {
+                .await;
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(inserted)) => {
+                    let Some(entry) = this
+                        .cards
+                        .iter_mut()
+                        .flat_map(|list| list.entries.iter_mut())
+                        .find(|card| card.id == entry_id)
+                    else {
+                        return;
+                    };
                     entry.checklist_items.push(ChecklistItemDTO::from(inserted));
+                    this.mutation_error = None;
+                    this.emit_data_committed(cx, false);
                     cx.notify();
+                }
+                Ok(Err(error)) => {
+                    this.mutation_error =
+                        Some(format!("Could not create checklist item: {error}").into());
+                    if let Some(board_id) = this.board_id {
+                        this.enrich_board_async(cx, board_id);
+                    }
+                }
+                Err(error) => {
+                    this.mutation_error =
+                        Some(format!("Checklist creation task failed: {error}").into());
+                    if let Some(board_id) = this.board_id {
+                        this.enrich_board_async(cx, board_id);
+                    }
                 }
             })
             .ok();
-            Ok(())
         })
         .detach();
     }
@@ -82,7 +100,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not update checklist item", false, async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),
                 checked: Set(checked),
@@ -90,7 +108,7 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -105,11 +123,11 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not delete checklist item", false, async move {
             EntryChecklistItem::delete_by_id(item_id as i64)
                 .exec(&*db)
                 .await?;
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -153,7 +171,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not reorder checklist", false, async move {
             for (item_id, position) in positions {
                 entry_checklist_item::ActiveModel {
                     id: Set(item_id as i64),
@@ -163,7 +181,7 @@ impl BoardView {
                 .update(&*db)
                 .await?;
             }
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 
@@ -188,7 +206,7 @@ impl BoardView {
         self.renaming_checklist_item_id = None;
         cx.notify();
         let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current().spawn(async move {
+        self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),
                 title: Set(title),
@@ -196,7 +214,7 @@ impl BoardView {
             }
             .update(&*db)
             .await?;
-            Ok::<(), sea_orm::DbErr>(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 }

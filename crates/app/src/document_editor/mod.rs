@@ -1,9 +1,10 @@
 pub(crate) mod action;
 mod attachments;
+mod board_embeds;
 mod emmet;
 mod formatting;
 mod handlers;
-mod links;
+pub(crate) mod links;
 mod outline;
 mod persistence;
 mod render;
@@ -59,13 +60,22 @@ struct OutlineSourceHighlight {
     source_offset: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum DocumentEditorEvent {
     PathChanged,
     Saved(u32),
+    WorkspaceLinksChanged,
     OpenNote {
         note_id: u32,
         source_offset: Option<usize>,
+    },
+    OpenWorkspaceTarget(crate::workspace_navigation::WorkspaceNavigationTarget),
+    CreateCardFromSelection {
+        note_id: u32,
+        title: String,
+    },
+    InsertBoardView {
+        note_id: u32,
     },
 }
 
@@ -92,7 +102,9 @@ pub(crate) struct DocumentEditorView {
     stats: DocumentStats,
     is_loading: bool,
     suppress_editor_events: bool,
+    auto_save_format_change: Option<SharedString>,
     auto_save_epoch: u64,
+    _load_task: Option<Task<()>>,
     _auto_save_task: Option<Task<()>>,
     _format_task: Option<Task<()>>,
     analysis_generation: u64,
@@ -117,12 +129,20 @@ pub(crate) struct DocumentEditorView {
     inspector_tab: DocumentInspectorTab,
     note_links: Arc<storage::note_links::NoteLinkSet>,
     note_link_catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
+    workspace_links: Arc<storage::workspace_links::NoteWorkspaceLinks>,
+    workspace_link_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    workspace_relation_signature: Vec<String>,
     project_id: Option<i64>,
     wikilink_completion_provider: links::WikiLinkCompletionProvider,
     note_links_loading: bool,
     note_links_error: Option<SharedString>,
     note_links_generation: u64,
     _note_links_task: Option<Task<()>>,
+    board_embed_states:
+        Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
+    board_embed_generation: u64,
+    board_embed_loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
+    _board_embed_task: Option<Task<()>>,
     pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
@@ -174,8 +194,10 @@ impl DocumentEditorView {
             &editor,
             window,
             |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Change if !this.suppress_editor_events => {
-                    this.update_from_editor(cx);
+                InputEvent::Change => {
+                    if !this.suppress_editor_events && !this.consume_auto_save_format_change(cx) {
+                        this.update_from_editor(window, cx);
+                    }
                 }
                 InputEvent::PressEnter { .. }
                     if !this.suppress_editor_events && this.kind == DocumentKind::Markdown =>
@@ -187,8 +209,8 @@ impl DocumentEditorView {
         )
         .detach();
 
-        Self::load_note_async(note_id, window, cx).detach();
-        Self::load_note_links_async(note_id, 1, cx).detach();
+        let load_task = Self::load_note_async(note_id, window, cx);
+        let note_links_task = Self::load_note_links_async(note_id, 1, cx);
 
         Self {
             note_id,
@@ -206,7 +228,9 @@ impl DocumentEditorView {
             stats: DocumentStats::from_text(""),
             is_loading: true,
             suppress_editor_events: false,
+            auto_save_format_change: None,
             auto_save_epoch: 0,
+            _load_task: Some(load_task),
             _auto_save_task: None,
             _format_task: None,
             analysis_generation: 0,
@@ -232,12 +256,19 @@ impl DocumentEditorView {
             inspector_tab: DocumentInspectorTab::Outline,
             note_links: Arc::new(storage::note_links::NoteLinkSet::default()),
             note_link_catalog: Arc::new(Vec::new()),
+            workspace_links: Arc::new(storage::workspace_links::NoteWorkspaceLinks::default()),
+            workspace_link_catalog: Arc::new(Vec::new()),
+            workspace_relation_signature: Vec::new(),
             project_id: None,
             wikilink_completion_provider,
             note_links_loading: true,
             note_links_error: None,
             note_links_generation: 1,
-            _note_links_task: None,
+            _note_links_task: Some(note_links_task),
+            board_embed_states: Arc::new(std::collections::HashMap::new()),
+            board_embed_generation: 0,
+            board_embed_loading_keys: std::collections::HashSet::new(),
+            _board_embed_task: None,
             pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
@@ -260,13 +291,60 @@ impl DocumentEditorView {
 
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         self.is_loading = true;
-        Self::load_note_async(self.note_id, window, cx).detach();
+        self._load_task = Some(Self::load_note_async(self.note_id, window, cx));
         self.refresh_note_links(cx);
         cx.notify();
     }
 
     pub(crate) fn kind(&self) -> DocumentKind {
         self.kind
+    }
+
+    pub(crate) fn insert_text_at_selection(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.editor.read(cx).selected_range();
+        self.editor.update(cx, |editor, cx| {
+            let rope = editor.text();
+            let start = rope.offset_to_offset_utf16(range.start);
+            let end = rope.offset_to_offset_utf16(range.end);
+            gpui::EntityInputHandler::replace_text_in_range(
+                editor,
+                Some(start..end),
+                text,
+                window,
+                cx,
+            );
+            editor.focus(window, cx);
+        });
+    }
+
+    pub(crate) fn select_source_range(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            let end = range.end.min(editor.text().len());
+            let start = range.start.min(end);
+            editor.set_selected_range(start..end, cx);
+            editor.focus(window, cx);
+        });
+    }
+
+    pub(crate) fn replace_source_range(
+        &mut self,
+        range: Range<usize>,
+        replacement: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_source_range(range, window, cx);
+        self.insert_text_at_selection(replacement, window, cx);
     }
 
     #[cfg(test)]
@@ -285,7 +363,7 @@ impl DocumentEditorView {
         self.editor
             .update(cx, |editor, cx| editor.set_value(content, window, cx));
         self.suppress_editor_events = false;
-        self.update_from_editor(cx);
+        self.update_from_editor(window, cx);
     }
 
     pub(crate) fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
@@ -708,12 +786,121 @@ mod tests {
         OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document,
         row_is_in_visible_layout, source_row_centers_at_document_start,
     };
-    use crate::{DB, test_alloc};
+    use crate::{DB, app_settings::AppSettings, test_alloc};
     use entity::note;
     use gpui::AppContext as _;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
-    use std::{path::PathBuf, sync::Arc};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    #[gpui::test]
+    fn json_autosave_formats_by_default_and_respects_the_setting(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let document_path = directory.path().join("autosave.json");
+        std::fs::write(&document_path, "{}\n").expect("test document should be created");
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("autosave test database should initialize");
+        let note_id = runtime
+            .block_on(async {
+                Ok::<_, anyhow::Error>(
+                    note::ActiveModel {
+                        title: Set("Autosave JSON".to_string()),
+                        project_id: Set(None),
+                        file_path: Set(Some(document_path.display().to_string())),
+                        file_managed_by_app: Set(false),
+                        cached_content: Set("{}\n".to_string()),
+                        file_missing_since: Set(None),
+                        created_at: Set(1),
+                        updated_at: Set(1),
+                        ..Default::default()
+                    }
+                    .insert(&db)
+                    .await?
+                    .id as u32,
+                )
+            })
+            .expect("autosave test note should be created");
+        let db = Arc::new(db);
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(AppSettings::load(directory.path()));
+            cx.set_global(DB::new(db.clone(), directory.path().to_path_buf()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("autosave test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.replace_content_for_test(r#"{"alpha":1}"#, window, cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(1_300));
+        let formatted = "{\n  \"alpha\": 1\n}\n";
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if std::fs::read_to_string(&document_path).is_ok_and(|content| content == formatted) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            view.read_with(&cx, |editor, cx| editor.loaded_content(cx)),
+            Some(formatted.to_string())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&document_path).expect("formatted document should be readable"),
+            formatted
+        );
+
+        cx.update(|window, cx| {
+            AppSettings::set_format_on_auto_save(false, cx);
+            view.update(cx, |editor, cx| {
+                editor.replace_content_for_test(r#"{"beta":2}"#, window, cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(1_300));
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if std::fs::read_to_string(&document_path)
+                .is_ok_and(|content| content == r#"{"beta":2}"#)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(&document_path)
+                .expect("unformatted document should be readable"),
+            r#"{"beta":2}"#
+        );
+    }
 
     #[gpui::test]
     fn delayed_analysis_does_not_copy_content_before_debounce(cx: &mut gpui::TestAppContext) {
@@ -756,10 +943,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(DB {
-                conn: Arc::new(db),
-                data_dir: PathBuf::new(),
-            });
+            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -923,10 +1107,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(DB {
-                conn: Arc::new(db),
-                data_dir: PathBuf::new(),
-            });
+            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());

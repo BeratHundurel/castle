@@ -30,7 +30,7 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         if move_entry_to_list_end_in_memory(&mut self.cards, entry_id, target_card_id) {
-            self.persist_entry_positions(cx);
+            self.persist_board_layout(cx);
         }
     }
 
@@ -104,17 +104,76 @@ impl BoardView {
                 target_index = target_index.saturating_add(1);
             }
             target_card.entries.insert(target_index, dto);
-            self.persist_entry_positions(cx);
+            self.persist_board_layout(cx);
         }
     }
 
-    pub(in crate::board) fn persist_entry_positions(&mut self, cx: &mut Context<Self>) {
-        let positions = normalize_entry_positions(&mut self.cards);
+    pub(in crate::board) fn persist_board_layout(&mut self, cx: &mut Context<Self>) {
+        let entries = normalize_entry_positions(&mut self.cards);
+        let lists = self
+            .cards
+            .iter_mut()
+            .enumerate()
+            .map(|(position, list)| {
+                list.position = position as i32;
+                (list.id, list.position)
+            })
+            .collect();
+        self.local_mutation_generation = self.local_mutation_generation.saturating_add(1);
+        let mutation_generation = self.local_mutation_generation;
 
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
-        let _task = tokio::runtime::Handle::current()
-            .spawn(async move { persist_entry_positions_in_db(db.as_ref(), positions).await });
+        let Some(board_id) = self.board_id else {
+            return;
+        };
+        let db = cx.global::<DB>();
+        let persistence = db.board_layout_persistence.clone();
+        let runtime = db.runtime.clone();
+        let revision = match persistence.submit(
+            board_id,
+            db.conn.clone(),
+            storage::board_positions::BoardLayoutSnapshot { lists, entries },
+        ) {
+            Ok(revision) => revision,
+            Err(error) => {
+                self.mutation_error = Some(format!("Could not queue board layout: {error}").into());
+                self.enrich_board_async(cx, board_id);
+                return;
+            }
+        };
+        self._layout_commit_task = Some(cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(async move { persistence.wait_for_revision(board_id, revision).await })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.board_id != Some(board_id)
+                    || this.local_mutation_generation != mutation_generation
+                {
+                    return;
+                }
+                match result {
+                    Ok(Ok(())) => {
+                        this.mutation_error = None;
+                        cx.emit(super::super::BoardViewEvent::DataCommitted {
+                            board_id,
+                            links_changed: false,
+                        });
+                    }
+                    Ok(Err(error)) => {
+                        this.mutation_error =
+                            Some(format!("Could not save board layout: {error}").into());
+                        this.enrich_board_async(cx, board_id);
+                    }
+                    Err(error) => {
+                        this.mutation_error =
+                            Some(format!("Board layout task failed: {error}").into());
+                        this.enrich_board_async(cx, board_id);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 }

@@ -16,6 +16,21 @@ impl BoardView {
             ),
             None => SharedString::from("This card is no longer available."),
         };
+        let source_project_id = selected_entry.and_then(|(_, entry)| {
+            self.workspace_link_catalog
+                .iter()
+                .find(|candidate| {
+                    candidate.item.kind == storage::workspace_links::WorkspaceItemKind::Card
+                        && candidate.item.id == i64::from(entry.id)
+                })
+                .and_then(|candidate| candidate.project_id)
+        });
+        let wikilink_plugin = crate::document_editor::links::WikiLinkPreviewPlugin::new_for_board(
+            cx.entity(),
+            source_project_id,
+            self.workspace_link_catalog.clone(),
+        );
+        let placeholder_description = description.clone();
 
         v_flex()
             .gap_3()
@@ -62,7 +77,22 @@ impl BoardView {
                     } else {
                         theme.muted_foreground
                     })
-                    .child(description),
+                    .when_else(
+                        has_description,
+                        |this| {
+                            this.child(
+                                TextView::markdown(
+                                    "entry-description-markdown",
+                                    description.clone(),
+                                )
+                                .plugin(wikilink_plugin)
+                                .style(TextViewStyle::default())
+                                .scrollable(false)
+                                .selectable(true),
+                            )
+                        },
+                        |this| this.child(placeholder_description),
+                    ),
             )
             .child(self.render_entry_attachments(selected_entry, cx))
     }

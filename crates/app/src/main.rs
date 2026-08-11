@@ -36,7 +36,8 @@ async fn main() -> Result<()> {
     let paths = AppPaths::discover()?;
     fs::create_dir_all(&paths.data_dir)?;
     let db_path = paths.database_path()?;
-    if !db_path.exists() {
+    let is_fresh_database = !db_path.exists();
+    if is_fresh_database {
         fs::File::create(&db_path)?;
     }
 
@@ -45,11 +46,22 @@ async fn main() -> Result<()> {
     let connection = Database::connect(options).await?;
     Migrator::up(&connection, None).await?;
 
-    let db = DB {
-        conn: Arc::new(connection),
-        data_dir: paths.data_dir,
+    let first_run_workspace = if is_fresh_database {
+        storage::onboarding::seed_fresh_workspace(&connection, &paths.data_dir).await?
+    } else {
+        None
     };
-    let app_settings = AppSettings::load(&db.data_dir);
+
+    let db = DB::new(Arc::new(connection), paths.data_dir);
+
+    let mut app_settings = AppSettings::load(&db.data_dir);
+    if let Some(first_run_workspace) = first_run_workspace {
+        app_settings.set_first_run_note(
+            first_run_workspace.docs_note.id,
+            first_run_workspace.docs_note.title,
+        );
+    }
+
     system_notifications::start(db.conn.clone());
 
     app.run(move |cx| {

@@ -40,7 +40,6 @@ impl BoardView {
                 |this| {
                     this.child(
                         Button::new("manage-card-labels")
-                            .icon(IconName::Palette)
                             .label("Manage")
                             .ghost()
                             .small()
@@ -58,8 +57,8 @@ impl BoardView {
                 .gap_3()
                 .rounded(cx.theme().radius)
                 .border_1()
-                .border_color(cx.theme().border.opacity(0.48))
-                .bg(cx.theme().secondary.opacity(0.16))
+                .border_color(cx.theme().border.opacity(0.4))
+                .bg(cx.theme().secondary.opacity(0.1))
                 .child(header)
                 .child(self.render_label_manager(entry_id, cx));
         }
@@ -70,8 +69,8 @@ impl BoardView {
             .gap_3()
             .rounded(cx.theme().radius)
             .border_1()
-            .border_color(cx.theme().border.opacity(0.48))
-            .bg(cx.theme().secondary.opacity(0.16))
+            .border_color(cx.theme().border.opacity(0.4))
+            .bg(cx.theme().secondary.opacity(0.1))
             .child(header)
             .when_else(
                 assigned_label_count > 0,
@@ -96,16 +95,14 @@ impl BoardView {
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().popover_foreground)
-                                    .child("No labels assigned"),
+                                    .child("No labels yet"),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .line_height(relative(1.35))
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "Add labels to make this card easier to scan on the board.",
-                                    ),
+                                    .child("Add labels to scan this card faster."),
                             ),
                     )
                 },

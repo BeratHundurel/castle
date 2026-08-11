@@ -12,7 +12,7 @@ use gpui_component::{
     text::{TextView, TextViewStyle},
     v_flex,
 };
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 use super::types::*;
 use super::vim::VimMode;
@@ -249,6 +249,11 @@ impl DocumentEditorView {
             self.project_id,
             self.note_link_catalog.clone(),
             self.note_links.clone(),
+            self.workspace_link_catalog.clone(),
+        );
+        let board_embed_plugin = super::board_embeds::BoardViewEmbedPlugin::new(
+            cx.entity(),
+            self.board_embed_states.clone(),
         );
         let preview_style = markdown_preview_style(font_size);
 
@@ -269,6 +274,7 @@ impl DocumentEditorView {
                 sections.into_iter().next().unwrap_or_default(),
             )
             .plugin(local_image_plugin)
+            .plugin(board_embed_plugin)
             .plugin(wikilink_plugin)
             .style(preview_style)
             .code_block_actions(|code_block, _window, _cx| {
@@ -295,6 +301,7 @@ impl DocumentEditorView {
                                 sections[index].clone(),
                             )
                             .plugin(local_image_plugin.clone())
+                            .plugin(board_embed_plugin.clone())
                             .plugin(wikilink_plugin.clone())
                             .style(preview_style.clone())
                             .code_block_actions(|code_block, _window, _cx| {
@@ -802,6 +809,12 @@ impl DocumentEditorView {
                 )
                 .collect()
         };
+        let board_rows =
+            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::Board, cx);
+        let list_rows =
+            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::List, cx);
+        let card_rows =
+            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::Card, cx);
 
         v_flex()
             .id("document-links")
@@ -863,10 +876,84 @@ impl DocumentEditorView {
                             .child(link_section_title("Links to this note", cx))
                             .children(inbound_rows)
                             .child(link_section_title("Links from this note", cx))
-                            .children(outbound_rows),
+                            .children(outbound_rows)
+                            .child(link_section_title("Board references", cx))
+                            .when(
+                                board_rows.is_empty()
+                                    && list_rows.is_empty()
+                                    && card_rows.is_empty(),
+                                |this| {
+                                    this.child(link_empty_state(
+                                        "This note has no board references",
+                                        cx,
+                                    ))
+                                },
+                            )
+                            .when(!board_rows.is_empty(), |this| {
+                                this.child(link_group_title("Boards", cx))
+                                    .children(board_rows)
+                            })
+                            .when(!list_rows.is_empty(), |this| {
+                                this.child(link_group_title("Lists", cx))
+                                    .children(list_rows)
+                            })
+                            .when(!card_rows.is_empty(), |this| {
+                                this.child(link_group_title("Cards", cx))
+                                    .children(card_rows)
+                            }),
                     )
                 },
             )
+    }
+
+    fn render_workspace_link_rows(
+        &self,
+        kind: storage::workspace_links::WorkspaceItemKind,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut seen = HashSet::new();
+        self.workspace_links
+            .references
+            .iter()
+            .filter(|reference| reference.item.item.kind == kind)
+            .filter(|reference| seen.insert(reference.item.item))
+            .filter_map(|reference| {
+                let target = super::links::workspace_navigation_target(&reference.item)?;
+                let item_id = reference.item.item.id;
+                let label = reference.item.breadcrumb();
+                let origin = match reference.origin {
+                    storage::workspace_links::WorkspaceLinkOrigin::Manual => "Linked",
+                    storage::workspace_links::WorkspaceLinkOrigin::Wikilink => "Markdown",
+                    storage::workspace_links::WorkspaceLinkOrigin::Embed => "Embed",
+                };
+                Some(
+                    h_flex()
+                        .id(("workspace-link-reference", item_id as u64))
+                        .min_h_10()
+                        .px_3()
+                        .py_1()
+                        .gap_2()
+                        .cursor_pointer()
+                        .hover(|this| this.bg(cx.theme().accent.opacity(0.38)))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target));
+                        }))
+                        .child(Icon::new(IconName::LayoutDashboard).xsmall())
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .child(div().text_sm().truncate().child(label))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(origin),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+            })
+            .collect()
     }
 
     fn render_note_link_row(
@@ -995,6 +1082,8 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_save_as))
             .on_action(cx.listener(Self::on_action_format_document))
             .on_action(cx.listener(Self::on_action_toggle_mode))
+            .on_action(cx.listener(Self::on_action_create_card_from_selection))
+            .on_action(cx.listener(Self::on_action_insert_board_view))
             .on_action(cx.listener(Self::on_action_toggle_outline))
             .on_action(cx.listener(Self::on_action_expand_emmet))
             .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
@@ -1323,6 +1412,15 @@ fn link_section_title(label: &str, cx: &App) -> impl IntoElement {
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(cx.theme().muted_foreground)
+        .child(label.to_string())
+}
+
+fn link_group_title(label: &str, cx: &App) -> impl IntoElement {
+    div()
+        .px_3()
+        .pt_1()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground.opacity(0.8))
         .child(label.to_string())
 }
 

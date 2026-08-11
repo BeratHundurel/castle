@@ -41,11 +41,32 @@ pub struct NoteLinkCatalogEntry {
     pub project_name: Option<String>,
 }
 
+pub(crate) struct NoteIndexCatalogs<'a> {
+    pub note_links: &'a [NoteLinkCatalogEntry],
+    pub aliases: &'a [note_alias::Model],
+    pub workspace: &'a [crate::workspace_links::WorkspaceCatalogEntry],
+    pub existing_workspace_items: &'a HashSet<crate::workspace_links::WorkspaceItemRef>,
+    pub saved_views: &'a HashSet<(i64, i64)>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NoteLinkSet {
     pub inbound: Vec<NoteLinkReference>,
     pub outbound: Vec<NoteLinkReference>,
-    pub unresolved: Vec<NoteLinkReference>,
+    pub unresolved: Vec<UnresolvedLinkReference>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnresolvedLinkReference {
+    pub source_note_id: i64,
+    pub source_title: String,
+    pub source_project_name: Option<String>,
+    pub target_kind: Option<crate::workspace_links::WorkspaceItemKind>,
+    pub raw_target: String,
+    pub display_text: Option<String>,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub line_number: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,7 +204,9 @@ fn is_escaped(bytes: &[u8], index: usize) -> bool {
     slash_count % 2 == 1
 }
 
-pub async fn load_note_link_catalog(db: &DatabaseConnection) -> Result<Vec<NoteLinkCatalogEntry>> {
+pub async fn load_note_link_catalog(
+    db: &impl ConnectionTrait,
+) -> Result<Vec<NoteLinkCatalogEntry>> {
     let project_names = Project::find()
         .filter(project::Column::Archived.eq(false))
         .filter(project::Column::DeletedAt.is_null())
@@ -252,15 +275,58 @@ pub async fn load_note_links(db: &DatabaseConnection, note_id: i64) -> Result<No
             line_number: link.line_number.max(1) as usize,
         }
     };
-    let outbound = outbound_models
-        .into_iter()
-        .map(&to_reference)
-        .collect::<Vec<_>>();
-    let unresolved = outbound
+    let workspace_targets = outbound_models
         .iter()
-        .filter(|link| link.target_note_id.is_none())
-        .cloned()
-        .collect();
+        .filter_map(|link| crate::workspace_links::parse_workspace_target(&link.raw_target))
+        .collect::<Vec<_>>();
+    let active_workspace_items = crate::workspace_links::load_workspace_link_catalog(db)
+        .await?
+        .into_iter()
+        .map(|entry| entry.item)
+        .collect::<HashSet<_>>();
+    let existing_workspace_items =
+        crate::workspace_links::load_existing_workspace_items(db, &workspace_targets).await?;
+    let mut outbound = Vec::new();
+    let mut unresolved = Vec::new();
+    for model in outbound_models {
+        if let Some(item) = crate::workspace_links::parse_workspace_target(&model.raw_target) {
+            if !active_workspace_items.contains(&item) && !existing_workspace_items.contains(&item)
+            {
+                unresolved.push(UnresolvedLinkReference {
+                    source_note_id: model.source_note_id,
+                    source_title: by_id
+                        .get(&model.source_note_id)
+                        .map(|note| note.title.clone())
+                        .unwrap_or_else(|| "Unavailable note".to_string()),
+                    source_project_name: by_id
+                        .get(&model.source_note_id)
+                        .and_then(|note| note.project_name.clone()),
+                    target_kind: Some(item.kind),
+                    raw_target: model.raw_target,
+                    display_text: model.display_text,
+                    start_byte: model.start_byte.max(0) as usize,
+                    end_byte: model.end_byte.max(0) as usize,
+                    line_number: model.line_number.max(1) as usize,
+                });
+            }
+            continue;
+        }
+        let reference = to_reference(model);
+        if reference.target_note_id.is_none() {
+            unresolved.push(UnresolvedLinkReference {
+                source_note_id: reference.source_note_id,
+                source_title: reference.source_title.clone(),
+                source_project_name: reference.source_project_name.clone(),
+                target_kind: None,
+                raw_target: reference.raw_target.clone(),
+                display_text: reference.display_text.clone(),
+                start_byte: reference.start_byte,
+                end_byte: reference.end_byte,
+                line_number: reference.line_number,
+            });
+        }
+        outbound.push(reference);
+    }
     let inbound = inbound_models.into_iter().map(to_reference).collect();
 
     Ok(NoteLinkSet {
@@ -272,6 +338,19 @@ pub async fn load_note_links(db: &DatabaseConnection, note_id: i64) -> Result<No
 
 pub async fn index_note_links(
     db: &DatabaseConnection,
+    note_id: i64,
+    content: &str,
+    indexed_updated_at: i64,
+) -> Result<Vec<IndexedNoteLink>> {
+    let transaction = db.begin().await?;
+    let indexed =
+        index_note_links_in_connection(&transaction, note_id, content, indexed_updated_at).await?;
+    transaction.commit().await?;
+    Ok(indexed)
+}
+
+pub async fn index_note_links_in_connection(
+    db: &impl ConnectionTrait,
     note_id: i64,
     content: &str,
     indexed_updated_at: i64,
@@ -295,10 +374,57 @@ pub async fn index_note_links(
             .all(db)
             .await?
     };
-    let indexed = parsed
+    let workspace_catalog = crate::workspace_links::load_workspace_link_catalog(db).await?;
+    let mut requested_workspace_targets = parsed
+        .iter()
+        .filter_map(|link| crate::workspace_links::parse_workspace_target(&link.raw_target))
+        .collect::<Vec<_>>();
+    requested_workspace_targets.extend(
+        crate::board_projection::parse_board_view_embeds(content)
+            .into_iter()
+            .map(|embed| crate::workspace_links::WorkspaceItemRef {
+                kind: crate::workspace_links::WorkspaceItemKind::Board,
+                id: embed.board_id,
+            }),
+    );
+    let existing_workspace_targets =
+        crate::workspace_links::load_existing_workspace_items(db, &requested_workspace_targets)
+            .await?;
+    let saved_views = crate::workspace_links::load_saved_view_identities(db).await?;
+    index_note_links_with_catalog(
+        db,
+        note_id,
+        source.project_id,
+        content,
+        indexed_updated_at,
+        NoteIndexCatalogs {
+            note_links: &catalog,
+            aliases: &aliases,
+            workspace: &workspace_catalog,
+            existing_workspace_items: &existing_workspace_targets,
+            saved_views: &saved_views,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn index_note_links_with_catalog(
+    db: &impl ConnectionTrait,
+    note_id: i64,
+    source_project_id: Option<i64>,
+    content: &str,
+    indexed_updated_at: i64,
+    catalogs: NoteIndexCatalogs<'_>,
+) -> Result<Vec<IndexedNoteLink>> {
+    let indexed = parse_wikilinks(content)
         .into_iter()
         .map(|link| IndexedNoteLink {
-            target_note_id: resolve_target(&link.raw_target, source.project_id, &catalog, &aliases),
+            target_note_id: resolve_target(
+                &link.raw_target,
+                source_project_id,
+                catalogs.note_links,
+                catalogs.aliases,
+            ),
             raw_target: link.raw_target,
             display_text: link.display_text,
             start_byte: link.start_byte,
@@ -307,14 +433,11 @@ pub async fn index_note_links(
         })
         .collect::<Vec<_>>();
 
-    let transaction = db.begin().await?;
     NoteLink::delete_many()
         .filter(note_link::Column::SourceNoteId.eq(note_id))
-        .exec(&transaction)
+        .exec(db)
         .await?;
-    NoteLinkIndexState::delete_by_id(note_id)
-        .exec(&transaction)
-        .await?;
+    NoteLinkIndexState::delete_by_id(note_id).exec(db).await?;
     for (ordinal, link) in indexed.iter().enumerate() {
         note_link::ActiveModel {
             source_note_id: Set(note_id),
@@ -326,16 +449,25 @@ pub async fn index_note_links(
             end_byte: Set(link.end_byte as i64),
             line_number: Set(link.line_number as i32),
         }
-        .insert(&transaction)
+        .insert(db)
         .await?;
     }
     note_link_index_state::ActiveModel {
         note_id: Set(note_id),
         indexed_updated_at: Set(indexed_updated_at),
     }
-    .insert(&transaction)
+    .insert(db)
     .await?;
-    transaction.commit().await?;
+    crate::workspace_links::index_note_workspace_links_with_catalog(
+        db,
+        note_id,
+        content,
+        indexed_updated_at,
+        catalogs.workspace,
+        catalogs.existing_workspace_items,
+        catalogs.saved_views,
+    )
+    .await?;
 
     Ok(indexed)
 }
@@ -469,7 +601,7 @@ fn normalize_name(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use entity::{note, project};
+    use entity::{board, note, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
 
@@ -544,6 +676,67 @@ mod tests {
         assert_eq!(reindex_stale_notes(&db, 1).await?, 1);
         assert_eq!(reindex_stale_notes(&db, 8).await?, 1);
         assert_eq!(reindex_stale_notes(&db, 8).await?, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stable_workspace_targets_distinguish_active_deleted_and_missing() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let source = create_note(&db, "Source", None).await?;
+        let board = board::ActiveModel {
+            title: Set("Roadmap".to_string()),
+            last_selected_view_id: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let content = format!("before [[board:{}|Roadmap]] after", board.id);
+
+        index_note_links(&db, source.id, &content, 1).await?;
+        let links = load_note_links(&db, source.id).await?;
+        assert!(links.unresolved.is_empty());
+        assert_eq!(
+            crate::workspace_links::load_note_workspace_links(&db, source.id)
+                .await?
+                .references
+                .len(),
+            1
+        );
+
+        board::ActiveModel {
+            id: Set(board.id),
+            deleted_at: Set(Some(2)),
+            ..Default::default()
+        }
+        .update(&db)
+        .await?;
+        index_note_links(&db, source.id, &content, 2).await?;
+        let links = load_note_links(&db, source.id).await?;
+        assert!(links.unresolved.is_empty());
+        assert!(
+            crate::workspace_links::load_note_workspace_links(&db, source.id)
+                .await?
+                .references
+                .is_empty()
+        );
+
+        board::Entity::delete_by_id(board.id).exec(&db).await?;
+        index_note_links(&db, source.id, &content, 3).await?;
+        let links = load_note_links(&db, source.id).await?;
+        assert_eq!(links.unresolved.len(), 1);
+        assert_eq!(
+            links.unresolved[0].target_kind,
+            Some(crate::workspace_links::WorkspaceItemKind::Board)
+        );
+        assert_eq!(
+            links.unresolved[0].raw_target,
+            format!("board:{}", board.id)
+        );
+        assert_eq!(
+            &content[links.unresolved[0].start_byte..links.unresolved[0].end_byte],
+            format!("[[board:{}|Roadmap]]", board.id)
+        );
         Ok(())
     }
 

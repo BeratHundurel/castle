@@ -1,6 +1,6 @@
 use gpui::{
     Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    StatefulInteractiveElement, Styled, div, px, relative,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, relative,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable as _, h_flex, input::Input,
@@ -296,7 +296,13 @@ impl AppShell {
                             .flex_1()
                             .text_ellipsis()
                             .overflow_hidden()
-                            .child(result.title.clone()),
+                            .child(
+                                result
+                                    .parent_title
+                                    .as_ref()
+                                    .map(|parent| format!("{parent} / {}", result.title))
+                                    .unwrap_or_else(|| result.title.clone()),
+                            ),
                     ),
             )
             .child(
@@ -377,6 +383,7 @@ impl AppShell {
         let theme = cx.theme().clone();
         let row_text = search_result_row_text(&result);
         let label = highlighted_exact_search_text(&row_text, &self.command_palette.query, cx);
+        let breadcrumb = result.parent_title.clone();
 
         h_flex()
             .id(("search-result-row", index))
@@ -406,9 +413,10 @@ impl AppShell {
                 this.open_search_result(result.clone(), window, cx);
             }))
             .child(
-                div()
+                v_flex()
                     .flex_1()
                     .min_w_0()
+                    .gap_0p5()
                     .text_sm()
                     .font_weight(if is_selected {
                         gpui::FontWeight::SEMIBOLD
@@ -418,7 +426,18 @@ impl AppShell {
                     .line_height(relative(1.35))
                     .text_ellipsis()
                     .overflow_hidden()
-                    .child(label),
+                    .child(div().text_ellipsis().overflow_hidden().child(label))
+                    .when_some(breadcrumb, |this, breadcrumb| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::NORMAL)
+                                .text_color(theme.muted_foreground)
+                                .text_ellipsis()
+                                .overflow_hidden()
+                                .child(breadcrumb),
+                        )
+                    }),
             )
             .into_any_element()
     }

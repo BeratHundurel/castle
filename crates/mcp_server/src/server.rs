@@ -218,7 +218,7 @@ impl CastleServer {
         mutation_response(
             &self.store,
             self.store.create_entry(input).await,
-            ChangeDomain::Board,
+            ChangeDomain::Link,
         )
         .await
     }
@@ -238,7 +238,7 @@ impl CastleServer {
         mutation_response(
             &self.store,
             self.store.update_entry(input).await,
-            ChangeDomain::Board,
+            ChangeDomain::Link,
         )
         .await
     }
@@ -297,6 +297,57 @@ impl CastleServer {
     }
 
     #[tool(
+        description = "List a note's board/list/card relationships, or the notes related to one exact workspace item",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_workspace_relations(
+        &self,
+        Parameters(input): Parameters<WorkspaceRelationsInput>,
+    ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
+        response(self.store.list_workspace_relations(input).await)
+    }
+
+    #[tool(
+        description = "Link an active Castle note to an exact board, list, or card after validating its hierarchy",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn link_note_to_workspace_item(
+        &self,
+        Parameters(input): Parameters<NoteWorkspaceRelationInput>,
+    ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
+        mutation_response(
+            &self.store,
+            self.store.link_note_to_workspace_item(input).await,
+            ChangeDomain::Link,
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Remove only the manual relationship between a note and an exact board, list, or card",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn unlink_note_from_workspace_item(
+        &self,
+        Parameters(input): Parameters<NoteWorkspaceRelationInput>,
+    ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
+        mutation_response(
+            &self.store,
+            self.store.unlink_note_from_workspace_item(input).await,
+            ChangeDomain::Link,
+        )
+        .await
+    }
+
+    #[tool(
         description = "Search active Castle notes by title or cached content",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -318,7 +369,7 @@ impl CastleServer {
         mutation_response(
             &self.store,
             self.store.create_note(input).await,
-            ChangeDomain::Note,
+            ChangeDomain::Link,
         )
         .await
     }
@@ -338,7 +389,7 @@ impl CastleServer {
         mutation_response(
             &self.store,
             self.store.update_note(input).await,
-            ChangeDomain::Note,
+            ChangeDomain::Link,
         )
         .await
     }
@@ -581,6 +632,9 @@ mod tests {
             "list_notes",
             "get_note",
             "get_note_links",
+            "list_workspace_relations",
+            "link_note_to_workspace_item",
+            "unlink_note_from_workspace_item",
             "search_notes",
             "create_note",
             "update_note",

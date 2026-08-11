@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use entity::{board, card, entry, note};
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database, EntityTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectOptions, Database, EntityTrait};
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     #[test]
@@ -169,7 +169,9 @@ mod tests {
 
         let (db, note_id, board_id) = runtime
             .block_on(async {
-                let db = Database::connect(database_url).await?;
+                let mut options = ConnectOptions::new(database_url);
+                options.max_connections(1).min_connections(1);
+                let db = Database::connect(options).await?;
                 Migrator::up(&db, None).await?;
                 let note = note::ActiveModel {
                     title: Set("Restored note".to_string()),
@@ -218,10 +220,7 @@ mod tests {
         let held_connection = runtime
             .block_on(db.get_sqlite_connection_pool().acquire())
             .expect("test should reserve the SQLite connection");
-        let app_db = crate::DB {
-            conn: db.clone(),
-            data_dir: PathBuf::new(),
-        };
+        let app_db = crate::DB::new(db.clone(), PathBuf::new());
         let mut shell = None;
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
@@ -259,12 +258,12 @@ mod tests {
                 "the current surface must remain active until the first board snapshot is ready"
             );
         });
-        let (closed_note, closed_board) = shell.read_with(&cx, |shell, _| {
+        let (pending_note_view, pending_board_view) = shell.read_with(&cx, |shell, _| {
             let note = shell
                 .open_tabs
                 .iter()
                 .find_map(|tab| match &tab.kind {
-                    OpenTabKind::Note { view, .. } => Some(view.downgrade()),
+                    OpenTabKind::Note { view, .. } => Some(view.clone()),
                     _ => None,
                 })
                 .expect("note tab should have a view");
@@ -272,12 +271,24 @@ mod tests {
                 .open_tabs
                 .iter()
                 .find_map(|tab| match &tab.kind {
-                    OpenTabKind::Board { view, .. } => Some(view.downgrade()),
+                    OpenTabKind::Board { view, .. } => Some(view.clone()),
                     _ => None,
                 })
                 .expect("board tab should have a view");
             (note, board)
         });
+        for _ in 0..100 {
+            cx.update(|window, cx| {
+                pending_note_view
+                    .update(cx, |note, cx| note.reload_after_external_change(window, cx));
+                pending_board_view.update(cx, |board, cx| board.reload_board(board_id, cx));
+            });
+            cx.run_until_parked();
+        }
+        let closed_note = pending_note_view.downgrade();
+        let closed_board = pending_board_view.downgrade();
+        drop(pending_note_view);
+        drop(pending_board_view);
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
                 shell.close_all_tabs(window, cx);
@@ -292,7 +303,6 @@ mod tests {
             closed_note.upgrade().is_none(),
             "closing a saved note tab must release its editor state"
         );
-        drop(held_connection);
 
         for _ in 0..100 {
             cx.update(|window, cx| {
@@ -312,6 +322,7 @@ mod tests {
                 shell.update(cx, |shell, cx| shell.close_all_tabs(window, cx));
             });
         }
+        cx.run_until_parked();
 
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
@@ -319,11 +330,8 @@ mod tests {
                 shell.open_board_tab(board_id, None, "Restored board".into(), window, cx);
             });
         });
-
-        for _ in 0..100 {
-            cx.run_until_parked();
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        cx.run_until_parked();
+        drop(held_connection);
 
         let (note_view, board_view) = shell.read_with(&cx, |shell, _| {
             let note_view = shell.open_tabs.iter().find_map(|tab| match &tab.kind {
@@ -340,7 +348,7 @@ mod tests {
             )
         });
 
-        for _ in 0..50 {
+        for _ in 0..10_000 {
             cx.run_until_parked();
             let note_loaded = note_view
                 .read_with(&cx, |note, cx| note.loaded_content(cx))
@@ -349,7 +357,7 @@ mod tests {
             if note_loaded && board_loaded {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::yield_now();
         }
 
         assert_eq!(
@@ -473,7 +481,7 @@ mod tests {
                 .block_on(note::Entity::find_by_id(note_id as i64).one(db.as_ref()))
                 .ok()
                 .flatten()
-                .is_some_and(|note| note.cached_content == "# Saved after close");
+                .is_some_and(|note| note.cached_content == "# Saved after close\n");
             if persisted && closed_dirty_note.upgrade().is_none() {
                 break;
             }
@@ -485,7 +493,7 @@ mod tests {
             .expect("saved note query should succeed")
             .expect("saved note should still exist")
             .cached_content;
-        assert_eq!(saved_content, "# Saved after close");
+        assert_eq!(saved_content, "# Saved after close\n");
         assert!(
             closed_dirty_note.upgrade().is_none(),
             "a closed editor must be released after autosave succeeds"

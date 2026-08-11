@@ -99,7 +99,7 @@ impl SidebarView {
 
     pub(super) fn add_project(&mut self, cx: &mut Context<Self>, name: String) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -146,7 +146,7 @@ impl SidebarView {
         });
         let background_executor = cx.background_executor().clone();
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {

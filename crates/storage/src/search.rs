@@ -306,15 +306,9 @@ pub async fn search_workspace(
     };
 
     let mut search_rows = Vec::with_capacity(rows.len());
-    let mut board_title_ids = Vec::new();
-
     for row in rows {
         let item_type: String = row.try_get("", "item_type")?;
         let open_id: i64 = row.try_get("", "open_id")?;
-
-        if !board_title_ids.contains(&open_id) {
-            board_title_ids.push(open_id);
-        }
 
         search_rows.push(SearchRow {
             item_type,
@@ -328,7 +322,9 @@ pub async fn search_workspace(
         });
     }
 
-    let board_titles = load_board_titles(db, &board_title_ids).await?;
+    let workspace_catalog = crate::workspace_links::load_workspace_link_catalog(db)
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
 
     let mut results = Vec::with_capacity(search_rows.len());
     for row in search_rows {
@@ -340,12 +336,35 @@ pub async fn search_workspace(
             _ => continue,
         };
 
+        let parent_title = match &kind {
+            SearchResultKind::Card => workspace_catalog
+                .iter()
+                .find(|entry| {
+                    entry.item.kind == crate::workspace_links::WorkspaceItemKind::List
+                        && entry.item.id == row.item_id
+                })
+                .and_then(|entry| entry.board_title.clone()),
+            SearchResultKind::Entry => workspace_catalog
+                .iter()
+                .find(|entry| {
+                    entry.item.kind == crate::workspace_links::WorkspaceItemKind::Card
+                        && entry.item.id == row.item_id
+                })
+                .and_then(|entry| {
+                    entry
+                        .board_title
+                        .as_ref()
+                        .zip(entry.list_title.as_ref())
+                        .map(|(board, list)| format!("{board} / {list}"))
+                }),
+            SearchResultKind::Note | SearchResultKind::Board => None,
+        };
         results.push(SearchResult {
             kind,
             item_id: row.item_id as u32,
             open_id: row.open_id as u32,
             project_id: row.project_id.map(|id| id as u32),
-            parent_title: board_titles.get(&row.open_id).cloned(),
+            parent_title,
             title: row.title,
             highlighted_title: row.highlighted_title,
             snippet: row.snippet,
@@ -509,40 +528,6 @@ struct CardSearchSource {
     position: i32,
 }
 
-async fn load_board_titles(
-    db: &DatabaseConnection,
-    board_ids: &[i64],
-) -> Result<HashMap<i64, String>, DbErr> {
-    if board_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let placeholders = std::iter::repeat_n("?", board_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let sql = format!("SELECT id, title FROM board WHERE id IN ({placeholders})");
-    let values = board_ids
-        .iter()
-        .map(|id| (*id).into())
-        .collect::<Vec<Value>>();
-
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
-        .await?;
-
-    let mut board_titles = HashMap::with_capacity(rows.len());
-    for row in rows {
-        board_titles.insert(row.try_get("", "id")?, row.try_get("", "title")?);
-    }
-
-    Ok(board_titles)
-}
-
 async fn insert_search_documents(
     db: &impl ConnectionTrait,
     documents: impl IntoIterator<Item = SearchDocument>,
@@ -630,11 +615,11 @@ pub async fn delete_search_item(
 #[cfg(test)]
 mod tests {
     use super::{
-        SEARCH_INSERT_BODY_BUDGET, fts_query, rebuild_search_index,
-        should_flush_search_document_chunk,
+        SEARCH_INSERT_BODY_BUDGET, SearchResultKind, fts_query, rebuild_search_index,
+        search_workspace, should_flush_search_document_chunk,
     };
     use crate::test_alloc;
-    use anyhow::Result;
+    use anyhow::{Context as _, Result};
     use entity::{board, card, entry, note, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database};
@@ -809,6 +794,23 @@ mod tests {
                     "Entry description".to_string(),
                 ),
             ]
+        );
+
+        let results = search_workspace(&db, "title", 16).await?;
+        let list = results
+            .iter()
+            .find(|result| result.kind == SearchResultKind::Card)
+            .context("list search result")?;
+        assert_eq!(list.item_id, 1);
+        assert_eq!(list.parent_title.as_deref(), Some("Board title"));
+        let card = results
+            .iter()
+            .find(|result| result.kind == SearchResultKind::Entry)
+            .context("card search result")?;
+        assert_eq!(card.item_id, 1);
+        assert_eq!(
+            card.parent_title.as_deref(),
+            Some("Board title / List title")
         );
 
         Ok(())

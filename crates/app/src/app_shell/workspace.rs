@@ -1,9 +1,16 @@
-use std::fs::{create_dir_all, read_to_string, write};
-use std::{collections::HashMap, sync::Arc};
+use std::fs::{create_dir_all, read_to_string, remove_file, write};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use super::*;
 use crate::workspace_data::load_workspace_rows;
-use gpui_component::{WindowExt as _, notification::Notification};
+use gpui_component::{
+    WindowExt as _,
+    dialog::{
+        DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+    },
+    input::Input,
+    notification::Notification,
+};
 use sea_orm::DbErr;
 use storage::workspace::ChangeRevision;
 
@@ -12,23 +19,20 @@ const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::
 impl AppShell {
     pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
-        cx.spawn(async move |_, _| {
+        let runtime = cx.global::<DB>().runtime.clone();
+        cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    loop {
-                        let indexed =
-                            storage::note_links::reindex_stale_notes(db.as_ref(), 32).await?;
-                        if indexed < 32 {
-                            break;
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                    Ok::<(), anyhow::Error>(())
+                    storage::workspace_links::repair_workspace_link_index_batch(db.as_ref(), 32)
+                        .await
                 })
                 .await;
             match result {
-                Ok(Ok(())) => {}
+                Ok(Ok(batch)) if batch.has_more => {
+                    this.update(cx, |this, cx| this.start_note_link_reindex(cx))
+                        .ok();
+                }
+                Ok(Ok(_)) => {}
                 Ok(Err(error)) => eprintln!("Failed to index note links: {error}"),
                 Err(error) => eprintln!("Failed to join note-link indexing task: {error}"),
             }
@@ -42,7 +46,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let (revision_sender, mut revision_receiver) = tokio::sync::watch::channel(None);
 
         let poller = runtime.spawn(watch_change_revisions(
@@ -69,13 +73,17 @@ impl AppShell {
                         let note_changed = this
                             .last_note_revision
                             .is_some_and(|previous| previous != revision.note_revision);
+                        let link_changed = this
+                            .last_link_revision
+                            .is_some_and(|previous| previous != revision.link_revision);
                         this.last_change_revision = Some(revision.revision);
                         this.last_board_revision = Some(revision.board_revision);
                         this.last_note_revision = Some(revision.note_revision);
+                        this.last_link_revision = Some(revision.link_revision);
                         if changed {
                             this.refresh_after_external_change(
-                                board_changed,
-                                note_changed,
+                                board_changed || link_changed,
+                                note_changed || link_changed,
                                 window,
                                 cx,
                             );
@@ -109,6 +117,9 @@ impl AppShell {
             for (board_id, view) in board_views {
                 view.update(cx, |board, cx| board.reload_board(board_id, cx));
             }
+            for view in self.note_views.values() {
+                view.update(cx, |note, cx| note.reload_board_embeds(cx));
+            }
         }
 
         if note_changed {
@@ -129,7 +140,7 @@ impl AppShell {
         }
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         self.workspace_refreshing = true;
 
         cx.spawn(async move |this, cx| {
@@ -282,7 +293,7 @@ impl AppShell {
         let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
         let path_string = path.display().to_string();
         let background_executor = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn_in(window, async move |_, window| {
             let write_path = path.clone();
@@ -335,6 +346,222 @@ impl AppShell {
         .detach();
     }
 
+    pub(crate) fn create_linked_note(
+        &mut self,
+        project_id: Option<u32>,
+        title: String,
+        item: storage::workspace_links::WorkspaceItemRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let source_title = title.clone();
+        let title_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Note title")
+                .default_value(title)
+        });
+        let dialog_input = title_input.clone();
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .w(px(520.))
+                .on_ok({
+                    let app = app.clone();
+                    let input = dialog_input.clone();
+                    let source_title = source_title.clone();
+                    move |_, window, cx| {
+                        let title = input.read(cx).value().trim().to_string();
+                        if title.is_empty() {
+                            window
+                                .push_notification(Notification::error("Enter a note title."), cx);
+                            return false;
+                        }
+                        app.update(cx, |this, cx| {
+                            this.create_linked_note_with_title(
+                                project_id,
+                                title,
+                                source_title.clone(),
+                                item,
+                                window,
+                                cx,
+                            );
+                        });
+                        true
+                    }
+                })
+                .child(
+                    DialogHeader::new()
+                        .child(DialogTitle::new().child("Create linked note"))
+                        .child(
+                            DialogDescription::new()
+                                .child("The note starts with a stable link back to this item."),
+                        ),
+                )
+                .child(v_flex().py_3().child(Input::new(&dialog_input)))
+                .child(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new().child(
+                                Button::new("cancel-create-linked-note")
+                                    .label("Cancel")
+                                    .outline(),
+                            ),
+                        )
+                        .child(
+                            DialogAction::new().child(
+                                Button::new("confirm-create-linked-note")
+                                    .label("Create note")
+                                    .primary(),
+                            ),
+                        ),
+                )
+        });
+        title_input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    fn create_linked_note_with_title(
+        &mut self,
+        project_id: Option<u32>,
+        title: String,
+        source_title: String,
+        item: storage::workspace_links::WorkspaceItemRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let db = cx.global::<DB>().conn.clone();
+        let view = cx.entity().downgrade();
+        let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
+        let path_string = path.display().to_string();
+        let background_executor = cx.background_executor().clone();
+        let runtime = cx.global::<DB>().runtime.clone();
+        let display_title = title.replace(['\r', '\n', '|'], " ");
+        let source_link = storage::workspace_links::stable_workspace_link(item, &source_title);
+        let content = format!(
+            "# {display_title}\n\nRelated {}: {source_link}\n",
+            item.kind.as_str(),
+        );
+
+        cx.spawn_in(window, async move |_, window| {
+            let write_path = path.clone();
+            let write_content = content.clone();
+            if background_executor
+                .spawn(async move {
+                    if let Some(parent) = write_path.parent() {
+                        create_dir_all(parent)?;
+                    }
+                    write(write_path, write_content)
+                })
+                .await
+                .is_err()
+            {
+                window
+                    .update(|window, cx| {
+                        window.push_notification(
+                            Notification::error("Could not create the linked note file"),
+                            cx,
+                        );
+                    })
+                    .ok();
+                return None;
+            }
+
+            let db_for_insert = db.clone();
+            let result = runtime
+                .spawn(async move {
+                    let inserted = storage::workspace::create_managed_linked_note(
+                        db_for_insert.as_ref(),
+                        project_id,
+                        title,
+                        path_string,
+                        content,
+                        item,
+                    )
+                    .await?;
+                    let board_id = storage::workspace_links::load_workspace_link_catalog(
+                        db_for_insert.as_ref(),
+                    )
+                    .await?
+                    .into_iter()
+                    .find(|entry| entry.item == item)
+                    .and_then(|entry| entry.board_id)
+                    .and_then(|id| u32::try_from(id).ok());
+                    Ok::<_, anyhow::Error>((inserted, board_id))
+                })
+                .await;
+
+            let cleanup_error = if matches!(&result, Ok(Err(_)) | Err(_)) {
+                let cleanup_path = path.clone();
+                background_executor
+                    .spawn(async move { remove_linked_note_file(&cleanup_path) })
+                    .await
+                    .err()
+                    .map(|error| error.to_string())
+            } else {
+                None
+            };
+
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| match result {
+                        Ok(Ok((inserted, board_id))) => {
+                            if let Some(board_id) = board_id {
+                                for tab in &this.open_tabs {
+                                    if let OpenTabKind::Board {
+                                        board_id: open_board_id,
+                                        view,
+                                        ..
+                                    } = &tab.kind
+                                        && *open_board_id == board_id
+                                    {
+                                        view.update(cx, |board, cx| {
+                                            board.reload_board(board_id, cx)
+                                        });
+                                    }
+                                }
+                            }
+                            this.open_note_tab(
+                                inserted.id,
+                                project_id,
+                                SharedString::from(inserted.title),
+                                window,
+                                cx,
+                            );
+                            this.refresh_workspace(cx);
+                        }
+                        Ok(Err(error)) => window.push_notification(
+                            Notification::error(match cleanup_error.as_deref() {
+                                Some(cleanup_error) => format!(
+                                    "Could not create linked note: {error}. The file at {} could not be removed: {cleanup_error}",
+                                    path.display()
+                                ),
+                                None => format!("Could not create linked note: {error}"),
+                            }),
+                            cx,
+                        ),
+                        Err(error) => window.push_notification(
+                            Notification::error(match cleanup_error.as_deref() {
+                                Some(cleanup_error) => format!(
+                                    "Linked note task failed: {error}. The file at {} could not be removed: {cleanup_error}",
+                                    path.display()
+                                ),
+                                None => format!("Linked note task failed: {error}"),
+                            }),
+                            cx,
+                        ),
+                    });
+                })
+                .ok()?;
+            Some(())
+        })
+        .detach();
+    }
+
     pub(crate) fn open_text_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -346,7 +573,7 @@ impl AppShell {
         let background_executor = cx.background_executor().clone();
         let db = cx.global::<DB>().conn.clone();
         let view = cx.entity().downgrade();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn_in(window, async move |_, window| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -453,7 +680,7 @@ impl AppShell {
     ) {
         let db = cx.global::<DB>().conn.clone();
         let view = cx.entity().downgrade();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = runtime
@@ -508,6 +735,10 @@ async fn watch_change_revisions(
     }
 }
 
+fn remove_linked_note_file(path: &Path) -> std::io::Result<()> {
+    remove_file(path)
+}
+
 async fn publish_change_revision(
     db: &sea_orm::DatabaseConnection,
     sender: &tokio::sync::watch::Sender<Option<ChangeRevision>>,
@@ -530,7 +761,7 @@ mod tests {
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{
         ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, DbBackend, EntityTrait,
-        Statement,
+        PaginatorTrait, Statement,
     };
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -574,6 +805,34 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn linked_note_file_is_removed_after_transaction_failure() -> anyhow::Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("linked-note.md");
+        std::fs::write(&path, "# Linked note")?;
+
+        let result = storage::workspace::create_managed_linked_note(
+            &db,
+            None,
+            "Linked note".to_string(),
+            path.display().to_string(),
+            "# Linked note".to_string(),
+            storage::workspace_links::WorkspaceItemRef {
+                kind: storage::workspace_links::WorkspaceItemKind::Board,
+                id: 999,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        remove_linked_note_file(&path)?;
+
+        assert!(!path.exists());
+        assert_eq!(entity::note::Entity::find().count(&db).await?, 0);
+        Ok(())
+    }
+
     #[gpui::test]
     #[ignore = "performance proof; run explicitly with one test thread"]
     fn startup_workspace_load_count(cx: &mut gpui::TestAppContext) {
@@ -600,10 +859,7 @@ mod tests {
             "castle-workspace-load-count-{}",
             std::process::id()
         ));
-        let app_db = crate::DB {
-            conn: Arc::new(db),
-            data_dir: PathBuf::new(),
-        };
+        let app_db = crate::DB::new(Arc::new(db), PathBuf::new());
 
         crate::workspace_data::reset_workspace_load_count();
         let mut shell = None;
@@ -678,10 +934,7 @@ mod tests {
             .expect("title-save database should initialize");
         let settings_dir =
             std::env::temp_dir().join(format!("castle-title-save-{}", std::process::id()));
-        let app_db = crate::DB {
-            conn: Arc::new(db.clone()),
-            data_dir: PathBuf::new(),
-        };
+        let app_db = crate::DB::new(Arc::new(db.clone()), PathBuf::new());
 
         let mut shell = None;
         let window = cx.update(|cx| {

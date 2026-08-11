@@ -12,6 +12,20 @@ impl BoardView {
     ) -> AnyElement {
         let mut rows = Vec::new();
         for key in &self.active_view_config.visible_properties {
+            if key == &storage::board_properties::PropertyKey::RelatedNotes {
+                if !entry.related_notes.is_empty() {
+                    rows.push(
+                        h_flex()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(cx.theme().primary_foreground.opacity(0.76))
+                            .child(Icon::new(IconName::File).xsmall())
+                            .child(entry.related_notes.len().to_string())
+                            .into_any_element(),
+                    );
+                }
+                continue;
+            }
             let storage::board_properties::PropertyKey::Custom(property_id) = key else {
                 continue;
             };
@@ -91,13 +105,7 @@ impl BoardView {
                 let label = NaiveDate::parse_from_str(value, "%Y-%m-%d")
                     .map(|date| date.format("%b %-d, %Y").to_string())
                     .unwrap_or_else(|_| value.clone());
-                h_flex()
-                    .min_w_0()
-                    .gap_1p5()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(Icon::new(IconName::Calendar).xsmall())
-                    .child(div().truncate().child(label))
+                self.render_card_date_pill(label, cx.theme().secondary, cx)
                     .into_any_element()
             }
             PropertyValue::Url(value) => {
@@ -1229,7 +1237,11 @@ impl BoardView {
     }
 
     pub(super) fn render_fields_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut fields = vec![PropertyKey::Labels, PropertyKey::DueDate];
+        let mut fields = vec![
+            PropertyKey::Labels,
+            PropertyKey::DueDate,
+            PropertyKey::RelatedNotes,
+        ];
         fields.extend(
             self.board_properties
                 .definitions
@@ -1339,7 +1351,11 @@ impl BoardView {
     }
 
     pub(super) fn render_sort_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut fields = vec![PropertyKey::DueDate, PropertyKey::Labels];
+        let mut fields = vec![
+            PropertyKey::DueDate,
+            PropertyKey::Labels,
+            PropertyKey::RelatedNotes,
+        ];
         fields.extend(
             self.board_properties
                 .definitions
@@ -1684,6 +1700,7 @@ impl BoardView {
         match key {
             PropertyKey::DueDate => "Due date".to_string(),
             PropertyKey::Labels => "Labels".to_string(),
+            PropertyKey::RelatedNotes => "Related notes".to_string(),
             PropertyKey::Custom(property_id) => self
                 .board_properties
                 .definitions
@@ -1769,6 +1786,7 @@ fn property_key_id(key: &PropertyKey) -> String {
     match key {
         PropertyKey::DueDate => "due-date".to_string(),
         PropertyKey::Labels => "labels".to_string(),
+        PropertyKey::RelatedNotes => "related-notes".to_string(),
         PropertyKey::Custom(id) => format!("custom-{id}"),
     }
 }

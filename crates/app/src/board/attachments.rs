@@ -45,7 +45,7 @@ impl BoardView {
         let data_dir = app_db.data_dir.clone();
         let destination = attachment_directory(&app_db.data_dir, entry_id);
         let background = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = app_db.runtime.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -123,6 +123,7 @@ impl BoardView {
                                 );
                             }
                             entry.attachments.extend(attachments);
+                            this.emit_data_committed(cx, false);
                             cx.notify();
                         }
                         for error in errors.drain(..) {
@@ -192,7 +193,7 @@ impl BoardView {
             attachment.file_name.as_ref(),
         );
         let background = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = app_db.runtime.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let result = runtime
@@ -220,6 +221,7 @@ impl BoardView {
                         {
                             entry.attachments.retain(|item| item.id != attachment_id);
                             this.attachment_preview_paths.remove(&attachment_id);
+                            this.emit_data_committed(cx, false);
                             cx.notify();
                         }
                     })
@@ -569,6 +571,7 @@ mod tests {
                 entry_id: id,
                 file_name: file_name.into(),
             }],
+            related_notes: vec![],
         };
         let cards = vec![CardDTO {
             id: 1,

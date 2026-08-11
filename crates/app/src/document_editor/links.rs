@@ -18,7 +18,7 @@ use crate::DB;
 use super::{DocumentEditorView, DocumentInspectorTab};
 
 #[derive(Clone)]
-pub(super) struct WikiLinkCompletionProvider {
+pub(crate) struct WikiLinkCompletionProvider {
     state: Rc<RefCell<WikiLinkCompletionState>>,
 }
 
@@ -27,33 +27,61 @@ struct WikiLinkCompletionState {
     project_id: Option<i64>,
     enabled: bool,
     catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
+    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
 }
 
 impl WikiLinkCompletionProvider {
-    pub(super) fn new(note_id: i64) -> Self {
+    pub(crate) fn new(note_id: i64) -> Self {
         Self {
             state: Rc::new(RefCell::new(WikiLinkCompletionState {
                 note_id,
                 project_id: None,
                 enabled: false,
                 catalog: Arc::new(Vec::new()),
+                workspace_catalog: Arc::new(Vec::new()),
             })),
         }
     }
 
-    pub(super) fn update(
+    pub(crate) fn update(
         &self,
         note_id: i64,
         project_id: Option<i64>,
         enabled: bool,
         catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
+        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
     ) {
         *self.state.borrow_mut() = WikiLinkCompletionState {
             note_id,
             project_id,
             enabled,
             catalog,
+            workspace_catalog,
         };
+    }
+
+    pub(crate) fn update_for_workspace_source(
+        &self,
+        project_id: Option<i64>,
+        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    ) {
+        let note_catalog = workspace_catalog
+            .iter()
+            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
+            .map(|entry| storage::note_links::NoteLinkCatalogEntry {
+                note_id: entry.item.id,
+                title: entry.title.clone(),
+                project_id: entry.project_id,
+                project_name: entry.project_name.clone(),
+            })
+            .collect();
+        self.update(
+            -1,
+            project_id,
+            true,
+            Arc::new(note_catalog),
+            workspace_catalog,
+        );
     }
 }
 
@@ -75,11 +103,12 @@ impl CompletionProvider for WikiLinkCompletionProvider {
         if !state.enabled {
             return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
         }
-        let matches = wikilink_matches(
+        let matches = wikilink_completion_candidates(
             query,
             state.note_id,
             state.project_id,
             state.catalog.as_ref(),
+            state.workspace_catalog.as_ref(),
         );
 
         let replace_range = lsp_types::Range::new(
@@ -90,13 +119,13 @@ impl CompletionProvider for WikiLinkCompletionProvider {
         let items = matches
             .into_iter()
             .map(|candidate| CompletionItem {
-                label: candidate.title.clone(),
-                detail: candidate.project_name.clone(),
-                kind: Some(CompletionItemKind::FILE),
+                label: candidate.label,
+                detail: candidate.detail,
+                kind: Some(candidate.kind),
                 filter_text: Some(query.to_string()),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: replace_range,
-                    new_text: wikilink_for_candidate(&candidate, state.catalog.as_ref()),
+                    new_text: candidate.new_text,
                 })),
                 ..Default::default()
             })
@@ -113,6 +142,7 @@ impl CompletionProvider for WikiLinkCompletionProvider {
 #[derive(Clone, Debug)]
 enum PreviewLinkTarget {
     Note(u32),
+    Workspace(crate::workspace_navigation::WorkspaceNavigationTarget),
     External(String),
 }
 
@@ -131,11 +161,18 @@ struct WikiLinkPreviewBlock {
 }
 
 #[derive(Clone)]
-pub(super) struct WikiLinkPreviewPlugin {
-    editor: Entity<DocumentEditorView>,
+enum WikiLinkPreviewOwner {
+    Document(Entity<DocumentEditorView>),
+    Board(Entity<crate::board::BoardView>),
+}
+
+#[derive(Clone)]
+pub(crate) struct WikiLinkPreviewPlugin {
+    owner: WikiLinkPreviewOwner,
     project_id: Option<i64>,
     catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
     indexed_links: Arc<storage::note_links::NoteLinkSet>,
+    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
 }
 
 impl WikiLinkPreviewPlugin {
@@ -144,12 +181,38 @@ impl WikiLinkPreviewPlugin {
         project_id: Option<i64>,
         catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
         indexed_links: Arc<storage::note_links::NoteLinkSet>,
+        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
     ) -> Self {
         Self {
-            editor,
+            owner: WikiLinkPreviewOwner::Document(editor),
             project_id,
             catalog,
             indexed_links,
+            workspace_catalog,
+        }
+    }
+
+    pub(crate) fn new_for_board(
+        board: Entity<crate::board::BoardView>,
+        project_id: Option<i64>,
+        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    ) -> Self {
+        let catalog = workspace_catalog
+            .iter()
+            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
+            .map(|entry| storage::note_links::NoteLinkCatalogEntry {
+                note_id: entry.item.id,
+                title: entry.title.clone(),
+                project_id: entry.project_id,
+                project_name: entry.project_name.clone(),
+            })
+            .collect();
+        Self {
+            owner: WikiLinkPreviewOwner::Board(board),
+            project_id,
+            catalog: Arc::new(catalog),
+            indexed_links: Arc::new(storage::note_links::NoteLinkSet::default()),
+            workspace_catalog,
         }
     }
 }
@@ -187,6 +250,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             self.project_id,
             &self.catalog,
             &self.indexed_links,
+            &self.workspace_catalog,
         );
         (!block.links.is_empty()).then(|| {
             MarkdownNode::new(self.name(), block.clone())
@@ -241,7 +305,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             )
         });
 
-        let editor = self.editor.clone();
+        let owner = self.owner.clone();
         let text = InteractiveText::new(
             ("wikilink-preview", block.source_offset),
             StyledText::new(block.text.clone()).with_highlights(highlights),
@@ -252,12 +316,17 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             };
             match target {
                 PreviewLinkTarget::Note(note_id) => {
-                    editor.update(cx, |_, cx| {
-                        cx.emit(super::DocumentEditorEvent::OpenNote {
+                    emit_preview_target(
+                        &owner,
+                        crate::workspace_navigation::WorkspaceNavigationTarget::Note {
                             note_id: *note_id,
                             source_offset: None,
-                        });
-                    });
+                        },
+                        cx,
+                    );
+                }
+                PreviewLinkTarget::Workspace(target) => {
+                    emit_preview_target(&owner, *target, cx);
                 }
                 PreviewLinkTarget::External(url) => cx.open_url(url),
             }
@@ -274,23 +343,74 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
     }
 }
 
+fn emit_preview_target(
+    owner: &WikiLinkPreviewOwner,
+    target: crate::workspace_navigation::WorkspaceNavigationTarget,
+    cx: &mut gpui::App,
+) {
+    match owner {
+        WikiLinkPreviewOwner::Document(editor) => {
+            editor.update(cx, |_, cx| {
+                cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target));
+            });
+        }
+        WikiLinkPreviewOwner::Board(board) => {
+            board.update(cx, |_, cx| {
+                cx.emit(crate::board::BoardViewEvent::OpenWorkspaceTarget(target));
+            });
+        }
+    }
+}
+
 impl DocumentEditorView {
     pub(super) fn load_note_links_async(
         note_id: u32,
         generation: u64,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        let runtime = cx.global::<DB>().runtime.clone();
+        Self::load_note_links_with_runtime(note_id, generation, runtime, cx)
+    }
+
+    fn load_note_links_with_runtime(
+        note_id: u32,
+        generation: u64,
+        runtime: tokio::runtime::Handle,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    let links =
-                        storage::note_links::load_note_links(db.as_ref(), note_id as i64).await?;
-                    let catalog = storage::note_links::load_note_link_catalog(db.as_ref()).await?;
-                    Ok::<_, anyhow::Error>((links, catalog))
-                })
-                .await;
+            let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
+            let load = runtime.spawn(async move {
+                tokio::select! {
+                    biased;
+                    _ = cancelled => None,
+                    result = async move {
+                        let links = storage::note_links::load_note_links(
+                            db.as_ref(),
+                            note_id as i64,
+                        )
+                        .await?;
+                        let note_catalog = storage::note_links::load_note_link_catalog(db.as_ref());
+                        let workspace_links = storage::workspace_links::load_note_workspace_links(
+                            db.as_ref(),
+                            note_id as i64,
+                        );
+                        let workspace_catalog =
+                            storage::workspace_links::load_workspace_link_catalog(db.as_ref());
+                        let (note_catalog, workspace_links, workspace_catalog) =
+                            tokio::try_join!(note_catalog, workspace_links, workspace_catalog)?;
+                        Ok::<_, anyhow::Error>((
+                            links,
+                            note_catalog,
+                            workspace_links,
+                            workspace_catalog,
+                        ))
+                    } => Some(result),
+                }
+            });
+            let result = load.await;
+            drop(cancel_on_drop);
 
             this.update(cx, |this, cx| {
                 if this.note_id != note_id || this.note_links_generation != generation {
@@ -298,18 +418,22 @@ impl DocumentEditorView {
                 }
                 this.note_links_loading = false;
                 match result {
-                    Ok(Ok((links, catalog))) => {
+                    Ok(Some(Ok((links, note_catalog, workspace_links, workspace_catalog)))) => {
                         this.note_links = std::sync::Arc::new(links);
-                        this.note_link_catalog = Arc::new(catalog);
+                        this.note_link_catalog = Arc::new(note_catalog);
+                        this.workspace_links = Arc::new(workspace_links);
+                        this.workspace_link_catalog = Arc::new(workspace_catalog);
                         this.wikilink_completion_provider.update(
                             this.note_id as i64,
                             this.project_id,
                             this.kind == super::DocumentKind::Markdown,
                             this.note_link_catalog.clone(),
+                            this.workspace_link_catalog.clone(),
                         );
                         this.note_links_error = None;
                     }
-                    Ok(Err(error)) => this.note_links_error = Some(error.to_string().into()),
+                    Ok(Some(Err(error))) => this.note_links_error = Some(error.to_string().into()),
+                    Ok(None) => return,
                     Err(error) => {
                         this.note_links_error = Some(format!("Link task failed: {error}").into())
                     }
@@ -320,12 +444,22 @@ impl DocumentEditorView {
         })
     }
 
-    pub(super) fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
+        let runtime = cx.global::<DB>().runtime.clone();
+        self.refresh_note_links_with_runtime(runtime, cx);
+    }
+
+    pub(super) fn refresh_note_links_with_runtime(
+        &mut self,
+        runtime: tokio::runtime::Handle,
+        cx: &mut Context<Self>,
+    ) {
         self.note_links_generation = self.note_links_generation.saturating_add(1);
         self.note_links_loading = true;
-        self._note_links_task = Some(Self::load_note_links_async(
+        self._note_links_task = Some(Self::load_note_links_with_runtime(
             self.note_id,
             self.note_links_generation,
+            runtime,
             cx,
         ));
         cx.notify();
@@ -348,11 +482,17 @@ fn append_preview_node(
     project_id: Option<i64>,
     catalog: &[storage::note_links::NoteLinkCatalogEntry],
     indexed_links: &storage::note_links::NoteLinkSet,
+    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
 ) {
     match node {
-        Node::Text(text) => {
-            append_preview_text(&text.value, block, project_id, catalog, indexed_links)
-        }
+        Node::Text(text) => append_preview_text(
+            &text.value,
+            block,
+            project_id,
+            catalog,
+            indexed_links,
+            workspace_catalog,
+        ),
         Node::InlineCode(code) => block.text.push_str(&code.value),
         Node::InlineMath(math) => block.text.push_str(&math.value),
         Node::Break(_) => block.text.push('\n'),
@@ -360,7 +500,14 @@ fn append_preview_node(
         Node::Link(link) => {
             let start = block.text.len();
             for child in &link.children {
-                append_preview_node(child, block, project_id, catalog, indexed_links);
+                append_preview_node(
+                    child,
+                    block,
+                    project_id,
+                    catalog,
+                    indexed_links,
+                    workspace_catalog,
+                );
             }
             let end = block.text.len();
             if start < end {
@@ -373,7 +520,14 @@ fn append_preview_node(
         _ => {
             if let Some(children) = node.children() {
                 for child in children {
-                    append_preview_node(child, block, project_id, catalog, indexed_links);
+                    append_preview_node(
+                        child,
+                        block,
+                        project_id,
+                        catalog,
+                        indexed_links,
+                        workspace_catalog,
+                    );
                 }
             } else {
                 block.text.push_str(&node.to_string());
@@ -388,6 +542,7 @@ fn append_preview_text(
     project_id: Option<i64>,
     catalog: &[storage::note_links::NoteLinkCatalogEntry],
     indexed_links: &storage::note_links::NoteLinkSet,
+    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
 ) {
     let mut consumed = 0;
     for link in storage::note_links::parse_wikilinks(text) {
@@ -397,11 +552,18 @@ fn append_preview_text(
             .text
             .push_str(link.display_text.as_deref().unwrap_or(&link.raw_target));
         let end = block.text.len();
+        let target =
+            storage::workspace_links::resolve_stable_target(&link.raw_target, workspace_catalog)
+                .and_then(workspace_navigation_target)
+                .map(PreviewLinkTarget::Workspace)
+                .or_else(|| {
+                    resolve_preview_note(&link.raw_target, project_id, catalog, indexed_links)
+                        .and_then(|note_id| u32::try_from(note_id).ok())
+                        .map(PreviewLinkTarget::Note)
+                });
         block.links.push(PreviewLink {
             range: start..end,
-            target: resolve_preview_note(&link.raw_target, project_id, catalog, indexed_links)
-                .and_then(|note_id| u32::try_from(note_id).ok())
-                .map(PreviewLinkTarget::Note),
+            target,
         });
         consumed = link.end_byte;
     }
@@ -453,6 +615,35 @@ fn unique_catalog_note<'a>(
     candidates.next().is_none().then_some(first)
 }
 
+pub(super) fn workspace_navigation_target(
+    entry: &storage::workspace_links::WorkspaceCatalogEntry,
+) -> Option<crate::workspace_navigation::WorkspaceNavigationTarget> {
+    let item_id = u32::try_from(entry.item.id).ok()?;
+    match entry.item.kind {
+        storage::workspace_links::WorkspaceItemKind::Note => Some(
+            crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+                note_id: item_id,
+                source_offset: None,
+            },
+        ),
+        storage::workspace_links::WorkspaceItemKind::Board => {
+            Some(crate::workspace_navigation::WorkspaceNavigationTarget::board(item_id))
+        }
+        storage::workspace_links::WorkspaceItemKind::List => Some(
+            crate::workspace_navigation::WorkspaceNavigationTarget::list(
+                u32::try_from(entry.board_id?).ok()?,
+                item_id,
+            ),
+        ),
+        storage::workspace_links::WorkspaceItemKind::Card => Some(
+            crate::workspace_navigation::WorkspaceNavigationTarget::card(
+                u32::try_from(entry.board_id?).ok()?,
+                item_id,
+            ),
+        ),
+    }
+}
+
 fn wikilink_query_at_cursor(text: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
     if cursor > text.len() || !text.is_char_boundary(cursor) {
         return None;
@@ -470,6 +661,95 @@ fn wikilink_query_at_cursor(text: &str, cursor: usize) -> Option<(Range<usize>, 
     };
     (!query.contains([']', '|', '`']) && query.len() <= 128)
         .then_some((opening..replace_end, query))
+}
+
+struct WikiLinkCompletionCandidate {
+    label: String,
+    detail: Option<String>,
+    kind: CompletionItemKind,
+    new_text: String,
+}
+
+fn wikilink_completion_candidates(
+    query: &str,
+    note_id: i64,
+    project_id: Option<i64>,
+    note_catalog: &[storage::note_links::NoteLinkCatalogEntry],
+    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
+) -> Vec<WikiLinkCompletionCandidate> {
+    let (selected_kind, query) = query
+        .split_once(':')
+        .and_then(|(prefix, query)| {
+            let kind = match prefix.trim().to_ascii_lowercase().as_str() {
+                "note" => storage::workspace_links::WorkspaceItemKind::Note,
+                "board" => storage::workspace_links::WorkspaceItemKind::Board,
+                "list" => storage::workspace_links::WorkspaceItemKind::List,
+                "card" => storage::workspace_links::WorkspaceItemKind::Card,
+                _ => return None,
+            };
+            Some((Some(kind), query.trim()))
+        })
+        .unwrap_or((None, query));
+
+    let mut candidates = Vec::new();
+    if selected_kind.is_none()
+        || selected_kind == Some(storage::workspace_links::WorkspaceItemKind::Note)
+    {
+        candidates.extend(
+            wikilink_matches(query, note_id, project_id, note_catalog)
+                .into_iter()
+                .map(|note| WikiLinkCompletionCandidate {
+                    label: note.title.clone(),
+                    detail: note.project_name.clone(),
+                    kind: CompletionItemKind::FILE,
+                    new_text: wikilink_for_candidate(&note, note_catalog),
+                }),
+        );
+    }
+
+    if selected_kind != Some(storage::workspace_links::WorkspaceItemKind::Note) {
+        let normalized_query = query.to_lowercase();
+        let mut workspace_matches = workspace_catalog
+            .iter()
+            .filter(|entry| entry.item.kind != storage::workspace_links::WorkspaceItemKind::Note)
+            .filter(|entry| selected_kind.is_none_or(|kind| entry.item.kind == kind))
+            .filter(|entry| {
+                normalized_query.is_empty()
+                    || entry.title.to_lowercase().contains(&normalized_query)
+                    || entry
+                        .breadcrumb()
+                        .to_lowercase()
+                        .contains(&normalized_query)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        workspace_matches.sort_by_key(|entry| {
+            (
+                entry.project_id != project_id,
+                entry.item.kind.as_str(),
+                !entry.title.to_lowercase().starts_with(&normalized_query),
+                entry.breadcrumb().to_lowercase(),
+                entry.item.id,
+            )
+        });
+        candidates.extend(workspace_matches.into_iter().map(|entry| {
+            let kind = match entry.item.kind {
+                storage::workspace_links::WorkspaceItemKind::Board => CompletionItemKind::MODULE,
+                storage::workspace_links::WorkspaceItemKind::List => CompletionItemKind::FOLDER,
+                storage::workspace_links::WorkspaceItemKind::Card => CompletionItemKind::VALUE,
+                storage::workspace_links::WorkspaceItemKind::Note => CompletionItemKind::FILE,
+            };
+            WikiLinkCompletionCandidate {
+                label: entry.title.clone(),
+                detail: Some(entry.breadcrumb()),
+                kind,
+                new_text: entry.stable_link(),
+            }
+        }));
+    }
+
+    candidates.truncate(12);
+    candidates
 }
 
 fn wikilink_matches(
@@ -533,7 +813,13 @@ fn wikilink_for_candidate(
             return format!("[[{project_name}/{}]]", candidate.title);
         }
     }
-    format!("[[note:{}|{}]]", candidate.note_id, candidate.title)
+    storage::workspace_links::stable_workspace_link(
+        storage::workspace_links::WorkspaceItemRef {
+            kind: storage::workspace_links::WorkspaceItemKind::Note,
+            id: candidate.note_id,
+        },
+        candidate.title.as_ref(),
+    )
 }
 
 #[cfg(test)]
@@ -574,6 +860,7 @@ mod tests {
             Some(2),
             &catalog,
             &storage::note_links::NoteLinkSet::default(),
+            &[],
         );
 
         assert_eq!(block.text, "See the plan.");
@@ -621,10 +908,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(crate::DB {
-                conn: Arc::new(db),
-                data_dir: PathBuf::new(),
-            });
+            cx.set_global(crate::DB::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(source_id, window, cx);
                 editor_view = Some(view.clone());

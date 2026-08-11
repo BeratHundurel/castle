@@ -121,7 +121,7 @@ impl AppShell {
 
     fn load_custom_board_templates(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result =
                 runtime
@@ -499,7 +499,7 @@ impl AppShell {
         picker.error = None;
         let project_id = picker.project_id;
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         let app = cx.entity().downgrade();
         cx.notify();
 
@@ -577,7 +577,7 @@ impl AppShell {
         picker.deleting_template_id = Some(template_id);
         picker.error = None;
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.notify();
 
         cx.spawn(async move |this, cx| {

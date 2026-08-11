@@ -8,6 +8,10 @@ use gpui::{App, Global, SharedString, px};
 use gpui_component::{Theme, ThemeRegistry, scroll::ScrollbarShow};
 use serde::{Deserialize, Serialize};
 
+use self::persistence::{SettingsPersistence, SettingsWriteRequest};
+
+mod persistence;
+
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DEFAULT_THEME_NAME: &str = "Sick";
 pub(crate) const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
@@ -26,6 +30,7 @@ const DEFAULT_EDITOR_STATUS_LINE_VISIBLE: bool = true;
 const DEFAULT_EDITOR_LINE_NUMBERS: bool = false;
 const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
 const DEFAULT_EDITOR_VIM_MODE: bool = false;
+const DEFAULT_FORMAT_ON_AUTO_SAVE: bool = true;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
@@ -58,11 +63,12 @@ pub(crate) struct TabSession {
 pub struct AppSettings {
     path: PathBuf,
     values: StoredSettings,
+    persistence: SettingsPersistence,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
-struct StoredSettings {
+pub(super) struct StoredSettings {
     theme_name: String,
     font_family: String,
     font_size: f64,
@@ -82,6 +88,7 @@ struct StoredSettings {
     #[serde(alias = "markdown_soft_wrap")]
     editor_soft_wrap: bool,
     editor_vim_mode: bool,
+    format_on_auto_save: bool,
     #[serde(alias = "markdown_outline_visible")]
     document_outline_visible: bool,
     close_to_tray: bool,
@@ -107,6 +114,7 @@ impl Default for StoredSettings {
             editor_line_numbers: DEFAULT_EDITOR_LINE_NUMBERS,
             editor_soft_wrap: DEFAULT_EDITOR_SOFT_WRAP,
             editor_vim_mode: DEFAULT_EDITOR_VIM_MODE,
+            format_on_auto_save: DEFAULT_FORMAT_ON_AUTO_SAVE,
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
@@ -133,7 +141,11 @@ impl AppSettings {
         };
         values.normalize();
 
-        Self { path, values }
+        Self {
+            path,
+            values,
+            persistence: SettingsPersistence::default(),
+        }
     }
 
     pub fn apply_to_theme(&self, cx: &mut App) {
@@ -157,6 +169,19 @@ impl AppSettings {
         });
     }
 
+    pub fn set_first_run_note(&mut self, note_id: u32, title: String) {
+        self.values.tab_session = TabSession {
+            tabs: vec![StoredTab::Note {
+                note_id,
+                project_id: None,
+                title,
+            }],
+            active_tab_index: 0,
+            active_project_id: None,
+        };
+        self.persist_sync();
+    }
+
     pub(crate) fn sidebar_width(cx: &App) -> gpui::Pixels {
         px(cx.global::<Self>().values.sidebar_width as f32)
     }
@@ -168,12 +193,12 @@ impl AppSettings {
     }
 
     pub(crate) fn set_theme_name(theme_name: SharedString, cx: &mut App) {
-        let values = {
+        let (values, write) = {
             let settings = cx.global_mut::<Self>();
             settings.values.theme_name = theme_name.to_string();
-            settings.persist();
-            settings.values.clone()
+            (settings.values.clone(), settings.prepare_write())
         };
+        Self::schedule_write(write);
 
         apply_theme_name(&values.theme_name, cx);
         apply_font_family(&values.font_family, cx);
@@ -316,6 +341,16 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
+    pub(crate) fn format_on_auto_save(cx: &App) -> bool {
+        cx.global::<Self>().values.format_on_auto_save
+    }
+
+    pub(crate) fn set_format_on_auto_save(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.format_on_auto_save = enabled;
+        });
+    }
+
     pub(crate) fn document_outline_visible(cx: &App) -> bool {
         cx.global::<Self>().values.document_outline_visible
     }
@@ -359,32 +394,31 @@ impl AppSettings {
     }
 
     fn update(cx: &mut App, update: impl FnOnce(&mut Self)) {
-        let settings = cx.global_mut::<Self>();
-        update(settings);
-        settings.persist();
+        let write = {
+            let settings = cx.global_mut::<Self>();
+            update(settings);
+            settings.prepare_write()
+        };
+        Self::schedule_write(write);
     }
 
-    fn persist(&self) {
-        if let Some(parent) = self.path.parent()
-            && let Err(err) = fs::create_dir_all(parent)
-        {
-            eprintln!(
-                "Failed to create settings directory {}: {err}",
-                parent.display()
-            );
-            return;
-        }
+    fn prepare_write(&self) -> SettingsWriteRequest {
+        self.persistence.prepare(&self.path, &self.values)
+    }
 
-        match serde_json::to_string_pretty(&self.values) {
-            Ok(contents) => {
-                if let Err(err) = fs::write(&self.path, contents) {
-                    eprintln!("Failed to write settings to {}: {err}", self.path.display());
-                }
-            }
-            Err(err) => {
-                eprintln!("Failed to serialize settings: {err}");
-            }
+    fn schedule_write(write: SettingsWriteRequest) {
+        SettingsPersistence::schedule(write);
+    }
+
+    pub(crate) fn flush(cx: &mut App) -> impl Future<Output = ()> + use<> {
+        let write = cx.global::<Self>().prepare_write();
+        async move {
+            SettingsPersistence::write(write).await;
         }
+    }
+
+    fn persist_sync(&self) {
+        SettingsPersistence::write_sync(&self.path, &self.values);
     }
 }
 
@@ -513,8 +547,17 @@ mod tests {
         assert_eq!(settings.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
         assert!(settings.editor_status_line_visible);
         assert!(!settings.editor_vim_mode);
+        assert!(settings.format_on_auto_save);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
+    }
+
+    #[test]
+    fn format_on_auto_save_can_be_disabled() {
+        let settings: StoredSettings = serde_json::from_str(r#"{"format_on_auto_save":false}"#)
+            .expect("format-on-autosave setting should deserialize");
+
+        assert!(!settings.format_on_auto_save);
     }
 
     #[test]
@@ -570,6 +613,87 @@ mod tests {
 
         assert_eq!(restored.tab_session.active_tab_index, 1);
         assert_eq!(restored.tab_session, settings.tab_session);
+    }
+
+    #[test]
+    fn first_run_note_replaces_stale_tabs_and_persists() {
+        let directory = tempfile::tempdir().expect("settings directory should be created");
+        let mut settings = AppSettings::load(directory.path());
+        settings.values.tab_session = TabSession {
+            tabs: vec![StoredTab::Board {
+                board_id: 99,
+                project_id: Some(7),
+                title: "Old board".to_string(),
+            }],
+            active_tab_index: 0,
+            active_project_id: Some(7),
+        };
+
+        settings.set_first_run_note(42, "docs.md".to_string());
+
+        let restored = AppSettings::load(directory.path());
+        assert_eq!(
+            restored.values.tab_session,
+            TabSession {
+                tabs: vec![StoredTab::Note {
+                    note_id: 42,
+                    project_id: None,
+                    title: "docs.md".to_string(),
+                }],
+                active_tab_index: 0,
+                active_project_id: None,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn settings_writes_leave_foreground_free_and_latest_snapshot_wins(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("settings directory should be created");
+        let settings = AppSettings::load(directory.path());
+        let settings_path = directory.path().join(SETTINGS_FILE_NAME);
+        let write_gate = settings.persistence.write_gate.clone();
+        let held_write = runtime.block_on(write_gate.lock_owned());
+
+        cx.update(|cx| cx.set_global(settings));
+        for active_tab_index in 0..40 {
+            cx.update(|cx| {
+                AppSettings::set_tab_session(
+                    TabSession {
+                        tabs: vec![StoredTab::Note {
+                            note_id: 42,
+                            project_id: None,
+                            title: format!("Note {active_tab_index}"),
+                        }],
+                        active_tab_index,
+                        active_project_id: None,
+                    },
+                    cx,
+                );
+            });
+        }
+
+        assert!(
+            !settings_path.exists(),
+            "a blocked settings writer must not block or write on GPUI's foreground executor"
+        );
+        drop(held_write);
+        let flush = cx.update(AppSettings::flush);
+        runtime.block_on(flush);
+
+        let restored = AppSettings::load(directory.path());
+        assert_eq!(
+            restored.values.tab_session.tabs,
+            vec![StoredTab::Note {
+                note_id: 42,
+                project_id: None,
+                title: "Note 39".to_string(),
+            }]
+        );
     }
 
     #[test]

@@ -15,6 +15,18 @@ pub(crate) struct DuplicateCardAction(pub(crate) u32);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = board, no_json)]
+pub(crate) struct CopyListInternalLinkAction(pub(crate) u32);
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = board, no_json)]
+pub(crate) struct CopyCardInternalLinkAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = board, no_json)]
+pub(crate) struct CopyBoardInternalLinkAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = board, no_json)]
 pub(crate) struct DeleteEntryAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]

@@ -1,15 +1,17 @@
 use chrono::{Local, NaiveDate};
 use gpui::{StyledImage as _, prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable,
+    ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     checkbox::Checkbox,
     date_picker::DatePicker,
     h_flex,
     input::Input,
     menu::DropdownMenu as _,
+    notification::Notification,
     popover::Popover,
     scroll::ScrollableElement as _,
+    text::{TextView, TextViewStyle},
     v_flex,
 };
 
@@ -23,14 +25,16 @@ mod layout;
 mod metadata;
 mod overlay;
 mod properties;
+mod related_notes;
 
 use super::BoardView;
 use super::action::*;
 use super::drag::*;
 use super::dto::EntryDTO;
 use super::due_date::{DueDateStatus, due_date_status};
-use super::filters::{DueDateFilter, matches_custom_filters, matches_filters};
+use super::filters::DueDateFilter;
 use crate::color_contrast::accessible_text_colors;
+use crate::sidebar::drag::SidebarDragInfo;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -42,6 +46,9 @@ impl Render for BoardView {
             .on_action(cx.listener(Self::on_delete_card_action))
             .on_action(cx.listener(Self::on_edit_card_action))
             .on_action(cx.listener(Self::on_duplicate_card_action))
+            .on_action(cx.listener(Self::on_copy_list_internal_link_action))
+            .on_action(cx.listener(Self::on_copy_card_internal_link_action))
+            .on_action(cx.listener(Self::on_copy_board_internal_link_action))
             .on_action(cx.listener(Self::on_delete_entry_action))
             .on_action(cx.listener(Self::on_duplicate_entry_action))
             .on_action(cx.listener(Self::on_move_entry_action))

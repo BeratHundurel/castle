@@ -228,7 +228,10 @@ impl DocumentEditorView {
     }
 }
 
-fn format_document_text(kind: DocumentKind, source: &str) -> Result<Option<String>, String> {
+pub(super) fn format_document_text(
+    kind: DocumentKind,
+    source: &str,
+) -> Result<Option<String>, String> {
     match kind {
         DocumentKind::Markdown => format_markdown(source),
         DocumentKind::Json => format_json(source),
@@ -324,7 +327,11 @@ fn preserve_json_newlines(
     }
 }
 
-fn map_range_after_format(before: &str, after: &str, range: Range<usize>) -> Range<usize> {
+pub(super) fn map_range_after_format(
+    before: &str,
+    after: &str,
+    range: Range<usize>,
+) -> Range<usize> {
     let start = map_offset_after_format(before, after, range.start);
     let end = map_offset_after_format(before, after, range.end);
     start.min(end)..start.max(end)
@@ -663,6 +670,22 @@ mod tests {
                 "| 1 | 2 |\n"
             )
         );
+    }
+
+    #[test]
+    fn formatting_preserves_castle_board_view_block_bytes() {
+        let block = concat!(
+            "```castle-board-view\n",
+            "board = 12\n",
+            "view = 4\n",
+            "title = \"Roadmap · Current\"\n",
+            "```\n"
+        );
+        let source = format!("#  Board context\n\n{block}");
+        let Ok(Some(formatted)) = format_markdown(&source) else {
+            panic!("heading should be formatted");
+        };
+        assert!(formatted.contains(block));
     }
 
     #[test]

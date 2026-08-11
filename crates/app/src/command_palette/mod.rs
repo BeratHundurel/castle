@@ -60,6 +60,8 @@ pub(crate) enum PaletteCommandKind {
     OpenSettings,
     SwitchTheme,
     SearchWorkspace,
+    CreateCardFromSelection,
+    InsertBoardView,
 }
 
 pub(crate) struct CommandPalette {

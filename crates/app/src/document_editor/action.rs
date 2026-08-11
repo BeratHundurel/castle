@@ -8,6 +8,8 @@ gpui::actions!(
         SaveDocumentFile,
         SaveDocumentFileAs,
         ToggleDocumentPreview,
+        CreateCardFromSelectionAction,
+        InsertBoardViewAction,
     ]
 );
 

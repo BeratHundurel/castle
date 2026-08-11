@@ -19,3 +19,5 @@ pub mod note_link;
 pub mod note_link_index_state;
 pub mod project;
 pub mod saved_board_view;
+pub mod workspace_link;
+pub mod workspace_link_index_state;

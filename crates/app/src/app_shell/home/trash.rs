@@ -201,7 +201,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn_in(window, async move |this, cx| {
             let request = RestoreTrashItem(MoveToTrash {
                 kind: item.kind,
@@ -295,7 +295,7 @@ impl AppShell {
         let db = app_db.conn.clone();
         let attachments_dir = app_db.data_dir.join("attachments");
         let background = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let request = PurgeTrashItem(MoveToTrash {
                 kind: item.kind,
@@ -370,7 +370,7 @@ impl AppShell {
         let db = app_db.conn.clone();
         let attachments_dir = app_db.data_dir.join("attachments");
         let background = cx.background_executor().clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         cx.spawn(async move |this, cx| {
             let result = match runtime
                 .spawn(async move { crate::trash::purge_all(db.as_ref()).await })

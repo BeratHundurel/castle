@@ -8,7 +8,7 @@ impl AppShell {
         }
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         self.home_refreshing = true;
         cx.spawn(async move |this, cx| {
             let result = match runtime
@@ -47,7 +47,7 @@ impl AppShell {
         }
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         self.trash_refreshing = true;
         cx.spawn(async move |this, cx| {
             let result = match runtime
@@ -114,27 +114,29 @@ impl AppShell {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        self.record_opened_generation = self.record_opened_generation.saturating_add(1);
-        let generation = self.record_opened_generation;
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(250))
-                .await;
-            let is_current = this
-                .read_with(cx, |this, _| this.record_opened_generation == generation)
-                .unwrap_or(false);
-            if !is_current {
-                return;
+        let runtime = cx.global::<DB>().runtime.clone();
+        self.record_opened_task = Some(cx.spawn(async move |_, _| {
+            let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
+            let update = runtime.spawn(async move {
+                tokio::select! {
+                    biased;
+                    _ = cancelled => None,
+                    result = crate::home::mark_opened(db.as_ref(), kind, id, now_ts()) => {
+                        Some(result)
+                    }
+                }
+            });
+            let result = update.await;
+            drop(cancel_on_drop);
+            match result {
+                Ok(Some(Err(error))) => {
+                    eprintln!("Failed to record opened workspace item: {error}");
+                }
+                Err(error) => eprintln!("Recent-item task failed: {error}"),
+                Ok(Some(Ok(())) | None) => {}
             }
-            let _ = runtime
-                .spawn(
-                    async move { crate::home::mark_opened(db.as_ref(), kind, id, now_ts()).await },
-                )
-                .await;
-        })
-        .detach();
+        }));
     }
 
     pub(in crate::app_shell) fn open_home_item(

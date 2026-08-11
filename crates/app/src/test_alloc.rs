@@ -1,13 +1,27 @@
 use std::{
     alloc::{GlobalAlloc, Layout, System},
-    sync::atomic::{AtomicUsize, Ordering},
+    cell::Cell,
+    marker::PhantomData,
+    rc::Rc,
 };
 
 struct TrackingAllocator;
 
-static CURRENT_BYTES: AtomicUsize = AtomicUsize::new(0);
-static PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
-static TOTAL_ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+#[derive(Clone, Copy)]
+struct AllocationState {
+    current_bytes: usize,
+    peak_bytes: usize,
+    total_allocated_bytes: usize,
+}
+
+thread_local! {
+    // Rust tests share one allocator process while running on separate test threads.
+    static ALLOCATION_STATE: Cell<AllocationState> = const { Cell::new(AllocationState {
+        current_bytes: 0,
+        peak_bytes: 0,
+        total_allocated_bytes: 0,
+    }) };
+}
 
 #[global_allocator]
 static ALLOCATOR: TrackingAllocator = TrackingAllocator;
@@ -31,7 +45,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         unsafe { System.dealloc(pointer, layout) };
-        CURRENT_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
+        record_deallocation(layout.size());
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -42,9 +56,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 
         match new_size.cmp(&layout.size()) {
             std::cmp::Ordering::Greater => record_allocation(new_size - layout.size()),
-            std::cmp::Ordering::Less => {
-                CURRENT_BYTES.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
-            }
+            std::cmp::Ordering::Less => record_deallocation(layout.size() - new_size),
             std::cmp::Ordering::Equal => {}
         }
 
@@ -53,14 +65,27 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 }
 
 fn record_allocation(bytes: usize) {
-    TOTAL_ALLOCATED_BYTES.fetch_add(bytes, Ordering::Relaxed);
-    let current = CURRENT_BYTES.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK_BYTES.fetch_max(current, Ordering::Relaxed);
+    let _ = ALLOCATION_STATE.try_with(|cell| {
+        let mut state = cell.get();
+        state.total_allocated_bytes = state.total_allocated_bytes.saturating_add(bytes);
+        state.current_bytes = state.current_bytes.saturating_add(bytes);
+        state.peak_bytes = state.peak_bytes.max(state.current_bytes);
+        cell.set(state);
+    });
+}
+
+fn record_deallocation(bytes: usize) {
+    let _ = ALLOCATION_STATE.try_with(|cell| {
+        let mut state = cell.get();
+        state.current_bytes = state.current_bytes.saturating_sub(bytes);
+        cell.set(state);
+    });
 }
 
 pub(crate) struct AllocationSnapshot {
     baseline_bytes: usize,
     allocated_bytes: usize,
+    _current_thread: PhantomData<Rc<()>>,
 }
 
 pub(crate) struct AllocationDelta {
@@ -70,27 +95,79 @@ pub(crate) struct AllocationDelta {
 }
 
 pub(crate) fn start_measurement() -> AllocationSnapshot {
-    let baseline_bytes = CURRENT_BYTES.load(Ordering::Relaxed);
-    PEAK_BYTES.store(baseline_bytes, Ordering::Relaxed);
+    ALLOCATION_STATE.with(|cell| {
+        let mut state = cell.get();
+        state.peak_bytes = state.current_bytes;
+        cell.set(state);
 
-    AllocationSnapshot {
-        baseline_bytes,
-        allocated_bytes: TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed),
-    }
+        AllocationSnapshot {
+            baseline_bytes: state.current_bytes,
+            allocated_bytes: state.total_allocated_bytes,
+            _current_thread: PhantomData,
+        }
+    })
 }
 
 impl AllocationSnapshot {
     pub(crate) fn finish(self) -> AllocationDelta {
-        AllocationDelta {
-            peak_growth_bytes: PEAK_BYTES
-                .load(Ordering::Relaxed)
-                .saturating_sub(self.baseline_bytes),
-            retained_growth_bytes: CURRENT_BYTES
-                .load(Ordering::Relaxed)
-                .saturating_sub(self.baseline_bytes),
-            allocated_bytes: TOTAL_ALLOCATED_BYTES
-                .load(Ordering::Relaxed)
-                .saturating_sub(self.allocated_bytes),
-        }
+        ALLOCATION_STATE.with(|state| {
+            let state = state.get();
+            AllocationDelta {
+                peak_growth_bytes: state.peak_bytes.saturating_sub(self.baseline_bytes),
+                retained_growth_bytes: state.current_bytes.saturating_sub(self.baseline_bytes),
+                allocated_bytes: state
+                    .total_allocated_bytes
+                    .saturating_sub(self.allocated_bytes),
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_measurement;
+    use std::{
+        sync::{Arc, Barrier},
+        thread,
+    };
+
+    #[test]
+    fn measurement_ignores_allocations_from_parallel_test_threads() {
+        const BACKGROUND_BYTES: usize = 8 * 1024 * 1024;
+        const LOCAL_BYTES: usize = 64 * 1024;
+
+        let start = Arc::new(Barrier::new(2));
+        let allocated = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let worker = thread::spawn({
+            let start = start.clone();
+            let allocated = allocated.clone();
+            let release = release.clone();
+            move || {
+                start.wait();
+                let background = vec![0_u8; BACKGROUND_BYTES];
+                std::hint::black_box(&background);
+                allocated.wait();
+                release.wait();
+            }
+        });
+
+        let measurement = start_measurement();
+        start.wait();
+        allocated.wait();
+        let local = vec![0_u8; LOCAL_BYTES];
+        std::hint::black_box(&local);
+        let allocation = measurement.finish();
+        release.wait();
+        worker
+            .join()
+            .expect("allocation worker should finish without panicking");
+
+        assert!(allocation.allocated_bytes >= LOCAL_BYTES);
+        assert!(allocation.peak_growth_bytes >= LOCAL_BYTES);
+        assert!(allocation.retained_growth_bytes >= LOCAL_BYTES);
+        assert!(allocation.allocated_bytes < BACKGROUND_BYTES / 2);
+        assert!(allocation.peak_growth_bytes < BACKGROUND_BYTES / 2);
+        assert!(allocation.retained_growth_bytes < BACKGROUND_BYTES / 2);
     }
 }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::{Context, SharedString, Window};
-use gpui_component::ActiveTheme as _;
+use gpui_component::{ActiveTheme as _, WindowExt as _, notification::Notification};
 
 use crate::DB;
 use crate::app_settings::AppSettings;
@@ -224,6 +224,24 @@ impl AppShell {
             PaletteCommandKind::SearchWorkspace => {
                 self.open_workspace_search(window, cx);
             }
+            PaletteCommandKind::CreateCardFromSelection => {
+                let note_view = self.active_note_view();
+                self.close_command_palette(window, cx);
+                if let Some(note_view) = note_view {
+                    note_view.update(cx, |editor, cx| editor.create_card_from_selection(cx));
+                } else {
+                    window.push_notification(Notification::warning("Open a note first."), cx);
+                }
+            }
+            PaletteCommandKind::InsertBoardView => {
+                let note_view = self.active_note_view();
+                self.close_command_palette(window, cx);
+                if let Some(note_view) = note_view {
+                    note_view.update(cx, |editor, cx| editor.request_insert_board_view(cx));
+                } else {
+                    window.push_notification(Notification::warning("Open a note first."), cx);
+                }
+            }
         }
     }
 
@@ -248,7 +266,7 @@ impl AppShell {
         self.command_palette.search_error = None;
 
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
         self.command_palette.search_debounce_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(WORKSPACE_SEARCH_DEBOUNCE)
@@ -296,7 +314,7 @@ impl AppShell {
 
     fn rebuild_workspace_search_index(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<DB>().conn.clone();
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = cx.global::<DB>().runtime.clone();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -391,27 +409,28 @@ impl AppShell {
     ) {
         self.close_command_palette(window, cx);
 
-        match result.kind {
+        let target = match result.kind {
             SearchResultKind::Note => {
-                self.open_note_tab(
+                crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+                    note_id: result.open_id,
+                    source_offset: None,
+                }
+            }
+            SearchResultKind::Board => {
+                crate::workspace_navigation::WorkspaceNavigationTarget::board(result.open_id)
+            }
+            SearchResultKind::Card => crate::workspace_navigation::WorkspaceNavigationTarget::list(
+                result.open_id,
+                result.item_id,
+            ),
+            SearchResultKind::Entry => {
+                crate::workspace_navigation::WorkspaceNavigationTarget::card(
                     result.open_id,
-                    result.project_id,
-                    SharedString::from(result.title),
-                    window,
-                    cx,
-                );
+                    result.item_id,
+                )
             }
-            SearchResultKind::Board | SearchResultKind::Card | SearchResultKind::Entry => {
-                let title = self
-                    .boards
-                    .iter()
-                    .find(|board| board.id == result.open_id)
-                    .map(|board| board.title.clone())
-                    .unwrap_or_else(|| SharedString::from(result.title));
-
-                self.open_board_tab(result.open_id, result.project_id, title, window, cx);
-            }
-        }
+        };
+        self.open_workspace_target(target, window, cx);
     }
 
     pub(crate) fn apply_theme(&mut self, theme_name: &gpui::SharedString, cx: &mut Context<Self>) {
@@ -457,10 +476,7 @@ mod tests {
                 Ok::<_, anyhow::Error>(db)
             })
             .expect("search test database should initialize");
-        let app_db = crate::DB {
-            conn: Arc::new(db),
-            data_dir: PathBuf::new(),
-        };
+        let app_db = crate::DB::new(Arc::new(db), PathBuf::new());
         let settings_dir = std::env::temp_dir().join(format!(
             "castle-workspace-search-test-{}",
             std::process::id()

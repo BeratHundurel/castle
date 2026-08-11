@@ -22,6 +22,9 @@ mod m20260805_000019_board_templates;
 mod m20260805_000020_repair_card_board_foreign_key;
 mod m20260805_000021_hide_imported_note_extensions;
 mod m20260805_000022_remember_selected_board_view;
+mod m20260807_000023_workspace_links;
+mod m20260810_000024_external_workspace_link_revisions;
+mod m20260811_000025_reindex_workspace_links;
 
 pub struct Migrator;
 
@@ -51,6 +54,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260805_000020_repair_card_board_foreign_key::Migration),
             Box::new(m20260805_000021_hide_imported_note_extensions::Migration),
             Box::new(m20260805_000022_remember_selected_board_view::Migration),
+            Box::new(m20260807_000023_workspace_links::Migration),
+            Box::new(m20260810_000024_external_workspace_link_revisions::Migration),
+            Box::new(m20260811_000025_reindex_workspace_links::Migration),
         ]
     }
 }

@@ -158,6 +158,13 @@ impl SidebarContentItem {
         }
     }
 
+    pub(super) fn copy_internal_link_action(&self) -> Box<dyn Action> {
+        match self {
+            Self::Board { id, .. } => Box::new(CopyBoardInternalLinkAction(*id)),
+            Self::Note { id, .. } => Box::new(CopyNoteInternalLinkAction(*id)),
+        }
+    }
+
     pub(super) fn select(&self, sidebar: &mut SidebarView, cx: &mut Context<SidebarView>) {
         match self {
             Self::Board {

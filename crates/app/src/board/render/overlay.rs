@@ -180,6 +180,15 @@ impl BoardView {
                                     .child("Duplicate card")
                                     .child(Icon::new(IconName::Copy).xsmall())
                             })
+                            .menu_element(Box::new(CopyCardInternalLinkAction), move |_, _| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .justify_between()
+                                    .child("Copy internal link")
+                                    .child(Icon::new(IconName::Copy).xsmall())
+                            })
                             .menu_element(
                                 Box::new(DeleteEntryAction),
                                 move |_, _| {
@@ -241,6 +250,7 @@ impl BoardView {
                     v_flex()
                         .gap_4()
                         .child(self.render_entry_description(selected_entry, cx))
+                        .child(self.render_entry_related_notes(selected_entry, cx))
                         .child(
                             h_flex()
                                 .items_start()
@@ -276,6 +286,51 @@ impl BoardView {
         let reminder_enabled = selected_entry
             .map(|(_, entry)| entry.reminder_enabled)
             .unwrap_or(false);
+        let reminder_view = cx.entity();
+        let notification_availability = crate::system_notifications::availability();
+        let (notification_label, notification_help, notification_icon, notification_color) =
+            match notification_availability {
+                crate::system_notifications::NotificationAvailability::Enabled => (
+                    "System notifications on",
+                    if reminder_enabled {
+                        "Castle will alert you on the due date or the next time it starts."
+                    } else {
+                        "Windows is ready. Enable this card's reminder to receive an alert."
+                    },
+                    IconName::CircleCheck,
+                    cx.theme().success,
+                ),
+                crate::system_notifications::NotificationAvailability::DisabledForApplication => (
+                    "System notifications off",
+                    "Windows is blocking Castle notifications. Enable them in Settings.",
+                    IconName::CircleX,
+                    cx.theme().danger,
+                ),
+                crate::system_notifications::NotificationAvailability::DisabledForUser => (
+                    "System notifications off",
+                    "Windows notifications are turned off. Enable them in Settings.",
+                    IconName::CircleX,
+                    cx.theme().danger,
+                ),
+                crate::system_notifications::NotificationAvailability::DisabledByPolicy => (
+                    "System notifications blocked",
+                    "Notifications are disabled by system policy.",
+                    IconName::CircleX,
+                    cx.theme().danger,
+                ),
+                crate::system_notifications::NotificationAvailability::Unsupported => (
+                    "System notifications unavailable",
+                    "Castle does not support system notifications on this platform yet.",
+                    IconName::Info,
+                    cx.theme().muted_foreground,
+                ),
+                crate::system_notifications::NotificationAvailability::Unavailable => (
+                    "Notification status unavailable",
+                    "Castle could not check the system notification service.",
+                    IconName::Info,
+                    cx.theme().warning,
+                ),
+            };
         let (status_label, status_color) = match due_on {
             Some(due_on) => match due_date_status(due_on, Local::now().date_naive()) {
                 DueDateStatus::Overdue => ("Overdue", cx.theme().danger),
@@ -285,6 +340,11 @@ impl BoardView {
             },
             None => ("Unscheduled", cx.theme().muted_foreground),
         };
+        let reminder_help = if due_on.is_some() {
+            "Notify when this card is due."
+        } else {
+            "Choose a due date to enable reminders."
+        };
 
         v_flex()
             .gap_3()
@@ -292,8 +352,8 @@ impl BoardView {
             .p_3()
             .rounded(cx.theme().radius)
             .border_1()
-            .border_color(cx.theme().border.opacity(0.48))
-            .bg(cx.theme().secondary.opacity(0.16))
+            .border_color(cx.theme().border.opacity(0.4))
+            .bg(cx.theme().secondary.opacity(0.1))
             .child(
                 h_flex()
                     .items_center()
@@ -329,25 +389,134 @@ impl BoardView {
                     .number_of_months(1),
             )
             .child(
-                Button::new("toggle-card-reminder")
-                    .icon(IconName::Bell)
-                    .label(if reminder_enabled {
-                        "Reminder on"
-                    } else {
-                        "Remind me"
-                    })
-                    .outline()
-                    .small()
-                    .selected(reminder_enabled)
-                    .disabled(due_on.is_none())
-                    .tooltip(if due_on.is_some() {
-                        "Show a system notification when this card is due"
-                    } else {
-                        "Choose a due date first"
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_selected_entry_reminder(!reminder_enabled, cx);
-                    })),
+                v_flex()
+                    .gap_2()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(cx.theme().border.opacity(0.36))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .gap_0p5()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(Icon::new(IconName::Bell).xsmall())
+                                            .child("Reminder"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(reminder_help),
+                                    ),
+                            )
+                            .child(
+                                Checkbox::new("toggle-card-reminder")
+                                    .xsmall()
+                                    .label(if reminder_enabled { "On" } else { "Off" })
+                                    .checked(reminder_enabled)
+                                    .disabled(due_on.is_none())
+                                    .tooltip(if due_on.is_some() {
+                                        if reminder_enabled {
+                                            "Turn off this card's reminder"
+                                        } else {
+                                            "Notify me when this card is due"
+                                        }
+                                    } else {
+                                        "Choose a due date first"
+                                    })
+                                    .on_click(move |checked, _, cx| {
+                                        reminder_view.update(cx, |this, cx| {
+                                            this.set_selected_entry_reminder(*checked, cx);
+                                        });
+                                    }),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .flex_wrap()
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(notification_color)
+                                    .child(
+                                        Icon::new(notification_icon)
+                                            .xsmall()
+                                            .text_color(notification_color),
+                                    )
+                                    .child(notification_label),
+                            )
+                            .when(
+                                notification_availability
+                                    == crate::system_notifications::NotificationAvailability::Enabled,
+                                |this| {
+                                    this.child(
+                                        Button::new("test-card-notification")
+                                            .label("Test")
+                                            .ghost()
+                                            .xsmall()
+                                            .tooltip("Send a test system notification now")
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                match crate::system_notifications::show_test_notification()
+                                                {
+                                                    Ok(()) => window.push_notification(
+                                                        Notification::success(
+                                                            "Test sent. Check Windows notifications if it did not pop up.",
+                                                        ),
+                                                        cx,
+                                                    ),
+                                                    Err(error) => window.push_notification(
+                                                        Notification::error(format!(
+                                                            "Could not send test notification: {error}"
+                                                        )),
+                                                        cx,
+                                                    ),
+                                                }
+                                            })),
+                                    )
+                                },
+                            )
+                            .when(notification_availability.can_open_settings(), |this| {
+                                this.child(
+                                    Button::new("open-system-notification-settings")
+                                        .label("Open settings")
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click(|_, _, cx| {
+                                            cx.open_url("ms-settings:notifications");
+                                        }),
+                                )
+                            }),
+                    )
+                    .when(
+                        notification_availability
+                            != crate::system_notifications::NotificationAvailability::Enabled,
+                        |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .line_height(relative(1.35))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(notification_help),
+                            )
+                        },
+                    ),
             )
     }
 }

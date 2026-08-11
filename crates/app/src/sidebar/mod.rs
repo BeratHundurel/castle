@@ -1,6 +1,6 @@
 mod action;
 mod content_item;
-mod drag;
+pub(crate) mod drag;
 mod dto;
 mod event;
 mod handlers;

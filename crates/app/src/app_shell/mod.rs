@@ -1,6 +1,7 @@
 mod action;
 mod handler;
 mod home;
+mod integration;
 mod render;
 mod settings;
 mod tabs;
@@ -14,7 +15,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme, IconName, Root, Sizable as _, TitleBar,
+    ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{
@@ -22,6 +23,7 @@ use gpui_component::{
         MoveUp as InputMoveUp,
     },
     menu::ContextMenuExt as _,
+    notification::Notification,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -145,12 +147,13 @@ pub struct AppShell {
     pending_workspace_title_saves: HashMap<WorkspaceTitleTarget, PendingWorkspaceTitleSave>,
     pending_board_open: Option<PendingBoardOpen>,
     workspace_title_save_lock: Arc<tokio::sync::Mutex<()>>,
-    record_opened_generation: u64,
-    tab_session_save_generation: u64,
     external_change_task: Option<Task<()>>,
     last_change_revision: Option<i64>,
     last_board_revision: Option<i64>,
     last_note_revision: Option<i64>,
+    last_link_revision: Option<i64>,
+    last_card_destination: Option<i64>,
+    record_opened_task: Option<Task<()>>,
 }
 
 impl AppShell {
@@ -181,6 +184,21 @@ impl AppShell {
                         this.note_views.remove(note_id);
                     }
                 }
+                DocumentEditorEvent::WorkspaceLinksChanged => {
+                    let boards = this
+                        .open_tabs
+                        .iter()
+                        .filter_map(|tab| match &tab.kind {
+                            OpenTabKind::Board { board_id, view, .. } => {
+                                Some((*board_id, view.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    for (board_id, view) in boards {
+                        view.update(cx, |board, cx| board.reload_board(board_id, cx));
+                    }
+                }
                 DocumentEditorEvent::OpenNote {
                     note_id,
                     source_offset,
@@ -197,6 +215,93 @@ impl AppShell {
                             });
                         }
                     }
+                }
+                DocumentEditorEvent::OpenWorkspaceTarget(target) => {
+                    this.open_workspace_target(*target, window, cx);
+                }
+                DocumentEditorEvent::CreateCardFromSelection { note_id, title } => {
+                    this.open_create_card_from_selection_picker(
+                        *note_id,
+                        title.clone(),
+                        window,
+                        cx,
+                    );
+                }
+                DocumentEditorEvent::InsertBoardView { note_id } => {
+                    this.open_insert_board_view_picker(*note_id, window, cx);
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn observe_board_view(view: &Entity<BoardView>, window: &mut Window, cx: &mut Context<Self>) {
+        cx.subscribe_in(
+            view,
+            window,
+            |this, loaded_view, event: &BoardViewEvent, window, cx| match event {
+                BoardViewEvent::LoadFinished(board_id) => {
+                    loaded_view.update(cx, |board, cx| {
+                        board.apply_pending_reveal(window, cx);
+                    });
+                    let is_current = this.pending_board_open.as_ref().is_some_and(|pending| {
+                        pending.board_id == *board_id
+                            && pending.view.entity_id() == loaded_view.entity_id()
+                    });
+                    if is_current {
+                        this.finish_pending_board_open(window, cx);
+                    }
+                }
+                BoardViewEvent::OpenNote(note_id) => {
+                    this.open_workspace_target(
+                        crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+                            note_id: *note_id,
+                            source_offset: None,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+                BoardViewEvent::OpenWorkspaceTarget(target) => {
+                    this.open_workspace_target(*target, window, cx);
+                }
+                BoardViewEvent::NavigationUnavailable(message) => {
+                    window.push_notification(Notification::warning(message.clone()), cx);
+                }
+                BoardViewEvent::DataCommitted {
+                    board_id,
+                    links_changed,
+                } => {
+                    for view in this.note_views.values() {
+                        view.update(cx, |note, cx| {
+                            note.refresh_board_embeds_for(i64::from(*board_id), cx)
+                        });
+                    }
+                    if *links_changed {
+                        for view in this.note_views.values() {
+                            view.update(cx, |note, cx| note.refresh_note_links(cx));
+                        }
+                        for tab in &this.open_tabs {
+                            let OpenTabKind::Board {
+                                board_id: open_board_id,
+                                view,
+                                ..
+                            } = &tab.kind
+                            else {
+                                continue;
+                            };
+                            if view.entity_id() != loaded_view.entity_id() {
+                                view.update(cx, |board, cx| board.reload_board(*open_board_id, cx));
+                            }
+                        }
+                    }
+                }
+                BoardViewEvent::CreateLinkedNote {
+                    item,
+                    project_id,
+                    title,
+                } => {
+                    this.create_linked_note(*project_id, title.clone(), *item, window, cx);
                 }
             },
         )
@@ -219,6 +324,7 @@ impl AppShell {
                     title,
                 } => {
                     let view = BoardView::view(window, cx);
+                    Self::observe_board_view(&view, window, cx);
                     view.update(cx, |board, cx| board.load_board(board_id, cx));
                     (
                         SharedString::from(title),
@@ -503,12 +609,13 @@ impl AppShell {
             pending_workspace_title_saves: HashMap::new(),
             pending_board_open: None,
             workspace_title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
-            record_opened_generation: 0,
-            tab_session_save_generation: 0,
             external_change_task: None,
             last_change_revision: None,
             last_board_revision: None,
             last_note_revision: None,
+            last_link_revision: None,
+            last_card_destination: None,
+            record_opened_task: None,
         };
 
         let show_sidebar = AppSettings::show_sidebar(cx);
@@ -520,8 +627,14 @@ impl AppShell {
             this.sync_sidebar_with_window_width(window.bounds().size.width, cx);
         })
         .detach();
-        cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx))
-            .detach();
+        cx.on_app_quit(|this, cx| {
+            let title_flush = this.flush_pending_workspace_title_saves(cx);
+            let settings_flush = AppSettings::flush(cx);
+            async move {
+                tokio::join!(title_flush, settings_flush);
+            }
+        })
+        .detach();
         this.start_external_change_watcher(window, cx);
         this.start_note_link_reindex(cx);
         this.refresh_mcp_setup(cx);

@@ -3501,10 +3501,7 @@ mod tests {
             AppSettings::set_editor_vim_mode(true, cx);
             AppSettings::set_editor_status_line_visible(false, cx);
             crate::keymap::init(cx);
-            cx.set_global(DB {
-                conn: Arc::new(db),
-                data_dir: PathBuf::new(),
-            });
+            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -4045,10 +4042,7 @@ mod tests {
             AppSettings::set_editor_vim_mode(true, cx);
             AppSettings::set_editor_status_line_visible(false, cx);
             crate::keymap::init(cx);
-            cx.set_global(DB {
-                conn: Arc::new(db),
-                data_dir: PathBuf::new(),
-            });
+            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
