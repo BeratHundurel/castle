@@ -17,63 +17,23 @@ impl BoardView {
         self.duplicate_entry(source, cx);
     }
 
-    pub(in crate::board) fn duplicate_entry(&mut self, source: EntryDTO, cx: &mut Context<Self>) {
+    pub(in crate::board) fn duplicate_entry(
+        &mut self,
+        source: BoardCardDTO,
+        cx: &mut Context<Self>,
+    ) {
         let db = cx.global::<AppServices>().store().connection();
         let board_id = self.board_id;
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    let txn = db.begin().await?;
-                    let description = source.description.to_string();
-                    Entry::update_many()
-                        .col_expr(
-                            entry::Column::Position,
-                            Expr::col(entry::Column::Position).add(1),
-                        )
-                        .filter(entry::Column::CardId.eq(source.card_id as i64))
-                        .filter(entry::Column::Position.gte(source.position + 1))
-                        .exec(&txn)
-                        .await?;
-                    let inserted = entry::ActiveModel {
-                        title: Set(format!("Copy of {}", source.title)),
-                        description: Set(description.clone()),
-                        card_id: Set(source.card_id as i64),
-                        position: Set(source.position + 1),
-                        due_on: Set(source.due_on.map(|value| value.to_string())),
-                        ..Default::default()
-                    }
-                    .insert(&txn)
-                    .await?;
-                    for label in source.labels {
-                        entry_label::ActiveModel {
-                            entry_id: Set(inserted.id),
-                            board_label_id: Set(label.id as i64),
-                            ..Default::default()
-                        }
-                        .insert(&txn)
-                        .await?;
-                    }
-                    for item in source.checklist_items {
-                        entry_checklist_item::ActiveModel {
-                            entry_id: Set(inserted.id),
-                            title: Set(item.title.to_string()),
-                            checked: Set(item.checked),
-                            position: Set(item.position),
-                            ..Default::default()
-                        }
-                        .insert(&txn)
-                        .await?;
-                    }
-                    storage::workspace_links::index_entry_workspace_links_in_connection(
-                        &txn,
-                        inserted.id,
-                        &description,
+                    storage::board_commands::duplicate_board_card(
+                        db.as_ref(),
+                        board_card_draft(source),
                         crate::document_editor::now_ts(),
                     )
-                    .await?;
-                    txn.commit().await?;
-                    Ok::<(), anyhow::Error>(())
+                    .await
                 })
                 .await;
             this.update(cx, |this, cx| match result {
@@ -116,70 +76,12 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    let txn = db.begin().await?;
-                    let mut descriptions = Vec::new();
-                    Card::update_many()
-                        .col_expr(
-                            card::Column::Position,
-                            Expr::col(card::Column::Position).add(1),
-                        )
-                        .filter(card::Column::BoardId.eq(source.board_id as i64))
-                        .filter(card::Column::Position.gte(source.position + 1))
-                        .exec(&txn)
-                        .await?;
-                    let inserted_list = card::ActiveModel {
-                        title: Set(format!("Copy of {}", source.title)),
-                        board_id: Set(source.board_id as i64),
-                        position: Set(source.position + 1),
-                        ..Default::default()
-                    }
-                    .insert(&txn)
-                    .await?;
-                    for entry in source.entries {
-                        let description = entry.description.to_string();
-                        let inserted = entry::ActiveModel {
-                            title: Set(entry.title.to_string()),
-                            description: Set(description.clone()),
-                            card_id: Set(inserted_list.id),
-                            position: Set(entry.position),
-                            due_on: Set(entry.due_on.map(|value| value.to_string())),
-                            ..Default::default()
-                        }
-                        .insert(&txn)
-                        .await?;
-                        descriptions.push((inserted.id, description));
-                        for label in entry.labels {
-                            entry_label::ActiveModel {
-                                entry_id: Set(inserted.id),
-                                board_label_id: Set(label.id as i64),
-                                ..Default::default()
-                            }
-                            .insert(&txn)
-                            .await?;
-                        }
-                        for item in entry.checklist_items {
-                            entry_checklist_item::ActiveModel {
-                                entry_id: Set(inserted.id),
-                                title: Set(item.title.to_string()),
-                                checked: Set(item.checked),
-                                position: Set(item.position),
-                                ..Default::default()
-                            }
-                            .insert(&txn)
-                            .await?;
-                        }
-                    }
-                    for (entry_id, description) in descriptions {
-                        storage::workspace_links::index_entry_workspace_links_in_connection(
-                            &txn,
-                            entry_id,
-                            &description,
-                            crate::document_editor::now_ts(),
-                        )
-                        .await?;
-                    }
-                    txn.commit().await?;
-                    Ok::<(), anyhow::Error>(())
+                    storage::board_commands::duplicate_board_list(
+                        db.as_ref(),
+                        board_list_draft(source),
+                        crate::document_editor::now_ts(),
+                    )
+                    .await
                 })
                 .await;
             this.update(cx, |this, cx| match result {
@@ -241,7 +143,7 @@ impl BoardView {
     pub(in crate::board) fn add_entry(
         &mut self,
         cx: &mut Context<Self>,
-        entry: EntryDTO,
+        entry: BoardCardDTO,
         temp_id: u32,
     ) {
         let db = cx.global::<AppServices>().store().connection();
@@ -256,27 +158,12 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    let description = entry.description.to_string();
-                    let txn = db.begin().await?;
-                    let inserted = entry::ActiveModel {
-                        title: Set(entry.title.to_string()),
-                        description: Set(description.clone()),
-                        card_id: Set(entry.card_id as i64),
-                        position: Set(entry.position),
-                        due_on: Set(None),
-                        ..Default::default()
-                    }
-                    .insert(&txn)
-                    .await?;
-                    storage::workspace_links::index_entry_workspace_links_in_connection(
-                        &txn,
-                        inserted.id,
-                        &description,
+                    storage::board_commands::create_board_card(
+                        db.as_ref(),
+                        board_card_draft(entry),
                         crate::document_editor::now_ts(),
                     )
-                    .await?;
-                    txn.commit().await?;
-                    Ok::<_, anyhow::Error>(inserted)
+                    .await
                 })
                 .await;
 
@@ -324,7 +211,7 @@ impl BoardView {
     pub(in crate::board) fn add_card(
         &mut self,
         cx: &mut Context<Self>,
-        card: CardDTO,
+        card: BoardListDTO,
         temp_id: u32,
     ) {
         let db = cx.global::<AppServices>().store().connection();
@@ -337,14 +224,8 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    card::ActiveModel {
-                        title: Set(card.title.to_string()),
-                        board_id: Set(card.board_id as i64),
-                        position: Set(card.position),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
-                    .await
+                    storage::board_commands::create_board_list(db.as_ref(), board_list_draft(card))
+                        .await
                 })
                 .await;
 
@@ -394,13 +275,7 @@ impl BoardView {
         cx.notify();
 
         self.commit_board_mutation(cx, "Could not rename list", false, async move {
-            let model = card::ActiveModel {
-                id: Set(card_id as i64),
-                title: Set(title),
-                ..Default::default()
-            };
-            model.update(&*db).await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::rename_board_list(db.as_ref(), card_id, title).await
         });
     }
 
@@ -424,7 +299,7 @@ impl BoardView {
                             };
 
                             let entry_id = this.next_entry_id();
-                            let entry = EntryDTO {
+                            let entry = BoardCardDTO {
                                 id: entry_id,
                                 title: this.dialog_title_input.read(cx).value(),
                                 description: this.dialog_description_input.read(cx).value(),
@@ -489,5 +364,34 @@ impl BoardView {
                         ),
                 )
         });
+    }
+}
+
+fn board_card_draft(card: BoardCardDTO) -> storage::board_commands::BoardCardDraft {
+    storage::board_commands::BoardCardDraft {
+        title: card.title.to_string(),
+        description: card.description.to_string(),
+        list_id: card.card_id,
+        position: card.position,
+        due_on: card.due_on.map(|value| value.to_string()),
+        label_ids: card.labels.into_iter().map(|label| label.id).collect(),
+        checklist_items: card
+            .checklist_items
+            .into_iter()
+            .map(|item| storage::board_commands::ChecklistItemDraft {
+                title: item.title.to_string(),
+                checked: item.checked,
+                position: item.position,
+            })
+            .collect(),
+    }
+}
+
+fn board_list_draft(list: BoardListDTO) -> storage::board_commands::BoardListDraft {
+    storage::board_commands::BoardListDraft {
+        title: list.title.to_string(),
+        board_id: list.board_id,
+        position: list.position,
+        cards: list.entries.into_iter().map(board_card_draft).collect(),
     }
 }

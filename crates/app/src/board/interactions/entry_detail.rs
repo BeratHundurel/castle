@@ -39,24 +39,14 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    let txn = db.begin().await?;
-                    let model = entry::ActiveModel {
-                        id: Set(entry_id as i64),
-                        title: Set(title),
-                        description: Set(description.clone()),
-                        ..Default::default()
-                    };
-
-                    model.update(&txn).await?;
-                    storage::workspace_links::index_entry_workspace_links_in_connection(
-                        &txn,
-                        entry_id as i64,
-                        &description,
+                    storage::board_commands::update_board_card(
+                        db.as_ref(),
+                        entry_id,
+                        title,
+                        description,
                         crate::document_editor::now_ts(),
                     )
-                    .await?;
-                    txn.commit().await?;
-                    Ok::<(), anyhow::Error>(())
+                    .await
                 })
                 .await;
             this.update(cx, |this, cx| match result {
@@ -122,14 +112,7 @@ impl BoardView {
             {
                 return Ok::<(), anyhow::Error>(());
             }
-            entry::ActiveModel {
-                id: Set(entry_id as i64),
-                due_on: Set(due_on),
-                reminder_notified_for: Set(None),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
+            storage::board_commands::set_board_card_due_on(db.as_ref(), entry_id, due_on).await?;
             persisted_revisions.insert(entry_id, revision);
             crate::system_notifications::wake();
             Ok::<(), anyhow::Error>(())
@@ -161,14 +144,8 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not save reminder", false, async move {
-            entry::ActiveModel {
-                id: Set(entry_id as i64),
-                reminder_enabled: Set(enabled),
-                reminder_notified_for: Set(None),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
+            storage::board_commands::set_board_card_reminder(db.as_ref(), entry_id, enabled)
+                .await?;
             crate::system_notifications::wake();
             Ok::<(), anyhow::Error>(())
         });

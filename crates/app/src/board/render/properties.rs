@@ -7,7 +7,7 @@ use storage::board_properties::{
 impl BoardView {
     pub(super) fn render_card_property_values(
         &self,
-        entry: &EntryDTO,
+        entry: &BoardCardDTO,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut rows = Vec::new();
@@ -563,7 +563,7 @@ impl BoardView {
 
     pub(super) fn render_entry_properties(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_id = selected_entry.map(|(_, entry)| entry.id as i64);

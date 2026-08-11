@@ -4,16 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use entity::{entry_attachment, entry_attachment::Entity as EntryAttachment};
 use gpui::{Context, ImageFormat, PathPromptOptions, Window};
 use gpui_component::{WindowExt as _, notification::Notification};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, TransactionTrait};
 
 use crate::AppServices;
 
 use super::{
     BoardView,
-    dto::{CardDTO, EntryAttachmentDTO},
+    dto::{BoardListDTO, EntryAttachmentDTO},
 };
 
 const ATTACHMENT_THUMBNAIL_WIDTH: u32 = 504;
@@ -76,20 +74,18 @@ impl BoardView {
             let copied_for_cleanup = copied.clone();
             let persistence = runtime
                 .spawn(async move {
-                    let transaction = db.begin().await?;
-                    let mut attachments = Vec::with_capacity(copied.len());
-                    for image in copied {
-                        let inserted = entry_attachment::ActiveModel {
-                            entry_id: Set(entry_id as i64),
-                            file_name: Set(image.file_name),
-                            ..Default::default()
-                        }
-                        .insert(&transaction)
-                        .await?;
-                        attachments.push(EntryAttachmentDTO::from(inserted));
-                    }
-                    transaction.commit().await?;
-                    Ok::<_, sea_orm::DbErr>(attachments)
+                    storage::board_commands::create_attachments(
+                        db.as_ref(),
+                        entry_id,
+                        copied.into_iter().map(|image| image.file_name).collect(),
+                    )
+                    .await
+                    .map(|attachments| {
+                        attachments
+                            .into_iter()
+                            .map(EntryAttachmentDTO::from)
+                            .collect::<Vec<_>>()
+                    })
                 })
                 .await;
 
@@ -198,9 +194,7 @@ impl BoardView {
         cx.spawn_in(window, async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    EntryAttachment::delete_by_id(attachment_id as i64)
-                        .exec(&*db)
-                        .await
+                    storage::board_commands::delete_attachment(db.as_ref(), attachment_id).await
                 })
                 .await;
 
@@ -292,7 +286,7 @@ impl BoardView {
 }
 
 fn attachment_preview_specs(
-    cards: &[CardDTO],
+    cards: &[BoardListDTO],
     data_dir: &Path,
     entry_id: u32,
 ) -> Vec<(u32, PathBuf, PathBuf)> {
@@ -511,7 +505,7 @@ mod tests {
         attachment_thumbnail_path, ensure_attachment_thumbnail, normalized_image_extension,
         sanitize_file_stem,
     };
-    use crate::board::dto::{CardDTO, EntryAttachmentDTO, EntryDTO};
+    use crate::board::dto::{BoardCardDTO, BoardListDTO, EntryAttachmentDTO};
 
     #[test]
     fn accepts_supported_images_case_insensitively() {
@@ -556,7 +550,7 @@ mod tests {
 
     #[test]
     fn thumbnail_work_is_limited_to_the_open_card() {
-        let entry = |id, attachment_id, file_name: &'static str| EntryDTO {
+        let entry = |id, attachment_id, file_name: &'static str| BoardCardDTO {
             id,
             title: "Entry".into(),
             description: "".into(),
@@ -573,7 +567,7 @@ mod tests {
             }],
             related_notes: vec![],
         };
-        let cards = vec![CardDTO {
+        let cards = vec![BoardListDTO {
             id: 1,
             title: "List".into(),
             board_id: 1,

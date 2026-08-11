@@ -3,7 +3,7 @@ use super::*;
 impl BoardView {
     pub(super) fn render_entry_description(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();

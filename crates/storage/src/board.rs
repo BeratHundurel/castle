@@ -12,21 +12,21 @@ use sea_orm::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoardSnapshot {
-    pub cards: Vec<CardRecord>,
+    pub cards: Vec<BoardListRecord>,
     pub labels: Vec<LabelRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CardRecord {
+pub struct BoardListRecord {
     pub id: u32,
     pub title: String,
     pub board_id: u32,
     pub position: i32,
-    pub entries: Vec<EntryRecord>,
+    pub entries: Vec<BoardCardRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EntryRecord {
+pub struct BoardCardRecord {
     pub id: u32,
     pub title: String,
     pub description: String,
@@ -77,7 +77,7 @@ pub async fn load_board_snapshot(
         .all(db)
         .await?
         .into_iter()
-        .map(CardRecord::from)
+        .map(BoardListRecord::from)
         .collect::<Vec<_>>();
 
     let labels = BoardLabel::find()
@@ -179,13 +179,13 @@ pub async fn load_board_snapshot(
     Ok(BoardSnapshot { cards, labels })
 }
 
-impl From<card::ModelEx> for CardRecord {
+impl From<card::ModelEx> for BoardListRecord {
     fn from(card: card::ModelEx) -> Self {
         let mut entries = card
             .entries
             .into_iter()
             .filter(|entry| entry.deleted_at.is_none())
-            .map(EntryRecord::from)
+            .map(BoardCardRecord::from)
             .collect::<Vec<_>>();
         entries.sort_by_key(|entry| (entry.position, entry.id));
 
@@ -199,7 +199,7 @@ impl From<card::ModelEx> for CardRecord {
     }
 }
 
-impl From<entity::entry::ModelEx> for EntryRecord {
+impl From<entity::entry::ModelEx> for BoardCardRecord {
     fn from(entry: entity::entry::ModelEx) -> Self {
         Self {
             id: entry.id as u32,

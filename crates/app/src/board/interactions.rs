@@ -1,10 +1,4 @@
 use crate::AppServices;
-use entity::{
-    board_label, board_label::Entity as BoardLabel, card, card::Entity as Card, entry,
-    entry::Entity as Entry, entry_checklist_item,
-    entry_checklist_item::Entity as EntryChecklistItem, entry_label,
-    entry_label::Entity as EntryLabel,
-};
 use gpui::{Context, ParentElement, SharedString, Styled, Window};
 use gpui_component::{
     WindowExt,
@@ -14,10 +8,6 @@ use gpui_component::{
     },
     input::Input,
     v_flex,
-};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, ExprTrait, QueryFilter,
-    TransactionTrait, sea_query::Expr,
 };
 
 use super::{BoardView, BoardViewEvent, drag::*, dto::*};
@@ -30,7 +20,7 @@ mod move_card;
 mod move_entry;
 
 fn move_entry_to_list_end_in_memory(
-    cards: &mut [CardDTO],
+    cards: &mut [BoardListDTO],
     entry_id: u32,
     target_card_id: u32,
 ) -> bool {
@@ -59,7 +49,7 @@ fn move_entry_to_list_end_in_memory(
     true
 }
 
-fn normalize_entry_positions(cards: &mut [CardDTO]) -> Vec<(u32, u32, i32)> {
+fn normalize_entry_positions(cards: &mut [BoardListDTO]) -> Vec<(u32, u32, i32)> {
     cards
         .iter_mut()
         .flat_map(|card| {
@@ -86,13 +76,13 @@ mod tests {
     use storage::board_positions::{BoardLayoutPersistence, BoardLayoutSnapshot};
 
     use super::{
-        BoardLabelDTO, CardDTO, ChecklistItemDTO, EntryDTO, move_entry_to_list_end_in_memory,
-        normalize_entry_positions,
+        BoardCardDTO, BoardLabelDTO, BoardListDTO, ChecklistItemDTO,
+        move_entry_to_list_end_in_memory, normalize_entry_positions,
     };
     use crate::board::persistence::load_board_data;
 
-    fn test_entry(id: u32, card_id: u32, position: i32, title: &str) -> EntryDTO {
-        EntryDTO {
+    fn test_entry(id: u32, card_id: u32, position: i32, title: &str) -> BoardCardDTO {
+        BoardCardDTO {
             id,
             title: SharedString::from(title),
             description: SharedString::from(format!("{title} description")),
@@ -107,8 +97,8 @@ mod tests {
         }
     }
 
-    fn test_card(id: u32, title: &str, entries: Vec<EntryDTO>) -> CardDTO {
-        CardDTO {
+    fn test_card(id: u32, title: &str, entries: Vec<BoardCardDTO>) -> BoardListDTO {
+        BoardListDTO {
             id,
             title: SharedString::from(title),
             board_id: 1,
@@ -284,7 +274,11 @@ mod tests {
             .wait_for_revision(board.id as u32, revision)
             .await?;
 
-        let (reloaded_cards, _) = load_board_data(&db, board.id as u32).await?;
+        let (reloaded_cards, _) = load_board_data(
+            &storage::Store::from_connection(db.clone()),
+            board.id as u32,
+        )
+        .await?;
         assert!(reloaded_cards[0].entries.is_empty());
         assert_eq!(
             reloaded_cards[1]

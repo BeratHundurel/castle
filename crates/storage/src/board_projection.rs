@@ -6,7 +6,7 @@ use entity::{board, board::Entity as Board};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::{
-    board::{EntryRecord, LabelRecord},
+    board::{BoardCardRecord, LabelRecord},
     board_properties::{
         BoardViewConfig, DueDatePreset, FilterOperand, FilterOperator, PropertyDefinition,
         PropertyKey, PropertyValue, SortDirection, ViewFilter,
@@ -63,7 +63,7 @@ pub trait BoardViewEntry {
     fn view_related_note_count(&self) -> usize;
 }
 
-impl BoardViewEntry for EntryRecord {
+impl BoardViewEntry for BoardCardRecord {
     fn view_id(&self) -> i64 {
         i64::from(self.id)
     }
@@ -426,7 +426,7 @@ fn sort_value(
 }
 
 fn projected_card(
-    entry: EntryRecord,
+    entry: BoardCardRecord,
     visible: &[PropertyKey],
     values: &HashMap<(i64, i64), PropertyValue>,
     definitions: &[PropertyDefinition],

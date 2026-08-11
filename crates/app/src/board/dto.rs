@@ -1,17 +1,16 @@
-use entity::{board_label, card, entry, entry_attachment, entry_checklist_item};
 use gpui::SharedString;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CardDTO {
+pub(crate) struct BoardListDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,
     pub(crate) board_id: u32,
     pub(crate) position: i32,
-    pub(crate) entries: Vec<EntryDTO>,
+    pub(crate) entries: Vec<BoardCardDTO>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EntryDTO {
+pub(crate) struct BoardCardDTO {
     pub(crate) id: u32,
     pub(crate) title: SharedString,
     pub(crate) description: SharedString,
@@ -25,7 +24,7 @@ pub(crate) struct EntryDTO {
     pub(crate) related_notes: Vec<storage::workspace_links::RelatedNote>,
 }
 
-impl storage::board_projection::BoardViewEntry for EntryDTO {
+impl storage::board_projection::BoardViewEntry for BoardCardDTO {
     fn view_id(&self) -> i64 {
         i64::from(self.id)
     }
@@ -91,110 +90,20 @@ pub(crate) struct BoardLabelDTO {
     pub(crate) color: SharedString,
 }
 
-impl From<card::ModelEx> for CardDTO {
-    fn from(c: card::ModelEx) -> Self {
-        Self {
-            id: c.id as u32,
-            board_id: c.board_id as u32,
-            title: SharedString::from(c.title),
-            position: c.position,
-            entries: {
-                let mut entries: Vec<EntryDTO> = c
-                    .entries
-                    .into_iter()
-                    .filter(|entry| entry.deleted_at.is_none())
-                    .map(EntryDTO::from)
-                    .collect();
-                entries.sort_by_key(|entry| (entry.position, entry.id));
-                entries
-            },
-        }
-    }
-}
-
-impl From<entry::Model> for EntryDTO {
-    fn from(e: entry::Model) -> Self {
-        Self {
-            id: e.id as u32,
-            title: SharedString::from(e.title),
-            description: SharedString::from(e.description),
-            card_id: e.card_id as u32,
-            position: e.position,
-            due_on: e.due_on.map(SharedString::from),
-            reminder_enabled: e.reminder_enabled,
-            labels: vec![],
-            checklist_items: vec![],
-            attachments: vec![],
-            related_notes: vec![],
-        }
-    }
-}
-
-impl From<entry::ModelEx> for EntryDTO {
-    fn from(e: entry::ModelEx) -> Self {
-        Self {
-            id: e.id as u32,
-            title: SharedString::from(e.title),
-            description: SharedString::from(e.description),
-            card_id: e.card_id as u32,
-            position: e.position,
-            due_on: e.due_on.map(SharedString::from),
-            reminder_enabled: e.reminder_enabled,
-            labels: vec![],
-            checklist_items: vec![],
-            attachments: vec![],
-            related_notes: vec![],
-        }
-    }
-}
-
-impl From<entry_attachment::Model> for EntryAttachmentDTO {
-    fn from(attachment: entry_attachment::Model) -> Self {
-        Self {
-            id: attachment.id as u32,
-            entry_id: attachment.entry_id as u32,
-            file_name: SharedString::from(attachment.file_name),
-        }
-    }
-}
-
-impl From<entry_checklist_item::Model> for ChecklistItemDTO {
-    fn from(item: entry_checklist_item::Model) -> Self {
-        Self {
-            id: item.id as u32,
-            entry_id: item.entry_id as u32,
-            title: SharedString::from(item.title),
-            checked: item.checked,
-            position: item.position,
-        }
-    }
-}
-
-impl From<board_label::Model> for BoardLabelDTO {
-    fn from(label: board_label::Model) -> Self {
-        Self {
-            id: label.id as u32,
-            board_id: label.board_id as u32,
-            name: SharedString::from(label.name),
-            color: SharedString::from(label.color),
-        }
-    }
-}
-
-impl From<storage::board::CardRecord> for CardDTO {
-    fn from(card: storage::board::CardRecord) -> Self {
+impl From<storage::board::BoardListRecord> for BoardListDTO {
+    fn from(card: storage::board::BoardListRecord) -> Self {
         Self {
             id: card.id,
             title: card.title.into(),
             board_id: card.board_id,
             position: card.position,
-            entries: card.entries.into_iter().map(EntryDTO::from).collect(),
+            entries: card.entries.into_iter().map(BoardCardDTO::from).collect(),
         }
     }
 }
 
-impl From<storage::board::EntryRecord> for EntryDTO {
-    fn from(entry: storage::board::EntryRecord) -> Self {
+impl From<storage::board::BoardCardRecord> for BoardCardDTO {
+    fn from(entry: storage::board::BoardCardRecord) -> Self {
         Self {
             id: entry.id,
             title: entry.title.into(),

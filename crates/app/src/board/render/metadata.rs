@@ -2,7 +2,7 @@ use super::*;
 use std::cmp::Ordering;
 
 impl BoardView {
-    pub(in crate::board) fn selected_entry(&self) -> Option<(&str, &EntryDTO)> {
+    pub(in crate::board) fn selected_entry(&self) -> Option<(&str, &BoardCardDTO)> {
         let entry_id = self.entry_dialog.entry_id?;
 
         self.cards.iter().find_map(|card| {
@@ -13,7 +13,7 @@ impl BoardView {
         })
     }
 
-    pub(super) fn entry_matches_filters(&self, entry: &EntryDTO) -> bool {
+    pub(super) fn entry_matches_filters(&self, entry: &BoardCardDTO) -> bool {
         storage::board_projection::entry_matches_view(
             entry,
             &self.active_view_config,
@@ -25,8 +25,8 @@ impl BoardView {
 
     pub(super) fn compare_entries_for_active_sort(
         &self,
-        left: &EntryDTO,
-        right: &EntryDTO,
+        left: &BoardCardDTO,
+        right: &BoardCardDTO,
     ) -> Ordering {
         self.active_view_config
             .sort
@@ -81,7 +81,7 @@ impl BoardView {
 
     pub(super) fn render_card_label_chips(
         &self,
-        entry: &EntryDTO,
+        entry: &BoardCardDTO,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         h_flex()
@@ -102,7 +102,7 @@ impl BoardView {
 
     pub(super) fn render_card_metadata(
         &self,
-        entry: &EntryDTO,
+        entry: &BoardCardDTO,
         show_due_date: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -184,7 +184,7 @@ impl BoardView {
 
     pub(super) fn render_card_checklist_progress(
         &self,
-        entry: &EntryDTO,
+        entry: &BoardCardDTO,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let completed = entry

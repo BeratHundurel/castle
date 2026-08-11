@@ -13,14 +13,7 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    board_label::ActiveModel {
-                        board_id: Set(board_id as i64),
-                        name: Set(name),
-                        color: Set(color),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
-                    .await
+                    storage::board_commands::create_label(db.as_ref(), board_id, name, color).await
                 })
                 .await;
 
@@ -80,14 +73,7 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not rename label", false, async move {
-            board_label::ActiveModel {
-                id: Set(label_id as i64),
-                name: Set(name),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::rename_label(db.as_ref(), label_id, name).await
         });
     }
 
@@ -133,23 +119,8 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not update card label", false, async move {
-            if assigned {
-                entry_label::ActiveModel {
-                    entry_id: Set(entry_id as i64),
-                    board_label_id: Set(label_id as i64),
-                    ..Default::default()
-                }
-                .insert(&*db)
-                .await?;
-            } else {
-                EntryLabel::delete_many()
-                    .filter(entry_label::Column::EntryId.eq(entry_id as i64))
-                    .filter(entry_label::Column::BoardLabelId.eq(label_id as i64))
-                    .exec(&*db)
-                    .await?;
-            }
-
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::set_label_assignment(db.as_ref(), entry_id, label_id, assigned)
+                .await
         });
     }
 
@@ -165,8 +136,7 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete label", false, async move {
-            BoardLabel::delete_by_id(label_id as i64).exec(&*db).await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::delete_label(db.as_ref(), label_id).await
         });
     }
 }

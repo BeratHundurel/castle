@@ -19,7 +19,7 @@ fn accepts_list_header_drop(value: &dyn std::any::Any) -> bool {
 impl BoardView {
     pub(super) fn render_card(
         &self,
-        card: &crate::board::dto::CardDTO,
+        card: &crate::board::dto::BoardListDTO,
         board_id: u32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -100,7 +100,7 @@ impl BoardView {
 
     pub(super) fn render_card_header(
         &self,
-        card: &crate::board::dto::CardDTO,
+        card: &crate::board::dto::BoardListDTO,
         card_drag_info: CardDragInfo,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -237,7 +237,7 @@ impl BoardView {
 
     pub(super) fn render_entry_card(
         &self,
-        entry: &EntryDTO,
+        entry: &BoardCardDTO,
         board_id: u32,
         card_id: u32,
         drag_enabled: bool,

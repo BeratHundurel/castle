@@ -35,14 +35,12 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    entry_checklist_item::ActiveModel {
-                        entry_id: Set(entry_id as i64),
-                        title: Set(title),
-                        checked: Set(false),
-                        position: Set(position),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
+                    storage::board_commands::create_checklist_item(
+                        db.as_ref(),
+                        entry_id,
+                        title,
+                        position,
+                    )
                     .await
                 })
                 .await;
@@ -101,14 +99,13 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not update checklist item", false, async move {
-            entry_checklist_item::ActiveModel {
-                id: Set(item_id as i64),
-                checked: Set(checked),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::update_checklist_item(
+                db.as_ref(),
+                item_id,
+                None,
+                Some(checked),
+            )
+            .await
         });
     }
 
@@ -124,10 +121,7 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete checklist item", false, async move {
-            EntryChecklistItem::delete_by_id(item_id as i64)
-                .exec(&*db)
-                .await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::delete_checklist_item(db.as_ref(), item_id).await
         });
     }
 
@@ -172,16 +166,7 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not reorder checklist", false, async move {
-            for (item_id, position) in positions {
-                entry_checklist_item::ActiveModel {
-                    id: Set(item_id as i64),
-                    position: Set(position),
-                    ..Default::default()
-                }
-                .update(&*db)
-                .await?;
-            }
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::reorder_checklist_items(db.as_ref(), positions).await
         });
     }
 
@@ -207,14 +192,8 @@ impl BoardView {
         cx.notify();
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {
-            entry_checklist_item::ActiveModel {
-                id: Set(item_id as i64),
-                title: Set(title),
-                ..Default::default()
-            }
-            .update(&*db)
-            .await?;
-            Ok::<(), anyhow::Error>(())
+            storage::board_commands::update_checklist_item(db.as_ref(), item_id, Some(title), None)
+                .await
         });
     }
 }

@@ -29,7 +29,7 @@ use crate::board::entry_dialog::EntryDialog;
 
 pub(crate) struct BoardView {
     board_id: Option<u32>,
-    cards: Vec<CardDTO>,
+    cards: Vec<BoardListDTO>,
     board_labels: Vec<BoardLabelDTO>,
     board_properties: storage::board_properties::BoardProperties,
     property_values: HashMap<(i64, i64), storage::board_properties::PropertyValue>,
@@ -230,7 +230,7 @@ impl BoardView {
                         this.is_adding_list = false;
                         this.add_card(
                             cx,
-                            CardDTO {
+                            BoardListDTO {
                                 id: card_id,
                                 title: SharedString::from(name),
                                 board_id,

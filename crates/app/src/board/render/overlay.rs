@@ -47,7 +47,7 @@ impl BoardView {
 
     pub(super) fn render_entry_detail_header(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -219,7 +219,7 @@ impl BoardView {
 
     pub(super) fn render_entry_detail_body(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -277,7 +277,7 @@ impl BoardView {
 
     pub(super) fn render_entry_due_date(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let due_on = selected_entry

@@ -1,7 +1,5 @@
-use entity::{note, note::Entity as Note};
 use gpui::{Context, EntityInputHandler, SharedString, Task, Window};
 use gpui_component::{WindowExt as _, input::RopeExt as _, notification::Notification};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, TransactionTrait};
 use std::{
     fs::read_to_string,
     fs::{create_dir_all, remove_file, write},
@@ -14,8 +12,7 @@ use super::formatting::{format_document_text, map_range_after_format};
 use super::outline::DocumentOutline;
 use super::types::{DocumentKind, DocumentStats, SaveState};
 use super::util::{
-    now_ts, suggested_save_as_file_name, suggested_save_as_file_name_with_extension,
-    unique_note_path,
+    suggested_save_as_file_name, suggested_save_as_file_name_with_extension, unique_note_path,
 };
 use super::{AUTO_SAVE_IDLE_DELAY, DocumentEditorEvent, DocumentEditorView};
 
@@ -36,7 +33,7 @@ impl DocumentEditorView {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
-                    result = Note::find_by_id(note_id as i64).one(&*query_db) => Some(result),
+                    result = storage::documents::load_document(query_db.as_ref(), note_id) => Some(result),
                 }
             });
             let model = match load.await {
@@ -100,25 +97,13 @@ impl DocumentEditorView {
                         let update_content = content.clone();
                         let _ = runtime
                             .spawn(async move {
-                                let txn = update_db.begin().await?;
-                                let updated = note::ActiveModel {
-                                    id: Set(note_id as i64),
-                                    cached_content: Set(update_content.clone()),
-                                    file_missing_since: Set(None),
-                                    updated_at: Set(now_ts()),
-                                    ..Default::default()
-                                }
-                                .update(&txn)
-                                .await?;
-                                storage::note_links::index_note_links_in_connection(
-                                    &txn,
-                                    note_id as i64,
-                                    &update_content,
-                                    updated.updated_at,
+                                storage::documents::persist_document_content(
+                                    update_db.as_ref(),
+                                    note_id,
+                                    update_content,
+                                    true,
                                 )
-                                .await?;
-                                txn.commit().await?;
-                                Ok::<(), anyhow::Error>(())
+                                .await
                             })
                             .await;
                     }
@@ -146,12 +131,10 @@ impl DocumentEditorView {
                         let update_db = db.clone();
                         let _ = runtime
                             .spawn(async move {
-                                note::ActiveModel {
-                                    id: Set(note_id as i64),
-                                    file_missing_since: Set(Some(now_ts())),
-                                    ..Default::default()
-                                }
-                                .update(&*update_db)
+                                storage::documents::mark_document_missing(
+                                    update_db.as_ref(),
+                                    note_id,
+                                )
                                 .await
                             })
                             .await;
@@ -178,7 +161,7 @@ impl DocumentEditorView {
 
     pub(super) fn load_model(
         &mut self,
-        model: note::Model,
+        model: storage::documents::DocumentRecord,
         content: String,
         missing: bool,
         is_loading: bool,
@@ -406,25 +389,13 @@ impl DocumentEditorView {
                         let save_db = db.clone();
                         match runtime
                             .spawn(async move {
-                                let txn = save_db.begin().await?;
-                                let updated = note::ActiveModel {
-                                    id: Set(note_id as i64),
-                                    cached_content: Set(persisted_content.to_string()),
-                                    file_missing_since: Set(None),
-                                    updated_at: Set(now_ts()),
-                                    ..Default::default()
-                                }
-                                .update(&txn)
-                                .await?;
-                                storage::note_links::index_note_links_in_connection(
-                                    &txn,
-                                    note_id as i64,
-                                    persisted_content.as_ref(),
-                                    updated.updated_at,
+                                storage::documents::persist_document_content(
+                                    save_db.as_ref(),
+                                    note_id,
+                                    persisted_content.to_string(),
+                                    true,
                                 )
-                                .await?;
-                                txn.commit().await?;
-                                Ok::<(), anyhow::Error>(())
+                                .await
                             })
                             .await
                         {
@@ -439,24 +410,13 @@ impl DocumentEditorView {
                 let persisted_content = content.clone();
                 match runtime
                     .spawn(async move {
-                        let txn = db.begin().await?;
-                        let updated = note::ActiveModel {
-                            id: Set(note_id as i64),
-                            cached_content: Set(persisted_content.to_string()),
-                            updated_at: Set(now_ts()),
-                            ..Default::default()
-                        }
-                        .update(&txn)
-                        .await?;
-                        storage::note_links::index_note_links_in_connection(
-                            &txn,
-                            note_id as i64,
-                            persisted_content.as_ref(),
-                            updated.updated_at,
+                        storage::documents::persist_document_content(
+                            db.as_ref(),
+                            note_id,
+                            persisted_content.to_string(),
+                            false,
                         )
-                        .await?;
-                        txn.commit().await?;
-                        Ok::<(), anyhow::Error>(())
+                        .await
                     })
                     .await
                 {
@@ -626,27 +586,14 @@ impl DocumentEditorView {
                     let persisted_content = content.clone();
                     match runtime
                         .spawn(async move {
-                            let txn = db.begin().await?;
-                            let updated = note::ActiveModel {
-                                id: Set(note_id as i64),
-                                file_path: Set(Some(path_string)),
-                                file_managed_by_app: Set(file_managed_by_app),
-                                cached_content: Set(persisted_content.to_string()),
-                                file_missing_since: Set(None),
-                                updated_at: Set(now_ts()),
-                                ..Default::default()
-                            }
-                            .update(&txn)
-                            .await?;
-                            storage::note_links::index_note_links_in_connection(
-                                &txn,
-                                note_id as i64,
-                                persisted_content.as_ref(),
-                                updated.updated_at,
+                            storage::documents::persist_document_to_path(
+                                db.as_ref(),
+                                note_id,
+                                path_string,
+                                file_managed_by_app,
+                                persisted_content.to_string(),
                             )
-                            .await?;
-                            txn.commit().await?;
-                            Ok::<(), anyhow::Error>(())
+                            .await
                         })
                         .await
                     {

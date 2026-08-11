@@ -1,5 +1,4 @@
 use gpui::{Context, SharedString};
-use sea_orm::{DatabaseConnection, DbErr};
 use std::{future::Future, sync::Arc};
 
 use crate::AppServices;
@@ -93,7 +92,8 @@ impl BoardView {
         let generation = self.load_generation;
         let local_mutation_generation = self.local_mutation_generation;
         let app_db = cx.global::<AppServices>();
-        let db = app_db.store().connection();
+        let store = app_db.store();
+        let db = store.connection();
         let board_layout_persistence = app_db.board_layout_persistence();
         let runtime = app_db.runtime();
 
@@ -106,7 +106,7 @@ impl BoardView {
                     result = async move {
                     let _ = board_layout_persistence.wait_for_pending(board_id).await;
                     let board_data = async {
-                        load_board_data(db.as_ref(), board_id)
+                        load_board_data(&store, board_id)
                             .await
                             .map_err(anyhow::Error::from)
                     };
@@ -250,12 +250,13 @@ impl BoardView {
 }
 
 pub(super) async fn load_board_data(
-    db: &DatabaseConnection,
+    store: &storage::Store,
     board_id: u32,
-) -> Result<(Vec<CardDTO>, Vec<BoardLabelDTO>), DbErr> {
-    let snapshot = storage::board::load_board_snapshot(db, board_id).await?;
+) -> anyhow::Result<(Vec<BoardListDTO>, Vec<BoardLabelDTO>)> {
+    let db = store.connection();
+    let snapshot = storage::board::load_board_snapshot(db.as_ref(), board_id).await?;
     Ok((
-        snapshot.cards.into_iter().map(CardDTO::from).collect(),
+        snapshot.cards.into_iter().map(BoardListDTO::from).collect(),
         snapshot
             .labels
             .into_iter()
@@ -358,13 +359,21 @@ mod tests {
         }
 
         for _ in 0..3 {
-            load_board_data(&db, board.id as u32).await?;
+            load_board_data(
+                &storage::Store::from_connection(db.clone()),
+                board.id as u32,
+            )
+            .await?;
         }
 
         let mut elapsed_micros = Vec::with_capacity(MEASUREMENTS);
         for _ in 0..MEASUREMENTS {
             let started = Instant::now();
-            let (cards, labels) = load_board_data(&db, board.id as u32).await?;
+            let (cards, labels) = load_board_data(
+                &storage::Store::from_connection(db.clone()),
+                board.id as u32,
+            )
+            .await?;
             elapsed_micros.push(started.elapsed().as_micros());
             assert_eq!(cards.len(), LISTS);
             assert_eq!(
@@ -618,7 +627,11 @@ mod tests {
         crate::trash::move_to_trash(&db, board_request, 10).await?;
         crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(board_request)).await?;
 
-        let (cards, _) = load_board_data(&db, board.id as u32).await?;
+        let (cards, _) = load_board_data(
+            &storage::Store::from_connection(db.clone()),
+            board.id as u32,
+        )
+        .await?;
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].title.as_ref(), "Todo");
         assert_eq!(cards[0].entries.len(), 1);
@@ -631,7 +644,11 @@ mod tests {
         crate::trash::move_to_trash(&db, project_request, 20).await?;
         crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(project_request)).await?;
 
-        let (cards, _) = load_board_data(&db, board.id as u32).await?;
+        let (cards, _) = load_board_data(
+            &storage::Store::from_connection(db.clone()),
+            board.id as u32,
+        )
+        .await?;
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].entries.len(), 1);
         assert_eq!(cards[0].entries[0].title.as_ref(), "Keep me");
@@ -774,7 +791,11 @@ mod tests {
         .insert(&db)
         .await?;
 
-        let (cards, _) = load_board_data(&db, board.id as u32).await?;
+        let (cards, _) = load_board_data(
+            &storage::Store::from_connection(db.clone()),
+            board.id as u32,
+        )
+        .await?;
         let loaded = &cards[0].entries[0];
         assert!(loaded.reminder_enabled);
         assert_eq!(loaded.attachments.len(), 1);

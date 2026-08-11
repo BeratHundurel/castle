@@ -177,7 +177,7 @@ impl BoardView {
 
     pub(super) fn render_entry_related_notes(
         &self,
-        selected_entry: Option<(&str, &EntryDTO)>,
+        selected_entry: Option<(&str, &BoardCardDTO)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();

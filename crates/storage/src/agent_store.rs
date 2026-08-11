@@ -1777,7 +1777,7 @@ fn label_record_detail(label: crate::board::LabelRecord) -> LabelDetail {
 }
 
 fn entry_record_detail(
-    entry: crate::board::EntryRecord,
+    entry: crate::board::BoardCardRecord,
     list_title: &str,
     board: &board::Model,
     project_name: Option<String>,
