@@ -434,7 +434,7 @@ impl DocumentEditorView {
         );
         self.embeds.loading_keys = keys.clone();
         let generation = self.embeds.request.begin();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -446,7 +446,7 @@ impl DocumentEditorView {
                         let mut states = HashMap::new();
                         for key in keys {
                             let state = match storage::board_projection::load_board_view_projection(
-                                db.as_ref(),
+                                &db,
                                 key.board_id,
                                 key.view_id,
                             )

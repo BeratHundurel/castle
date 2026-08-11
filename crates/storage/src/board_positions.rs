@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use entity::{card, entry};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, DatabaseConnection, DbErr, TransactionTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, DbErr};
 use tokio::sync::Notify;
 
 pub type ListPositions = Vec<(u32, i32)>;
@@ -65,9 +65,10 @@ impl BoardLayoutPersistence {
     pub fn submit(
         &self,
         board_id: u32,
-        db: Arc<DatabaseConnection>,
+        store: impl Into<crate::Store>,
         layout: BoardLayoutSnapshot,
     ) -> anyhow::Result<u64> {
+        let store = store.into();
         let (revision, start_worker) = {
             let mut boards = self.boards.lock().map_err(|_| {
                 anyhow::anyhow!("Failed to lock the board-layout persistence coordinator")
@@ -87,7 +88,7 @@ impl BoardLayoutPersistence {
 
         if start_worker {
             self.runtime
-                .spawn(run_worker(board_id, db, self.boards.clone()));
+                .spawn(run_worker(board_id, store, self.boards.clone()));
         }
         Ok(revision)
     }
@@ -153,7 +154,7 @@ impl BoardLayoutPersistence {
 
 async fn run_worker(
     board_id: u32,
-    db: Arc<DatabaseConnection>,
+    store: crate::Store,
     boards: Arc<std::sync::Mutex<HashMap<u32, BoardPersistenceState>>>,
 ) {
     loop {
@@ -174,7 +175,7 @@ async fn run_worker(
         };
 
         let revision = snapshot.revision;
-        let result = persist_board_layout_in_db(db.as_ref(), snapshot.layout).await;
+        let result = persist_board_layout_in_db(&store, snapshot.layout).await;
         let Ok(mut boards) = boards.lock() else {
             eprintln!("Failed to lock the board-layout persistence coordinator");
             return;
@@ -213,7 +214,10 @@ async fn run_worker(
 }
 
 async fn persist_board_layout_in_db(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     layout: BoardLayoutSnapshot,
 ) -> Result<(), DbErr> {
     let txn = db.begin().await?;

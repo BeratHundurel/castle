@@ -7,14 +7,14 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         self.home.phase = LoadPhase::Loading {
             had_content: self.home.phase.has_content(),
         };
         cx.spawn(async move |this, cx| {
             let result = match runtime
-                .spawn(async move { crate::home::load_home(db.as_ref()).await })
+                .spawn(async move { crate::home::load_home(&db).await })
                 .await
             {
                 Ok(result) => result,
@@ -49,14 +49,14 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         self.trash.phase = LoadPhase::Loading {
             had_content: self.trash.phase.has_content(),
         };
         cx.spawn(async move |this, cx| {
             let result = match runtime
-                .spawn(async move { crate::trash::load_trash(db.as_ref()).await })
+                .spawn(async move { crate::trash::load_trash(&db).await })
                 .await
             {
                 Ok(result) => result,
@@ -122,7 +122,7 @@ impl AppShell {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         self.record_opened_task = Some(cx.spawn(async move |_, _| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -130,7 +130,7 @@ impl AppShell {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
-                    result = crate::home::mark_opened(db.as_ref(), kind, id, now_ts()) => {
+                    result = crate::home::mark_opened(&db, kind, id, now_ts()) => {
                         Some(result)
                     }
                 }

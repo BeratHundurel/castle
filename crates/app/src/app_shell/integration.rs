@@ -51,14 +51,14 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
             let result = runtime
-                .spawn(async move {
-                    storage::workspace_links::load_workspace_link_catalog(db.as_ref()).await
-                })
+                .spawn(
+                    async move { storage::workspace_links::load_workspace_link_catalog(&db).await },
+                )
                 .await;
             window
                 .update(|window, cx| match result {
@@ -177,7 +177,7 @@ impl AppShell {
                             );
                             return false;
                         }
-                        let db = cx.global::<AppServices>().store().connection();
+                        let db = cx.global::<AppServices>().store();
                         let runtime = cx.global::<AppServices>().runtime();
                         let app_for_result = app.clone();
                         app.update(cx, |this, cx| {
@@ -186,7 +186,7 @@ impl AppShell {
                                 let result = runtime
                                     .spawn(async move {
                                         storage::workspace_links::create_card_from_note_selection(
-                                            db.as_ref(),
+                                            &db,
                                             i64::from(note_id),
                                             list_id,
                                             title,
@@ -291,14 +291,14 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
             let result = runtime
                 .spawn(async move {
                     let catalog =
-                        storage::workspace_links::load_workspace_link_catalog(db.as_ref()).await?;
+                        storage::workspace_links::load_workspace_link_catalog(&db).await?;
                     let boards = catalog
                         .into_iter()
                         .filter(|entry| {
@@ -314,8 +314,7 @@ impl AppShell {
                             "All cards".to_string(),
                         ));
                         let views =
-                            storage::board_properties::load_board_views(db.as_ref(), board.item.id)
-                                .await?;
+                            storage::board_properties::load_board_views(&db, board.item.id).await?;
                         choices.extend(views.views.into_iter().map(|view| {
                             (board.item.id, Some(view.id), board.title.clone(), view.name)
                         }));

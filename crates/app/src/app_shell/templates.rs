@@ -120,15 +120,12 @@ impl AppShell {
     }
 
     fn load_custom_board_templates(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
-            let result =
-                runtime
-                    .spawn(async move {
-                        storage::board_templates::load_custom_templates(db.as_ref()).await
-                    })
-                    .await;
+            let result = runtime
+                .spawn(async move { storage::board_templates::load_custom_templates(&db).await })
+                .await;
             this.update(cx, |this, cx| {
                 let Some(picker) = this.board_template_picker.as_mut() else {
                     return;
@@ -499,7 +496,7 @@ impl AppShell {
         picker.creating = true;
         picker.error = None;
         let project_id = picker.project_id;
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity().downgrade();
         cx.notify();
@@ -508,7 +505,7 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     storage::board_templates::create_board_from_template(
-                        db.as_ref(),
+                        &db,
                         project_id,
                         title,
                         template.definition,
@@ -577,14 +574,14 @@ impl AppShell {
         }
         picker.deleting_template_id = Some(template_id);
         picker.error = None;
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_templates::delete_custom_template(db.as_ref(), template_id).await
+                    storage::board_templates::delete_custom_template(&db, template_id).await
                 })
                 .await;
             this.update(cx, |this, cx| {

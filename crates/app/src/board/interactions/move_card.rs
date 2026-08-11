@@ -16,10 +16,10 @@ impl BoardView {
         self.entry_editing.dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete card", true, async move {
             crate::trash::move_to_trash(
-                db.as_ref(),
+                &db,
                 crate::trash::MoveToTrash {
                     kind: crate::trash::TrashItemKind::Entry,
                     id: entry_id,
@@ -106,10 +106,10 @@ impl BoardView {
         self.data.lists.retain(|card| card.id != card_id);
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete list", true, async move {
             crate::trash::move_to_trash(
-                db.as_ref(),
+                &db,
                 crate::trash::MoveToTrash {
                     kind: crate::trash::TrashItemKind::List,
                     id: card_id,

@@ -274,11 +274,7 @@ mod tests {
             .wait_for_revision(board.id as u32, revision)
             .await?;
 
-        let (reloaded_cards, _) = load_board_data(
-            &storage::Store::from_connection(db.clone()),
-            board.id as u32,
-        )
-        .await?;
+        let (reloaded_cards, _) = load_board_data(&db, board.id as u32).await?;
         assert!(reloaded_cards[0].entries.is_empty());
         assert_eq!(
             reloaded_cards[1]

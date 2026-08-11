@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{DbBackend, Statement};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrashItemKind {
@@ -72,7 +72,12 @@ pub struct PurgedArtifacts {
     pub attachment_entry_ids: Vec<u32>,
 }
 
-pub async fn load_trash(db: &DatabaseConnection) -> Result<Vec<TrashItem>> {
+pub async fn load_trash(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<Vec<TrashItem>> {
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
@@ -123,7 +128,10 @@ pub async fn load_trash(db: &DatabaseConnection) -> Result<Vec<TrashItem>> {
 }
 
 pub async fn move_to_trash(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     item: MoveToTrash,
     deleted_at: i64,
 ) -> Result<()> {
@@ -140,7 +148,13 @@ pub async fn move_to_trash(
     Ok(())
 }
 
-pub async fn restore_item(db: &DatabaseConnection, item: RestoreTrashItem) -> Result<()> {
+pub async fn restore_item(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: RestoreTrashItem,
+) -> Result<()> {
     ensure_parent_available(db, item.0).await?;
     let sql = if item.0.kind == TrashItemKind::Project {
         "UPDATE project SET deleted_at = NULL, archived = 0 WHERE id = ? AND deleted_at IS NOT NULL"
@@ -165,7 +179,13 @@ pub async fn restore_item(db: &DatabaseConnection, item: RestoreTrashItem) -> Re
     Ok(())
 }
 
-pub async fn purge_item(db: &DatabaseConnection, item: PurgeTrashItem) -> Result<PurgedArtifacts> {
+pub async fn purge_item(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: PurgeTrashItem,
+) -> Result<PurgedArtifacts> {
     let mut artifacts = PurgedArtifacts {
         attachment_entry_ids: attachment_entry_ids_for_item(db, item.0).await?,
         ..Default::default()
@@ -237,7 +257,12 @@ pub async fn purge_item(db: &DatabaseConnection, item: PurgeTrashItem) -> Result
     Ok(artifacts)
 }
 
-pub async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts> {
+pub async fn purge_all(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<PurgedArtifacts> {
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
@@ -304,7 +329,10 @@ pub async fn purge_all(db: &DatabaseConnection) -> Result<PurgedArtifacts> {
 }
 
 async fn attachment_entry_ids_for_item(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     item: MoveToTrash,
 ) -> Result<Vec<u32>> {
     let (sql, id) = match item.kind {
@@ -338,7 +366,13 @@ async fn attachment_entry_ids_for_item(
     .map_err(Into::into)
 }
 
-async fn ensure_parent_available(db: &DatabaseConnection, item: MoveToTrash) -> Result<()> {
+async fn ensure_parent_available(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: MoveToTrash,
+) -> Result<()> {
     let sql = match item.kind {
         TrashItemKind::Project => return Ok(()),
         TrashItemKind::Note => {

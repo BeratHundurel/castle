@@ -99,7 +99,7 @@ impl SidebarView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace::create_project(store.connection().as_ref(), name).await
+                storage::workspace::create_project(&store, name).await
             });
 
         cx.spawn(async move |this, cx| {
@@ -108,7 +108,7 @@ impl SidebarView {
             this.update(cx, |this, cx| match result {
                 Ok(Ok(project)) => {
                     this.projects.push(ProjectDTO {
-                        id: project.id as u32,
+                        id: project.id,
                         name: SharedString::from(project.name),
                         position: project.position,
                         is_expanded: true,
@@ -134,7 +134,7 @@ impl SidebarView {
             prompt: Some("Add folder as project".into()),
         });
         let background_executor = cx.background_executor().clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -163,7 +163,7 @@ impl SidebarView {
             };
 
             let result = runtime
-                .spawn(async move { crate::folder_import::import_folder(db.as_ref(), scan).await })
+                .spawn(async move { crate::folder_import::import_folder(&db, scan).await })
                 .await;
 
             this.update_in(cx, |this, window, cx| match result {

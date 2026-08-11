@@ -140,7 +140,7 @@ impl BoardView {
         let runtime = db.runtime();
         let revision = match persistence.submit(
             board_id,
-            db.store().connection(),
+            db.store(),
             storage::board_positions::BoardLayoutSnapshot { lists, entries },
         ) {
             Ok(revision) => revision,

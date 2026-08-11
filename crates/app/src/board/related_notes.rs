@@ -245,7 +245,7 @@ impl BoardView {
         self.related_notes.error = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let board_id = self
             .related_notes
             .catalog
@@ -258,7 +258,7 @@ impl BoardView {
             let result = runtime
                 .spawn(async move {
                     storage::workspace_links::set_manual_note_link(
-                        db.as_ref(),
+                        &db,
                         note_id,
                         item,
                         true,
@@ -313,7 +313,7 @@ impl BoardView {
         self.related_notes.error = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let board_id = self
             .related_notes
             .catalog
@@ -326,7 +326,7 @@ impl BoardView {
             let result = runtime
                 .spawn(async move {
                     storage::workspace_links::set_manual_note_link(
-                        db.as_ref(),
+                        &db,
                         note_id,
                         item,
                         false,

@@ -32,7 +32,7 @@ impl BoardView {
         self.entry_editing.dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let title = trimmed_title.to_string();
         let description = description.to_string();
         let runtime = cx.global::<AppServices>().runtime();
@@ -41,7 +41,7 @@ impl BoardView {
             let result = runtime
                 .spawn(async move {
                     storage::board_commands::update_board_card(
-                        db.as_ref(),
+                        &db,
                         entry_id,
                         title,
                         description,
@@ -110,7 +110,7 @@ impl BoardView {
             .saturating_add(1);
         let revision = self.entry_editing.next_due_date_update_revision;
         let persisted_revisions = self.entry_editing.persisted_due_date_revisions.clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not save due date", false, async move {
             let mut persisted_revisions = persisted_revisions.lock().await;
             if persisted_revisions
@@ -119,7 +119,7 @@ impl BoardView {
             {
                 return Ok::<(), anyhow::Error>(());
             }
-            storage::board_commands::set_board_card_due_on(db.as_ref(), entry_id, due_on).await?;
+            storage::board_commands::set_board_card_due_on(&db, entry_id, due_on).await?;
             persisted_revisions.insert(entry_id, revision);
             crate::system_notifications::wake();
             Ok::<(), anyhow::Error>(())
@@ -150,10 +150,9 @@ impl BoardView {
         entry.reminder_enabled = enabled;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not save reminder", false, async move {
-            storage::board_commands::set_board_card_reminder(db.as_ref(), entry_id, enabled)
-                .await?;
+            storage::board_commands::set_board_card_reminder(&db, entry_id, enabled).await?;
             crate::system_notifications::wake();
             Ok::<(), anyhow::Error>(())
         });

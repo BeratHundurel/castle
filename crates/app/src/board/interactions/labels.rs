@@ -7,13 +7,13 @@ impl BoardView {
         };
 
         let color = self.entry_editing.selected_label_color.to_string();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_commands::create_label(db.as_ref(), board_id, name, color).await
+                    storage::board_commands::create_label(&db, board_id, name, color).await
                 })
                 .await;
 
@@ -74,9 +74,9 @@ impl BoardView {
             });
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not rename label", false, async move {
-            storage::board_commands::rename_label(db.as_ref(), label_id, name).await
+            storage::board_commands::rename_label(&db, label_id, name).await
         });
     }
 
@@ -122,10 +122,9 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not update card label", false, async move {
-            storage::board_commands::set_label_assignment(db.as_ref(), entry_id, label_id, assigned)
-                .await
+            storage::board_commands::set_label_assignment(&db, entry_id, label_id, assigned).await
         });
     }
 
@@ -140,9 +139,9 @@ impl BoardView {
         self.entry_editing.renaming_label_id = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete label", false, async move {
-            storage::board_commands::delete_label(db.as_ref(), label_id).await
+            storage::board_commands::delete_label(&db, label_id).await
         });
     }
 }

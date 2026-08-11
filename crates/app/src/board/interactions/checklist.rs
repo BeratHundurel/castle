@@ -34,18 +34,13 @@ impl BoardView {
         );
         self.entry_editing.next_checklist_item_position = position.saturating_add(1);
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_commands::create_checklist_item(
-                        db.as_ref(),
-                        entry_id,
-                        title,
-                        position,
-                    )
-                    .await
+                    storage::board_commands::create_checklist_item(&db, entry_id, title, position)
+                        .await
                 })
                 .await;
             this.update(cx, |this, cx| match result {
@@ -103,15 +98,9 @@ impl BoardView {
         item.checked = checked;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not update checklist item", false, async move {
-            storage::board_commands::update_checklist_item(
-                db.as_ref(),
-                item_id,
-                None,
-                Some(checked),
-            )
-            .await
+            storage::board_commands::update_checklist_item(&db, item_id, None, Some(checked)).await
         });
     }
 
@@ -126,9 +115,9 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete checklist item", false, async move {
-            storage::board_commands::delete_checklist_item(db.as_ref(), item_id).await
+            storage::board_commands::delete_checklist_item(&db, item_id).await
         });
     }
 
@@ -172,9 +161,9 @@ impl BoardView {
             .collect::<Vec<_>>();
         cx.notify();
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not reorder checklist", false, async move {
-            storage::board_commands::reorder_checklist_items(db.as_ref(), positions).await
+            storage::board_commands::reorder_checklist_items(&db, positions).await
         });
     }
 
@@ -199,10 +188,9 @@ impl BoardView {
         item.title = SharedString::from(title.as_str());
         self.entry_editing.renaming_checklist_item_id = None;
         cx.notify();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {
-            storage::board_commands::update_checklist_item(db.as_ref(), item_id, Some(title), None)
-                .await
+            storage::board_commands::update_checklist_item(&db, item_id, Some(title), None).await
         });
     }
 }

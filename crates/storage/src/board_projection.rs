@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::HashMap};
 use anyhow::{Result, bail};
 use chrono::{Duration, Local, NaiveDate};
 use entity::{board, board::Entity as Board};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::{
     board::{BoardCardRecord, LabelRecord},
@@ -106,7 +106,10 @@ impl BoardViewEntry for BoardCardRecord {
 }
 
 pub async fn load_board_view_projection(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     board_id: i64,
     view_id: Option<i64>,
 ) -> Result<BoardViewProjectionResult> {

@@ -476,7 +476,7 @@ impl AppShell {
                 title: title.clone(),
             })
             .generation;
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let save_lock = self.workspace.title_save_lock.clone();
 
@@ -499,7 +499,7 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     let _guard = save_lock.lock().await;
-                    storage::workspace::persist_workspace_title(db.as_ref(), target, title).await
+                    storage::workspace::persist_workspace_title(&db, target, title).await
                 })
                 .await;
 
@@ -556,7 +556,7 @@ impl AppShell {
             .into_iter()
             .map(|(target, pending)| (target, pending.title))
             .collect::<Vec<_>>();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let save_lock = self.workspace.title_save_lock.clone();
 
@@ -569,8 +569,7 @@ impl AppShell {
                 .spawn(async move {
                     let _guard = save_lock.lock().await;
                     for (target, title) in pending {
-                        storage::workspace::persist_workspace_title(db.as_ref(), target, title)
-                            .await?;
+                        storage::workspace::persist_workspace_title(&db, target, title).await?;
                     }
                     Ok::<(), anyhow::Error>(())
                 })

@@ -51,6 +51,9 @@ fn assert_sources_have_no_production_database_imports(directory: &Path) {
         if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
             continue;
         }
+        if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs") {
+            continue;
+        }
 
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
@@ -59,6 +62,13 @@ fn assert_sources_have_no_production_database_imports(directory: &Path) {
             assert!(
                 !production.contains(forbidden),
                 "{} imports {forbidden} in production code",
+                path.display()
+            );
+        }
+        for forbidden in [".store().connection()", "store.connection()"] {
+            assert!(
+                !production.contains(forbidden),
+                "{} bypasses the Store boundary with {forbidden}",
                 path.display()
             );
         }

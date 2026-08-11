@@ -12,13 +12,13 @@ impl SidebarView {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
                     crate::trash::restore_item(
-                        db.as_ref(),
+                        &db,
                         crate::trash::RestoreTrashItem(crate::trash::MoveToTrash { kind, id }),
                     )
                     .await
@@ -46,13 +46,13 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     crate::home::set_pinned(
-                        db.as_ref(),
+                        &db,
                         crate::home::WorkspaceItemKind::Board,
                         board_id,
                         pinned,
@@ -86,13 +86,13 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     crate::home::set_pinned(
-                        db.as_ref(),
+                        &db,
                         crate::home::WorkspaceItemKind::Note,
                         note_id,
                         pinned,
@@ -152,7 +152,7 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
@@ -161,12 +161,8 @@ impl SidebarView {
             };
             let result = match runtime
                 .spawn(async move {
-                    crate::trash::move_to_trash(
-                        db.as_ref(),
-                        request,
-                        crate::document_editor::now_ts(),
-                    )
-                    .await
+                    crate::trash::move_to_trash(&db, request, crate::document_editor::now_ts())
+                        .await
                 })
                 .await
             {
@@ -223,7 +219,7 @@ impl SidebarView {
             .global::<AppServices>()
             .spawn_store(move |store| async move {
                 storage::workspace::persist_workspace_title(
-                    store.connection().as_ref(),
+                    &store,
                     storage::workspace::WorkspaceTitleTarget::Board(board_id),
                     title,
                 )
@@ -255,7 +251,7 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
@@ -264,12 +260,8 @@ impl SidebarView {
             };
             let result = match runtime
                 .spawn(async move {
-                    crate::trash::move_to_trash(
-                        db.as_ref(),
-                        request,
-                        crate::document_editor::now_ts(),
-                    )
-                    .await
+                    crate::trash::move_to_trash(&db, request, crate::document_editor::now_ts())
+                        .await
                 })
                 .await
             {
@@ -322,13 +314,13 @@ impl SidebarView {
             title: shared_title,
         });
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::workspace::persist_workspace_title(
-                        db.as_ref(),
+                        &db,
                         storage::workspace::WorkspaceTitleTarget::Note(note_id),
                         title,
                     )
@@ -430,12 +422,7 @@ impl SidebarView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace::move_board_to_project(
-                    store.connection().as_ref(),
-                    board_id,
-                    project_id,
-                )
-                .await
+                storage::workspace::move_board_to_project(&store, board_id, project_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -492,12 +479,7 @@ impl SidebarView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace::move_note_to_project(
-                    store.connection().as_ref(),
-                    note_id,
-                    project_id,
-                )
-                .await
+                storage::workspace::move_note_to_project(&store, note_id, project_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -595,8 +577,7 @@ impl SidebarView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace::rename_project(store.connection().as_ref(), project_id, name)
-                    .await
+                storage::workspace::rename_project(&store, project_id, name).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -618,13 +599,13 @@ impl SidebarView {
     }
 
     pub(super) fn delete_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
                     crate::trash::move_to_trash(
-                        db.as_ref(),
+                        &db,
                         crate::trash::MoveToTrash {
                             kind: crate::trash::TrashItemKind::Project,
                             id: project_id,
@@ -741,7 +722,7 @@ impl SidebarView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace::reorder_projects(store.connection().as_ref(), positions).await
+                storage::workspace::reorder_projects(&store, positions).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;

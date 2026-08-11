@@ -7,8 +7,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use entity::{note, note::Entity as Note, project, project::Entity as Project};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
 };
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -176,7 +175,10 @@ pub fn scan_folder(root: &Path) -> Result<FolderScan> {
 }
 
 pub async fn import_folder(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     scan: FolderScan,
 ) -> Result<FolderImportResult> {
     let (result, indexed_notes) = db

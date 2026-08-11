@@ -18,13 +18,12 @@ const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::
 impl AppShell {
     pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
         let store = cx.global::<AppServices>().store();
-        let db = store.connection();
+        let db = store.clone();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::workspace_links::repair_workspace_link_index_batch(db.as_ref(), 32)
-                        .await
+                    storage::workspace_links::repair_workspace_link_index_batch(&db, 32).await
                 })
                 .await;
             match result {
@@ -144,13 +143,13 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         self.workspace.refreshing = true;
 
         cx.spawn(async move |this, cx| {
             let rows = match runtime
-                .spawn(async move { load_workspace_rows(db.as_ref()).await })
+                .spawn(async move { load_workspace_rows(&db).await })
                 .await
             {
                 Ok(Ok(rows)) => rows,
@@ -293,7 +292,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let view = cx.entity().downgrade();
         let path = unique_note_path(cx.global::<AppServices>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
@@ -315,7 +314,7 @@ impl AppShell {
             let inserted = runtime
                 .spawn(async move {
                     storage::workspace::create_managed_note(
-                        db.as_ref(),
+                        &db,
                         project_id,
                         title,
                         path_string,
@@ -436,7 +435,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let view = cx.entity().downgrade();
         let path = unique_note_path(cx.global::<AppServices>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
@@ -477,7 +476,7 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     let inserted = storage::workspace::create_managed_linked_note(
-                        db_for_insert.as_ref(),
+                        &db_for_insert,
                         project_id,
                         title,
                         path_string,
@@ -486,7 +485,7 @@ impl AppShell {
                     )
                     .await?;
                     let board_id = storage::workspace_links::load_workspace_link_catalog(
-                        db_for_insert.as_ref(),
+                        &db_for_insert,
                     )
                     .await?
                     .into_iter()
@@ -576,7 +575,7 @@ impl AppShell {
         });
 
         let background_executor = cx.background_executor().clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let view = cx.entity().downgrade();
         let runtime = cx.global::<AppServices>().runtime();
 
@@ -613,13 +612,7 @@ impl AppShell {
 
             let persisted = runtime
                 .spawn(async move {
-                    storage::workspace::import_external_note(
-                        db.as_ref(),
-                        title,
-                        path_string,
-                        content,
-                    )
-                    .await
+                    storage::workspace::import_external_note(&db, title, path_string, content).await
                 })
                 .await;
 
@@ -683,15 +676,15 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let view = cx.entity().downgrade();
         let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = runtime
-                .spawn(async move {
-                    storage::workspace::create_board(db.as_ref(), project_id, title).await
-                })
+                .spawn(
+                    async move { storage::workspace::create_board(&db, project_id, title).await },
+                )
                 .await
                 .ok()?
                 .ok()?;
@@ -745,12 +738,13 @@ fn remove_linked_note_file(path: &Path) -> std::io::Result<()> {
 }
 
 async fn publish_change_revision(
-    store: &storage::Store,
+    store: impl Into<storage::Store>,
     sender: &tokio::sync::watch::Sender<Option<ChangeRevision>>,
     last_published: &mut Option<ChangeRevision>,
 ) -> anyhow::Result<bool> {
-    let db = store.connection();
-    let revision = storage::workspace::load_change_revision(db.as_ref()).await?;
+    let store = store.into();
+    let db = store.clone();
+    let revision = storage::workspace::load_change_revision(&db).await?;
     if *last_published == Some(revision) {
         return Ok(true);
     }
@@ -778,25 +772,11 @@ mod tests {
         let (sender, mut receiver) = tokio::sync::watch::channel(None);
         let mut last_published = None;
 
-        assert!(
-            publish_change_revision(
-                &storage::Store::from_connection(db.clone()),
-                &sender,
-                &mut last_published
-            )
-            .await?
-        );
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
         assert!(receiver.has_changed()?);
         let initial = *receiver.borrow_and_update();
 
-        assert!(
-            publish_change_revision(
-                &storage::Store::from_connection(db.clone()),
-                &sender,
-                &mut last_published
-            )
-            .await?
-        );
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
         assert!(!receiver.has_changed()?);
 
         db.execute_raw(Statement::from_string(
@@ -807,14 +787,7 @@ mod tests {
         ))
         .await?;
 
-        assert!(
-            publish_change_revision(
-                &storage::Store::from_connection(db.clone()),
-                &sender,
-                &mut last_published
-            )
-            .await?
-        );
+        assert!(publish_change_revision(&db, &sender, &mut last_published).await?);
         assert!(receiver.has_changed()?);
         let changed = *receiver.borrow_and_update();
         assert_eq!(
@@ -828,14 +801,7 @@ mod tests {
 
         drop(receiver);
         last_published = None;
-        assert!(
-            !publish_change_revision(
-                &storage::Store::from_connection(db.clone()),
-                &sender,
-                &mut last_published
-            )
-            .await?
-        );
+        assert!(!publish_change_revision(&db, &sender, &mut last_published).await?);
         Ok(())
     }
 

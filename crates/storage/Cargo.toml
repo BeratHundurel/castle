@@ -8,6 +8,7 @@ edition.workspace = true
 entity = { path = "../entity" }
 migration = { path = "../migration" }
 anyhow.workspace = true
+async-trait = "0.1"
 chrono.workspace = true
 schemars.workspace = true
 sea-orm.workspace = true

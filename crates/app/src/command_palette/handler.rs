@@ -265,7 +265,7 @@ impl AppShell {
         self.command_palette.search_loading = true;
         self.command_palette.search_error = None;
 
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         self.command_palette.search_debounce_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -273,9 +273,7 @@ impl AppShell {
                 .await;
 
             let result = runtime
-                .spawn(
-                    async move { crate::search::search_workspace(db.as_ref(), &query, 20).await },
-                )
+                .spawn(async move { crate::search::search_workspace(&db, &query, 20).await })
                 .await;
 
             this.update(cx, |this, cx| {
@@ -313,12 +311,12 @@ impl AppShell {
     }
 
     fn rebuild_workspace_search_index(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .spawn(async move { crate::search::rebuild_search_index(db.as_ref()).await })
+                .spawn(async move { crate::search::rebuild_search_index(&db).await })
                 .await;
 
             this.update(cx, |this, cx| {

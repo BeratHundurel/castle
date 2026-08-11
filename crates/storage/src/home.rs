@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Local;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{DbBackend, Statement};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceItemKind {
@@ -40,7 +40,12 @@ pub struct WorkspaceHomeState {
     pub recent: Vec<WorkspaceHomeItem>,
 }
 
-pub async fn load_home(db: &DatabaseConnection) -> Result<WorkspaceHomeState> {
+pub async fn load_home(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<WorkspaceHomeState> {
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
@@ -111,7 +116,12 @@ pub async fn load_home(db: &DatabaseConnection) -> Result<WorkspaceHomeState> {
     })
 }
 
-async fn load_home_items(db: &DatabaseConnection) -> Result<Vec<WorkspaceHomeItem>> {
+async fn load_home_items(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<Vec<WorkspaceHomeItem>> {
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
@@ -157,7 +167,10 @@ async fn load_home_items(db: &DatabaseConnection) -> Result<Vec<WorkspaceHomeIte
 }
 
 pub async fn mark_opened(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     kind: WorkspaceItemKind,
     id: u32,
     opened_at: i64,
@@ -176,7 +189,10 @@ pub async fn mark_opened(
 }
 
 pub async fn set_pinned(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     kind: WorkspaceItemKind,
     id: u32,
     pinned: bool,

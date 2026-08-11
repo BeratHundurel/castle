@@ -7,9 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use entity::{board::Entity as Board, note, note::Entity as Note, project::Entity as Project};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, DatabaseConnection, EntityTrait, TransactionTrait,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 
 use crate::{
     board_templates::{
@@ -67,7 +65,10 @@ pub struct FreshWorkspace {
 }
 
 pub async fn seed_fresh_workspace(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     data_dir: &Path,
 ) -> Result<Option<FreshWorkspace>> {
     if workspace_has_items(db).await? {
@@ -131,7 +132,12 @@ pub async fn seed_fresh_workspace(
     }))
 }
 
-async fn workspace_has_items(db: &DatabaseConnection) -> Result<bool> {
+async fn workspace_has_items(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<bool> {
     Ok(Project::find().one(db).await?.is_some()
         || Board::find().one(db).await?.is_some()
         || Note::find().one(db).await?.is_some())

@@ -1,7 +1,5 @@
 use entity::entry;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DbBackend, Statement,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, DbBackend, Statement};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DueReminder {
@@ -13,7 +11,10 @@ pub struct DueReminder {
 }
 
 pub async fn load_due_reminders(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     due_through: &str,
 ) -> anyhow::Result<Vec<DueReminder>> {
     let rows = db
@@ -51,7 +52,10 @@ pub async fn load_due_reminders(
 }
 
 pub async fn mark_reminder_notified(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     entry_id: i64,
     due_on: String,
 ) -> anyhow::Result<()> {

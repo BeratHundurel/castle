@@ -22,7 +22,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let background_executor = cx.background_executor().clone();
 
@@ -33,7 +33,7 @@ impl DocumentEditorView {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
-                    result = storage::documents::load_document(query_db.as_ref(), note_id) => Some(result),
+                    result = storage::documents::load_document(&query_db, note_id) => Some(result),
                 }
             });
             let model = match load.await {
@@ -98,7 +98,7 @@ impl DocumentEditorView {
                         let _ = runtime
                             .spawn(async move {
                                 storage::documents::persist_document_content(
-                                    update_db.as_ref(),
+                                    &update_db,
                                     note_id,
                                     update_content,
                                     true,
@@ -131,11 +131,7 @@ impl DocumentEditorView {
                         let update_db = db.clone();
                         let _ = runtime
                             .spawn(async move {
-                                storage::documents::mark_document_missing(
-                                    update_db.as_ref(),
-                                    note_id,
-                                )
-                                .await
+                                storage::documents::mark_document_missing(&update_db, note_id).await
                             })
                             .await;
                     }
@@ -362,7 +358,7 @@ impl DocumentEditorView {
             };
 
             let db = this
-                .read_with(cx, |_, cx| cx.global::<AppServices>().store().connection())
+                .read_with(cx, |_, cx| cx.global::<AppServices>().store())
                 .ok();
 
             let Some(db) = db else {
@@ -390,7 +386,7 @@ impl DocumentEditorView {
                         match runtime
                             .spawn(async move {
                                 storage::documents::persist_document_content(
-                                    save_db.as_ref(),
+                                    &save_db,
                                     note_id,
                                     persisted_content.to_string(),
                                     true,
@@ -411,7 +407,7 @@ impl DocumentEditorView {
                 match runtime
                     .spawn(async move {
                         storage::documents::persist_document_content(
-                            db.as_ref(),
+                            &db,
                             note_id,
                             persisted_content.to_string(),
                             false,
@@ -565,7 +561,7 @@ impl DocumentEditorView {
 
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let background_executor = cx.background_executor().clone();
         let runtime = cx.global::<AppServices>().runtime();
         let saved_path = path.clone();
@@ -591,7 +587,7 @@ impl DocumentEditorView {
                     match runtime
                         .spawn(async move {
                             storage::documents::persist_document_to_path(
-                                db.as_ref(),
+                                &db,
                                 note_id,
                                 path_string,
                                 file_managed_by_app,

@@ -93,7 +93,7 @@ impl BoardView {
         let local_mutation_generation = self.mutation.local_generation;
         let app_db = cx.global::<AppServices>();
         let store = app_db.store();
-        let db = store.connection();
+        let db = store.clone();
         let board_layout_persistence = app_db.board_layout_persistence();
         let runtime = app_db.runtime();
 
@@ -107,17 +107,15 @@ impl BoardView {
                     let _ = board_layout_persistence.wait_for_pending(board_id).await;
                     let board_data = async {
                         load_board_data(&store, board_id)
-                            .await
-                            .map_err(anyhow::Error::from)
-                    };
+                            .await};
                     let properties = storage::board_properties::load_board_properties(
-                        db.as_ref(),
+                        &db,
                         board_id as i64,
                     );
                     let views =
-                        storage::board_properties::load_board_views(db.as_ref(), board_id as i64);
+                        storage::board_properties::load_board_views(&db, board_id as i64);
                     let link_catalog =
-                        storage::workspace_links::load_workspace_link_catalog(db.as_ref());
+                        storage::workspace_links::load_workspace_link_catalog(&db);
                     let ((cards, labels), properties, views, link_catalog) =
                         tokio::try_join!(board_data, properties, views, link_catalog)?;
                     let mut related_targets = vec![storage::workspace_links::WorkspaceItemRef {
@@ -131,7 +129,7 @@ impl BoardView {
                         }
                     }));
                     let related_notes = storage::workspace_links::load_related_notes_for_items(
-                        db.as_ref(),
+                        &db,
                         &related_targets,
                     )
                     .await?;
@@ -254,11 +252,12 @@ impl BoardView {
 }
 
 pub(super) async fn load_board_data(
-    store: &storage::Store,
+    store: impl Into<storage::Store>,
     board_id: u32,
 ) -> anyhow::Result<(Vec<BoardListDTO>, Vec<BoardLabelDTO>)> {
-    let db = store.connection();
-    let snapshot = storage::board::load_board_snapshot(db.as_ref(), board_id).await?;
+    let store = store.into();
+    let db = store.clone();
+    let snapshot = storage::board::load_board_snapshot(&db, board_id).await?;
     Ok((
         snapshot.cards.into_iter().map(BoardListDTO::from).collect(),
         snapshot
@@ -363,21 +362,13 @@ mod tests {
         }
 
         for _ in 0..3 {
-            load_board_data(
-                &storage::Store::from_connection(db.clone()),
-                board.id as u32,
-            )
-            .await?;
+            load_board_data(&db, board.id as u32).await?;
         }
 
         let mut elapsed_micros = Vec::with_capacity(MEASUREMENTS);
         for _ in 0..MEASUREMENTS {
             let started = Instant::now();
-            let (cards, labels) = load_board_data(
-                &storage::Store::from_connection(db.clone()),
-                board.id as u32,
-            )
-            .await?;
+            let (cards, labels) = load_board_data(&db, board.id as u32).await?;
             elapsed_micros.push(started.elapsed().as_micros());
             assert_eq!(cards.len(), LISTS);
             assert_eq!(
@@ -631,11 +622,7 @@ mod tests {
         crate::trash::move_to_trash(&db, board_request, 10).await?;
         crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(board_request)).await?;
 
-        let (cards, _) = load_board_data(
-            &storage::Store::from_connection(db.clone()),
-            board.id as u32,
-        )
-        .await?;
+        let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].title.as_ref(), "Todo");
         assert_eq!(cards[0].entries.len(), 1);
@@ -648,11 +635,7 @@ mod tests {
         crate::trash::move_to_trash(&db, project_request, 20).await?;
         crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(project_request)).await?;
 
-        let (cards, _) = load_board_data(
-            &storage::Store::from_connection(db.clone()),
-            board.id as u32,
-        )
-        .await?;
+        let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].entries.len(), 1);
         assert_eq!(cards[0].entries[0].title.as_ref(), "Keep me");
@@ -795,11 +778,7 @@ mod tests {
         .insert(&db)
         .await?;
 
-        let (cards, _) = load_board_data(
-            &storage::Store::from_connection(db.clone()),
-            board.id as u32,
-        )
-        .await?;
+        let (cards, _) = load_board_data(&db, board.id as u32).await?;
         let loaded = &cards[0].entries[0];
         assert!(loaded.reminder_enabled);
         assert_eq!(loaded.attachments.len(), 1);

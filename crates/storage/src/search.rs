@@ -5,8 +5,8 @@ use entity::{
     note::Entity as Note, project, project::Entity as Project,
 };
 use sea_orm::{
-    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
-    QueryFilter, QuerySelect, Statement, TransactionTrait, Value,
+    ColumnTrait, Condition, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter,
+    QuerySelect, Statement, Value,
     sea_query::{Query, SelectStatement},
 };
 
@@ -64,7 +64,12 @@ fn active_card_ids_query() -> SelectStatement {
         .to_owned()
 }
 
-pub async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn rebuild_search_index(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<(), DbErr> {
     let notes = Note::find()
         .filter(note::Column::DeletedAt.is_null())
         .filter(
@@ -252,7 +257,10 @@ pub async fn rebuild_search_index(db: &DatabaseConnection) -> Result<(), DbErr> 
 }
 
 pub async fn search_workspace(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     query: &str,
     limit: u32,
 ) -> Result<Vec<SearchResult>, DbErr> {
@@ -599,7 +607,10 @@ async fn insert_search_document_chunk(
 
 #[allow(dead_code)]
 pub async fn delete_search_item(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     item_type: &str,
     item_id: u32,
 ) -> Result<(), DbErr> {

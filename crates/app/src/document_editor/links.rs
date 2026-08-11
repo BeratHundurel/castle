@@ -378,7 +378,7 @@ impl DocumentEditorView {
         runtime: tokio::runtime::Handle,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {
@@ -387,17 +387,17 @@ impl DocumentEditorView {
                     _ = cancelled => None,
                     result = async move {
                         let links = storage::note_links::load_note_links(
-                            db.as_ref(),
+                            &db,
                             note_id as i64,
                         )
                         .await?;
-                        let note_catalog = storage::note_links::load_note_link_catalog(db.as_ref());
+                        let note_catalog = storage::note_links::load_note_link_catalog(&db);
                         let workspace_links = storage::workspace_links::load_note_workspace_links(
-                            db.as_ref(),
+                            &db,
                             note_id as i64,
                         );
                         let workspace_catalog =
-                            storage::workspace_links::load_workspace_link_catalog(db.as_ref());
+                            storage::workspace_links::load_workspace_link_catalog(&db);
                         let (note_catalog, workspace_links, workspace_catalog) =
                             tokio::try_join!(note_catalog, workspace_links, workspace_catalog)?;
                         Ok::<_, anyhow::Error>((

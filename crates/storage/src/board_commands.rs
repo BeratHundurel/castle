@@ -409,3 +409,86 @@ pub async fn delete_attachment(db: &impl ConnectionTrait, attachment_id: u32) ->
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
+
+    #[tokio::test]
+    async fn board_commands_preserve_order_and_nested_data_across_duplication() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = crate::workspace::create_board(&db, None, "Delivery".to_string()).await?;
+        let list = create_board_list(
+            &db,
+            BoardListDraft {
+                title: "Selected".to_string(),
+                board_id: board.id,
+                position: 0,
+                cards: Vec::new(),
+            },
+        )
+        .await?;
+        let label = create_label(&db, board.id, "Ready".to_string(), "blue".to_string()).await?;
+        let draft = BoardCardDraft {
+            title: "Ship release".to_string(),
+            description: "Keep the checklist".to_string(),
+            list_id: list.id,
+            position: 0,
+            due_on: Some("2026-08-12".to_string()),
+            label_ids: vec![label.id],
+            checklist_items: vec![ChecklistItemDraft {
+                title: "Verify assets".to_string(),
+                checked: true,
+                position: 0,
+            }],
+        };
+        let card = create_board_card(&db, draft.clone(), 1).await?;
+        set_board_card_reminder(&db, card.id, true).await?;
+        let attachments = create_attachments(
+            &db,
+            card.id,
+            vec!["release.png".to_string(), "notes.txt".to_string()],
+        )
+        .await?;
+        duplicate_board_card(&db, draft.clone(), 2).await?;
+
+        let snapshot = crate::board::load_board_snapshot(&db, board.id).await?;
+        assert_eq!(snapshot.cards.len(), 1);
+        assert_eq!(snapshot.cards[0].entries.len(), 2);
+        assert_eq!(snapshot.cards[0].entries[0].title, "Ship release");
+        assert_eq!(snapshot.cards[0].entries[0].position, 0);
+        assert!(snapshot.cards[0].entries[0].reminder_enabled);
+        assert_eq!(snapshot.cards[0].entries[0].attachments.len(), 2);
+        assert_eq!(snapshot.cards[0].entries[1].title, "Copy of Ship release");
+        assert_eq!(snapshot.cards[0].entries[1].position, 1);
+        assert_eq!(snapshot.cards[0].entries[1].labels[0].name, "Ready");
+        assert!(snapshot.cards[0].entries[1].checklist_items[0].checked);
+
+        delete_attachment(&db, attachments[0].id).await?;
+        rename_board_list(&db, list.id, "Approved".to_string()).await?;
+        duplicate_board_list(
+            &db,
+            BoardListDraft {
+                title: "Approved".to_string(),
+                board_id: board.id,
+                position: 0,
+                cards: vec![draft],
+            },
+            3,
+        )
+        .await?;
+
+        let snapshot = crate::board::load_board_snapshot(&db, board.id).await?;
+        assert_eq!(snapshot.cards.len(), 2);
+        assert_eq!(snapshot.cards[0].title, "Approved");
+        assert_eq!(snapshot.cards[0].position, 0);
+        assert_eq!(snapshot.cards[0].entries[0].attachments.len(), 1);
+        assert_eq!(snapshot.cards[1].title, "Copy of Approved");
+        assert_eq!(snapshot.cards[1].position, 1);
+        assert_eq!(snapshot.cards[1].entries[0].title, "Ship release");
+        Ok(())
+    }
+}

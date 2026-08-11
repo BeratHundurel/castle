@@ -249,18 +249,13 @@ impl BoardView {
             return;
         }
         let kind = self.properties.new_property_kind;
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::create_property(
-                        db.as_ref(),
-                        i64::from(board_id),
-                        name,
-                        kind,
-                    )
-                    .await
+                    storage::board_properties::create_property(&db, i64::from(board_id), name, kind)
+                        .await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -313,12 +308,12 @@ impl BoardView {
         let Some(property_id) = self.properties.renaming_property_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::rename_property(db.as_ref(), property_id, name).await
+                    storage::board_properties::rename_property(&db, property_id, name).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -383,13 +378,13 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::board_properties::reorder_properties(
-                        db.as_ref(),
+                        &db,
                         i64::from(board_id),
                         &ordered_ids,
                     )
@@ -467,14 +462,15 @@ impl BoardView {
     }
 
     fn delete_property(&mut self, property_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::delete_property(db.as_ref(), property_id).await
-                })
-                .await;
+            let result =
+                runtime
+                    .spawn(async move {
+                        storage::board_properties::delete_property(&db, property_id).await
+                    })
+                    .await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => {
@@ -527,18 +523,13 @@ impl BoardView {
             .find(|property| property.id == property_id)
             .map(|property| OPTION_COLORS[property.options.len() % OPTION_COLORS.len()].to_string())
             .unwrap_or_else(|| "blue".to_string());
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::create_property_option(
-                        db.as_ref(),
-                        property_id,
-                        name,
-                        color,
-                    )
-                    .await
+                    storage::board_properties::create_property_option(&db, property_id, name, color)
+                        .await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -600,13 +591,12 @@ impl BoardView {
         let Some(option_id) = self.properties.renaming_property_option_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::rename_property_option(db.as_ref(), option_id, name)
-                        .await
+                    storage::board_properties::rename_property_option(&db, option_id, name).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -654,17 +644,13 @@ impl BoardView {
             .position(|color| *color == current)
             .unwrap_or(0);
         let color = OPTION_COLORS[(index + 1) % OPTION_COLORS.len()].to_string();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::update_property_option_color(
-                        db.as_ref(),
-                        option_id,
-                        color,
-                    )
-                    .await
+                    storage::board_properties::update_property_option_color(&db, option_id, color)
+                        .await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -723,13 +709,13 @@ impl BoardView {
             .iter()
             .map(|option| option.id)
             .collect::<Vec<_>>();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::board_properties::reorder_property_options(
-                        db.as_ref(),
+                        &db,
                         property_id,
                         &ordered_ids,
                     )
@@ -815,12 +801,12 @@ impl BoardView {
     }
 
     fn delete_property_option(&mut self, option_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::delete_property_option(db.as_ref(), option_id).await
+                    storage::board_properties::delete_property_option(&db, option_id).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -877,7 +863,7 @@ impl BoardView {
         let revision = self.properties.next_update_revision;
         self.properties.update_revisions.insert(key, revision);
         let persisted_revisions = self.properties.persisted_revisions.clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
@@ -893,7 +879,7 @@ impl BoardView {
                     match value {
                         Some(value) => {
                             storage::board_properties::set_entry_property(
-                                db.as_ref(),
+                                &db,
                                 entry_id,
                                 property_id,
                                 value,
@@ -902,7 +888,7 @@ impl BoardView {
                         }
                         None => {
                             storage::board_properties::clear_entry_property(
-                                db.as_ref(),
+                                &db,
                                 entry_id,
                                 property_id,
                             )
@@ -1082,13 +1068,13 @@ impl BoardView {
             cx.notify();
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::board_properties::set_selected_board_view(
-                        db.as_ref(),
+                        &db,
                         i64::from(board_id),
                         view_id,
                     )
@@ -1138,12 +1124,12 @@ impl BoardView {
         let Some(view_id) = self.properties.renaming_view_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::rename_board_view(db.as_ref(), view_id, name).await
+                    storage::board_properties::rename_board_view(&db, view_id, name).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1187,20 +1173,20 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     let view = storage::board_properties::create_board_view(
-                        db.as_ref(),
+                        &db,
                         i64::from(board_id),
                         name,
                         config,
                     )
                     .await?;
                     storage::board_properties::set_selected_board_view(
-                        db.as_ref(),
+                        &db,
                         i64::from(board_id),
                         Some(view.id),
                     )
@@ -1239,12 +1225,12 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::update_board_view(db.as_ref(), view_id, config).await
+                    storage::board_properties::update_board_view(&db, view_id, config).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1276,12 +1262,12 @@ impl BoardView {
     }
 
     pub(super) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_properties::set_default_board_view(db.as_ref(), view_id).await
+                    storage::board_properties::set_default_board_view(&db, view_id).await
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -1298,13 +1284,13 @@ impl BoardView {
     }
 
     pub(super) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .spawn(async move {
-                    storage::board_properties::delete_board_view(db.as_ref(), view_id).await
-                })
+                .spawn(
+                    async move { storage::board_properties::delete_board_view(&db, view_id).await },
+                )
                 .await;
             this.update(cx, |this, cx| {
                 if matches!(result, Ok(Ok(()))) {

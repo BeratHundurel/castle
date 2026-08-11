@@ -93,12 +93,11 @@ pub(crate) fn show_test_notification() -> anyhow::Result<()> {
 }
 
 async fn deliver_due_reminders(store: &Store) -> anyhow::Result<()> {
-    let db = store.connection();
+    let db = store.clone();
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    for reminder in storage::reminders::load_due_reminders(db.as_ref(), &today).await? {
+    for reminder in storage::reminders::load_due_reminders(&db, &today).await? {
         show_system_notification(&reminder)?;
-        storage::reminders::mark_reminder_notified(db.as_ref(), reminder.entry_id, reminder.due_on)
-            .await?;
+        storage::reminders::mark_reminder_notified(&db, reminder.entry_id, reminder.due_on).await?;
     }
 
     Ok(())

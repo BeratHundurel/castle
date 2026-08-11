@@ -23,14 +23,14 @@ impl BoardView {
         source: BoardCardDTO,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let board_id = self.data.board_id;
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::board_commands::duplicate_board_card(
-                        db.as_ref(),
+                        &db,
                         board_card_draft(source),
                         crate::document_editor::now_ts(),
                     )
@@ -78,14 +78,14 @@ impl BoardView {
         else {
             return;
         };
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let board_id = self.data.board_id;
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
                     storage::board_commands::duplicate_board_list(
-                        db.as_ref(),
+                        &db,
                         board_list_draft(source),
                         crate::document_editor::now_ts(),
                     )
@@ -158,7 +158,7 @@ impl BoardView {
         entry: BoardCardDTO,
         temp_id: u32,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let card_id = entry.card_id;
 
@@ -176,7 +176,7 @@ impl BoardView {
             let result = runtime
                 .spawn(async move {
                     storage::board_commands::create_board_card(
-                        db.as_ref(),
+                        &db,
                         board_card_draft(entry),
                         crate::document_editor::now_ts(),
                     )
@@ -187,7 +187,7 @@ impl BoardView {
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
                     this.mutation.mutation_error = None;
-                    let real_id = inserted.id as u32;
+                    let real_id = inserted.id;
                     if let Some(entry) = this
                         .data
                         .lists
@@ -233,7 +233,7 @@ impl BoardView {
         card: BoardListDTO,
         temp_id: u32,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let board_id = card.board_id;
 
@@ -243,15 +243,14 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_commands::create_board_list(db.as_ref(), board_list_draft(card))
-                        .await
+                    storage::board_commands::create_board_list(&db, board_list_draft(card)).await
                 })
                 .await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
                     this.mutation.mutation_error = None;
-                    let real_id = inserted.id as u32;
+                    let real_id = inserted.id;
                     if this.data.board_id == Some(board_id)
                         && let Some(card) =
                             this.data.lists.iter_mut().find(|card| card.id == temp_id)
@@ -285,7 +284,7 @@ impl BoardView {
         };
 
         let title = new_title.to_string();
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
 
         let Some(card) = self.data.lists.iter_mut().find(|card| card.id == card_id) else {
             return;
@@ -296,7 +295,7 @@ impl BoardView {
         cx.notify();
 
         self.commit_board_mutation(cx, "Could not rename list", false, async move {
-            storage::board_commands::rename_board_list(db.as_ref(), card_id, title).await
+            storage::board_commands::rename_board_list(&db, card_id, title).await
         });
     }
 

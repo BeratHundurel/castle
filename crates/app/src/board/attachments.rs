@@ -39,7 +39,7 @@ impl BoardView {
             prompt: Some("Attach images".into()),
         });
         let app_db = cx.global::<AppServices>();
-        let db = app_db.store().connection();
+        let db = app_db.store();
         let data_dir = app_db.data_dir();
         let destination = attachment_directory(&app_db.data_dir(), entry_id);
         let background = cx.background_executor().clone();
@@ -75,7 +75,7 @@ impl BoardView {
             let persistence = runtime
                 .spawn(async move {
                     storage::board_commands::create_attachments(
-                        db.as_ref(),
+                        &db,
                         entry_id,
                         copied.into_iter().map(|image| image.file_name).collect(),
                     )
@@ -180,7 +180,7 @@ impl BoardView {
         };
 
         let app_db = cx.global::<AppServices>();
-        let db = app_db.store().connection();
+        let db = app_db.store();
         let path = attachment_path(
             &app_db.data_dir(),
             attachment.entry_id,
@@ -196,7 +196,7 @@ impl BoardView {
         cx.spawn_in(window, async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_commands::delete_attachment(db.as_ref(), attachment_id).await
+                    storage::board_commands::delete_attachment(&db, attachment_id).await
                 })
                 .await;
 

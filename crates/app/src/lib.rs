@@ -1,14 +1,14 @@
 pub mod app_paths;
 pub mod app_settings;
 pub mod app_shell;
-pub mod board;
+pub(crate) mod board;
 pub(crate) mod color_contrast;
 pub(crate) mod command_palette;
-pub mod document_editor;
+pub(crate) mod document_editor;
 pub mod keymap;
 pub mod mcp_registration;
 pub(crate) mod request_tracker;
-pub mod sidebar;
+pub(crate) mod sidebar;
 pub mod system_notifications;
 pub mod tray;
 pub(crate) mod workspace_navigation;

@@ -18,9 +18,10 @@ use entity::{
     project::Entity as Project,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectOptions, ConnectionTrait,
-    Database, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait, ExprTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionSession,
+    AccessMode, ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectOptions,
+    ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction, DbBackend, DbErr,
+    EntityTrait, ExecResult, ExprTrait, IsolationLevel, PaginatorTrait, QueryFilter, QueryOrder,
+    QueryResult, QuerySelect, Statement, TransactionError, TransactionOptions, TransactionSession,
     TransactionTrait, sea_query::Expr,
 };
 
@@ -48,6 +49,18 @@ pub struct Store<C = DatabaseConnection> {
 impl From<DatabaseConnection> for Store {
     fn from(db: DatabaseConnection) -> Self {
         Self::from_connection(db)
+    }
+}
+
+impl From<&DatabaseConnection> for Store {
+    fn from(db: &DatabaseConnection) -> Self {
+        Self::from_connection(db.clone())
+    }
+}
+
+impl From<&Store> for Store {
+    fn from(store: &Store) -> Self {
+        store.clone()
     }
 }
 
@@ -134,12 +147,8 @@ impl Store {
         Self { db: Arc::new(db) }
     }
 
-    pub fn from_shared_connection(db: Arc<DatabaseConnection>) -> Self {
+    pub(crate) fn from_shared_connection(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
-    }
-
-    pub fn connection(&self) -> Arc<DatabaseConnection> {
-        self.db.clone()
     }
 
     pub fn mutations(&self, origin: MutationOrigin) -> Mutations {
@@ -147,6 +156,100 @@ impl Store {
             store: self.clone(),
             origin,
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl<C> ConnectionTrait for Store<C>
+where
+    C: ConnectionTrait + Send + Sync,
+{
+    fn get_database_backend(&self) -> DbBackend {
+        self.db.get_database_backend()
+    }
+
+    async fn execute_raw(&self, statement: Statement) -> Result<ExecResult, DbErr> {
+        self.db.execute_raw(statement).await
+    }
+
+    async fn execute_unprepared(&self, sql: &str) -> Result<ExecResult, DbErr> {
+        self.db.execute_unprepared(sql).await
+    }
+
+    async fn query_one_raw(&self, statement: Statement) -> Result<Option<QueryResult>, DbErr> {
+        self.db.query_one_raw(statement).await
+    }
+
+    async fn query_all_raw(&self, statement: Statement) -> Result<Vec<QueryResult>, DbErr> {
+        self.db.query_all_raw(statement).await
+    }
+
+    fn support_returning(&self) -> bool {
+        self.db.support_returning()
+    }
+
+    fn is_mock_connection(&self) -> bool {
+        self.db.is_mock_connection()
+    }
+}
+
+#[async_trait::async_trait]
+impl<C> TransactionTrait for Store<C>
+where
+    C: TransactionTrait + Send + Sync,
+{
+    type Transaction = C::Transaction;
+
+    async fn begin(&self) -> Result<Self::Transaction, DbErr> {
+        self.db.begin().await
+    }
+
+    async fn begin_with_config(
+        &self,
+        isolation_level: Option<IsolationLevel>,
+        access_mode: Option<AccessMode>,
+    ) -> Result<Self::Transaction, DbErr> {
+        self.db
+            .begin_with_config(isolation_level, access_mode)
+            .await
+    }
+
+    async fn begin_with_options(
+        &self,
+        options: TransactionOptions,
+    ) -> Result<Self::Transaction, DbErr> {
+        self.db.begin_with_options(options).await
+    }
+
+    async fn transaction<F, T, E>(&self, callback: F) -> Result<T, TransactionError<E>>
+    where
+        F: for<'a> FnOnce(
+                &'a Self::Transaction,
+            ) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
+            + Send,
+        T: Send,
+        E: std::fmt::Display + std::fmt::Debug + Send,
+    {
+        self.db.transaction(callback).await
+    }
+
+    async fn transaction_with_config<F, T, E>(
+        &self,
+        callback: F,
+        isolation_level: Option<IsolationLevel>,
+        access_mode: Option<AccessMode>,
+    ) -> Result<T, TransactionError<E>>
+    where
+        F: for<'a> FnOnce(
+                &'a Self::Transaction,
+            ) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
+            + Send,
+        T: Send,
+        E: std::fmt::Display + std::fmt::Debug + Send,
+    {
+        self.db
+            .transaction_with_config(callback, isolation_level, access_mode)
+            .await
     }
 }
 

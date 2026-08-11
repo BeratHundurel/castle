@@ -201,7 +201,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppServices>().store().connection();
+        let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = RestoreTrashItem(MoveToTrash {
@@ -209,7 +209,7 @@ impl AppShell {
                 id: item.id,
             });
             let result = match runtime
-                .spawn(async move { crate::trash::restore_item(db.as_ref(), request).await })
+                .spawn(async move { crate::trash::restore_item(&db, request).await })
                 .await
             {
                 Ok(result) => result,
@@ -294,7 +294,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let app_db = cx.global::<AppServices>();
-        let db = app_db.store().connection();
+        let db = app_db.store();
         let attachments_dir = app_db.data_dir().join("attachments");
         let background = cx.background_executor().clone();
         let runtime = cx.global::<AppServices>().runtime();
@@ -304,7 +304,7 @@ impl AppShell {
                 id: item.id,
             });
             let result = match runtime
-                .spawn(async move { crate::trash::purge_item(db.as_ref(), request).await })
+                .spawn(async move { crate::trash::purge_item(&db, request).await })
                 .await
             {
                 Ok(result) => result,
@@ -369,13 +369,13 @@ impl AppShell {
 
     pub(in crate::app_shell) fn empty_trash(&mut self, cx: &mut Context<Self>) {
         let app_db = cx.global::<AppServices>();
-        let db = app_db.store().connection();
+        let db = app_db.store();
         let attachments_dir = app_db.data_dir().join("attachments");
         let background = cx.background_executor().clone();
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = match runtime
-                .spawn(async move { crate::trash::purge_all(db.as_ref()).await })
+                .spawn(async move { crate::trash::purge_all(&db).await })
                 .await
             {
                 Ok(result) => result,

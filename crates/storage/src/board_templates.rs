@@ -5,8 +5,8 @@ use entity::{
     card::Entity as Card, entry, entry::Entity as Entry,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
+    QueryOrder,
 };
 use serde::{Deserialize, Serialize};
 
@@ -317,7 +317,12 @@ pub fn built_in_templates() -> Vec<BoardTemplate> {
     ]
 }
 
-pub async fn load_custom_templates(db: &DatabaseConnection) -> Result<Vec<BoardTemplate>> {
+pub async fn load_custom_templates(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> Result<Vec<BoardTemplate>> {
     let models = BoardTemplateEntity::find()
         .order_by_desc(board_template::Column::CreatedAt)
         .order_by_desc(board_template::Column::Id)
@@ -341,7 +346,10 @@ pub async fn load_custom_templates(db: &DatabaseConnection) -> Result<Vec<BoardT
 }
 
 pub async fn create_board_from_template(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     project_id: Option<u32>,
     title: String,
     definition: BoardTemplateDefinition,
@@ -415,7 +423,10 @@ pub(crate) async fn create_board_from_template_in_transaction(
 }
 
 pub async fn save_board_as_template(
-    db: &DatabaseConnection,
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
     board_id: u32,
     name: String,
 ) -> Result<BoardTemplate> {
@@ -488,7 +499,13 @@ pub async fn save_board_as_template(
     })
 }
 
-pub async fn delete_custom_template(db: &DatabaseConnection, template_id: i64) -> Result<()> {
+pub async fn delete_custom_template(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    template_id: i64,
+) -> Result<()> {
     BoardTemplateEntity::delete_by_id(template_id)
         .exec(db)
         .await?;
