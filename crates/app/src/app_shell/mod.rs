@@ -110,48 +110,102 @@ pub(crate) struct NoteChoice {
     pub(crate) project_name: Option<SharedString>,
 }
 
+struct TabsState {
+    open_tabs: Vec<OpenTab>,
+    note_views: HashMap<u32, Entity<DocumentEditorView>>,
+    active_tab_index: usize,
+    next_tab_id: u64,
+}
+
+#[derive(Clone)]
+enum LoadPhase {
+    Initial,
+    Loading {
+        had_content: bool,
+    },
+    Ready,
+    Failed {
+        message: SharedString,
+        had_content: bool,
+    },
+}
+
+impl LoadPhase {
+    fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+
+    fn has_content(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready
+                | Self::Loading { had_content: true }
+                | Self::Failed {
+                    had_content: true,
+                    ..
+                }
+        )
+    }
+
+    fn error(&self) -> Option<SharedString> {
+        match self {
+            Self::Failed { message, .. } => Some(message.clone()),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) struct WorkspaceState {
+    pub(crate) projects: Vec<ProjectChoice>,
+    pub(crate) boards: Vec<BoardChoice>,
+    pub(crate) notes: Vec<NoteChoice>,
+    pub(crate) active_project_id: Option<u32>,
+    refreshing: bool,
+    refresh_pending: bool,
+    pending_title_saves: HashMap<WorkspaceTitleTarget, PendingWorkspaceTitleSave>,
+    pending_board_open: Option<PendingBoardOpen>,
+    title_save_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+struct HomeState {
+    data: WorkspaceHomeState,
+    phase: LoadPhase,
+    refresh_pending: bool,
+}
+
+struct TrashState {
+    items: Vec<TrashItem>,
+    phase: LoadPhase,
+    refresh_pending: bool,
+    search_input: Entity<InputState>,
+    query: String,
+    kind_filter: Option<TrashItemKind>,
+}
+
+struct ExternalChangeState {
+    task: Option<Task<()>>,
+    revision: Option<i64>,
+    board_revision: Option<i64>,
+    note_revision: Option<i64>,
+    link_revision: Option<i64>,
+}
+
 pub struct AppShell {
     pub(crate) focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
     title_input: Entity<InputState>,
     pub(crate) command_palette: CommandPalette,
-    open_tabs: Vec<OpenTab>,
-    note_views: HashMap<u32, Entity<DocumentEditorView>>,
-    active_tab_index: usize,
-    next_tab_id: u64,
-    pub(crate) projects: Vec<ProjectChoice>,
-    pub(crate) boards: Vec<BoardChoice>,
-    pub(crate) notes: Vec<NoteChoice>,
-    pub(crate) active_project_id: Option<u32>,
+    tabs: TabsState,
+    pub(crate) workspace: WorkspaceState,
     suppress_title_event: bool,
     settings_dialog_open: bool,
     board_template_dialog_open: bool,
     board_template_picker: Option<templates::BoardTemplatePickerState>,
     mcp_setup_state: McpSetupState,
     window_is_narrow: bool,
-    home_state: WorkspaceHomeState,
-    home_loaded: bool,
-    home_refreshing: bool,
-    home_refresh_pending: bool,
-    home_error: Option<SharedString>,
-    trash_items: Vec<TrashItem>,
-    trash_loaded: bool,
-    trash_refreshing: bool,
-    trash_refresh_pending: bool,
-    trash_error: Option<SharedString>,
-    trash_search_input: Entity<InputState>,
-    trash_query: String,
-    trash_kind_filter: Option<TrashItemKind>,
-    workspace_refreshing: bool,
-    workspace_refresh_pending: bool,
-    pending_workspace_title_saves: HashMap<WorkspaceTitleTarget, PendingWorkspaceTitleSave>,
-    pending_board_open: Option<PendingBoardOpen>,
-    workspace_title_save_lock: Arc<tokio::sync::Mutex<()>>,
-    external_change_task: Option<Task<()>>,
-    last_change_revision: Option<i64>,
-    last_board_revision: Option<i64>,
-    last_note_revision: Option<i64>,
-    last_link_revision: Option<i64>,
+    home: HomeState,
+    trash: TrashState,
+    external_changes: ExternalChangeState,
     last_card_destination: Option<i64>,
     record_opened_task: Option<Task<()>>,
 }
@@ -172,7 +226,7 @@ impl AppShell {
             |this, _, event: &DocumentEditorEvent, window, cx| match event {
                 DocumentEditorEvent::PathChanged => this.refresh_workspace(cx),
                 DocumentEditorEvent::Saved(note_id) => {
-                    if !this.open_tabs.iter().any(|tab| {
+                    if !this.tabs.open_tabs.iter().any(|tab| {
                         matches!(
                             &tab.kind,
                             OpenTabKind::Note {
@@ -181,11 +235,12 @@ impl AppShell {
                             } if *open_note_id == *note_id
                         )
                     }) {
-                        this.note_views.remove(note_id);
+                        this.tabs.note_views.remove(note_id);
                     }
                 }
                 DocumentEditorEvent::WorkspaceLinksChanged => {
                     let boards = this
+                        .tabs
                         .open_tabs
                         .iter()
                         .filter_map(|tab| match &tab.kind {
@@ -203,12 +258,13 @@ impl AppShell {
                     note_id,
                     source_offset,
                 } => {
-                    if let Some(note) = this.notes.iter().find(|note| note.id == *note_id) {
+                    if let Some(note) = this.workspace.notes.iter().find(|note| note.id == *note_id)
+                    {
                         let project_id = note.project_id;
                         let title = note.title.clone();
                         this.open_note_tab(*note_id, project_id, title, window, cx);
                         if let Some(offset) = source_offset
-                            && let Some(view) = this.note_views.get(note_id)
+                            && let Some(view) = this.tabs.note_views.get(note_id)
                         {
                             view.update(cx, |editor, cx| {
                                 editor.navigate_to_offset(*offset, window, cx)
@@ -244,10 +300,14 @@ impl AppShell {
                     loaded_view.update(cx, |board, cx| {
                         board.apply_pending_reveal(window, cx);
                     });
-                    let is_current = this.pending_board_open.as_ref().is_some_and(|pending| {
-                        pending.board_id == *board_id
-                            && pending.view.entity_id() == loaded_view.entity_id()
-                    });
+                    let is_current =
+                        this.workspace
+                            .pending_board_open
+                            .as_ref()
+                            .is_some_and(|pending| {
+                                pending.board_id == *board_id
+                                    && pending.view.entity_id() == loaded_view.entity_id()
+                            });
                     if is_current {
                         this.finish_pending_board_open(window, cx);
                     }
@@ -272,16 +332,16 @@ impl AppShell {
                     board_id,
                     links_changed,
                 } => {
-                    for view in this.note_views.values() {
+                    for view in this.tabs.note_views.values() {
                         view.update(cx, |note, cx| {
                             note.refresh_board_embeds_for(i64::from(*board_id), cx)
                         });
                     }
                     if *links_changed {
-                        for view in this.note_views.values() {
+                        for view in this.tabs.note_views.values() {
                             view.update(cx, |note, cx| note.refresh_note_links(cx));
                         }
-                        for tab in &this.open_tabs {
+                        for tab in &this.tabs.open_tabs {
                             let OpenTabKind::Board {
                                 board_id: open_board_id,
                                 view,
@@ -421,7 +481,7 @@ impl AppShell {
             &trash_search_input,
             |this, input, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    this.trash_query = input.read(cx).text().to_string();
+                    this.trash.query = input.read(cx).text().to_string();
                     cx.notify();
                 }
             },
@@ -446,7 +506,7 @@ impl AppShell {
                     project_id,
                     title,
                 } => {
-                    this.active_project_id = *project_id;
+                    this.workspace.active_project_id = *project_id;
                     this.open_board_tab(*board_id, *project_id, title.clone(), window, cx);
                 }
                 SidebarEvent::OpenNote {
@@ -454,7 +514,7 @@ impl AppShell {
                     project_id,
                     title,
                 } => {
-                    this.active_project_id = *project_id;
+                    this.workspace.active_project_id = *project_id;
                     this.open_note_tab(*note_id, *project_id, title.clone(), window, cx);
                 }
                 SidebarEvent::ActivateProject { project_id } => {
@@ -462,19 +522,19 @@ impl AppShell {
                 }
                 SidebarEvent::BoardRenamed { board_id, title } => {
                     let mut renamed_active = false;
-                    for (i, tab) in this.open_tabs.iter_mut().enumerate() {
+                    for (i, tab) in this.tabs.open_tabs.iter_mut().enumerate() {
                         if let OpenTabKind::Board { board_id: id, .. } = &tab.kind
                             && *id == *board_id
                         {
                             tab.title = title.clone();
-                            renamed_active = i == this.active_tab_index;
+                            renamed_active = i == this.tabs.active_tab_index;
                             break;
                         }
                     }
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
-                    if let Some(board) = this.boards.iter_mut().find(|board| board.id == *board_id) {
+                    if let Some(board) = this.workspace.boards.iter_mut().find(|board| board.id == *board_id) {
                         board.title = title.clone();
                     }
                     this.rebuild_command_palette_workspace_commands();
@@ -483,12 +543,12 @@ impl AppShell {
                 }
                 SidebarEvent::NoteRenamed { note_id, title } => {
                     let mut renamed_active = false;
-                    for (i, tab) in this.open_tabs.iter_mut().enumerate() {
+                    for (i, tab) in this.tabs.open_tabs.iter_mut().enumerate() {
                         if let OpenTabKind::Note { note_id: id, view, .. } = &tab.kind
                             && *id == *note_id
                         {
                             tab.title = title.clone();
-                            renamed_active = i == this.active_tab_index;
+                            renamed_active = i == this.tabs.active_tab_index;
                             let view = view.clone();
                             view.update(cx, |note, cx| {
                                 note.apply_title(title, cx);
@@ -499,7 +559,7 @@ impl AppShell {
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
-                    if let Some(note) = this.notes.iter_mut().find(|note| note.id == *note_id) {
+                    if let Some(note) = this.workspace.notes.iter_mut().find(|note| note.id == *note_id) {
                         note.title = title.clone();
                     }
                     this.rebuild_command_palette_workspace_commands();
@@ -507,7 +567,7 @@ impl AppShell {
                     cx.notify();
                 }
                 SidebarEvent::NotePathChanged { note_id, file_path } => {
-                    if let Some(view) = this.open_tabs.iter().find_map(|tab| match &tab.kind {
+                    if let Some(view) = this.tabs.open_tabs.iter().find_map(|tab| match &tab.kind {
                         OpenTabKind::Note {
                             note_id: open_note_id,
                             view,
@@ -521,7 +581,7 @@ impl AppShell {
                     }
                 }
                 SidebarEvent::BoardDeleted { board_id } => {
-                    if let Some(index) = this.open_tabs.iter().position(
+                    if let Some(index) = this.tabs.open_tabs.iter().position(
                         |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id),
                     ) {
                         this.close_tab(index, window, cx);
@@ -529,7 +589,7 @@ impl AppShell {
                 }
                 SidebarEvent::NoteDeleted { note_id } => {
                     if let Some(index) = this
-                        .open_tabs
+                        .tabs.open_tabs
                         .iter()
                         .position(|tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == *note_id))
                     {
@@ -537,19 +597,19 @@ impl AppShell {
                     }
                 }
                 SidebarEvent::ProjectRenamed { project_id, name } => {
-                    for project in &mut this.projects {
+                    for project in &mut this.workspace.projects {
                         if project.id == *project_id {
                             project.name = name.clone();
                         }
                     }
 
-                    for board in &mut this.boards {
+                    for board in &mut this.workspace.boards {
                         if board.project_id == Some(*project_id) {
                             board.project_name = Some(name.clone());
                         }
                     }
 
-                    for note in &mut this.notes {
+                    for note in &mut this.workspace.notes {
                         if note.project_id == Some(*project_id) {
                             note.project_name = Some(name.clone());
                         }
@@ -560,8 +620,8 @@ impl AppShell {
                 }
                 SidebarEvent::ProjectDeleted { project_id } => {
                     this.close_project_tabs(*project_id, window, cx);
-                    if this.active_project_id == Some(*project_id) {
-                        this.active_project_id = None;
+                    if this.workspace.active_project_id == Some(*project_id) {
+                        this.workspace.active_project_id = None;
                     }
                     this.persist_tab_session(cx);
                 }
@@ -577,43 +637,49 @@ impl AppShell {
             sidebar,
             title_input,
             command_palette,
-            open_tabs,
-            note_views,
-            active_tab_index,
-            next_tab_id,
-            projects: vec![],
-            boards: vec![],
-            notes: vec![],
-            active_project_id: tab_session.active_project_id,
+            tabs: TabsState {
+                open_tabs,
+                note_views,
+                active_tab_index,
+                next_tab_id,
+            },
+            workspace: WorkspaceState {
+                projects: vec![],
+                boards: vec![],
+                notes: vec![],
+                active_project_id: tab_session.active_project_id,
+                refreshing: false,
+                refresh_pending: false,
+                pending_title_saves: HashMap::new(),
+                pending_board_open: None,
+                title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
+            },
             suppress_title_event: false,
             settings_dialog_open: false,
             board_template_dialog_open: false,
             board_template_picker: None,
             mcp_setup_state: McpSetupState::Checking,
             window_is_narrow: false,
-            home_state: WorkspaceHomeState::default(),
-            home_loaded: false,
-            home_refreshing: false,
-            home_refresh_pending: false,
-            home_error: None,
-            trash_items: Vec::new(),
-            trash_loaded: false,
-            trash_refreshing: false,
-            trash_refresh_pending: false,
-            trash_error: None,
-            trash_search_input,
-            trash_query: String::new(),
-            trash_kind_filter: None,
-            workspace_refreshing: false,
-            workspace_refresh_pending: false,
-            pending_workspace_title_saves: HashMap::new(),
-            pending_board_open: None,
-            workspace_title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
-            external_change_task: None,
-            last_change_revision: None,
-            last_board_revision: None,
-            last_note_revision: None,
-            last_link_revision: None,
+            home: HomeState {
+                data: WorkspaceHomeState::default(),
+                phase: LoadPhase::Initial,
+                refresh_pending: false,
+            },
+            trash: TrashState {
+                items: Vec::new(),
+                phase: LoadPhase::Initial,
+                refresh_pending: false,
+                search_input: trash_search_input,
+                query: String::new(),
+                kind_filter: None,
+            },
+            external_changes: ExternalChangeState {
+                task: None,
+                revision: None,
+                board_revision: None,
+                note_revision: None,
+                link_revision: None,
+            },
             last_card_destination: None,
             record_opened_task: None,
         };

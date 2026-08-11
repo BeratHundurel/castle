@@ -370,7 +370,7 @@ impl DocumentEditorView {
                 view_id: embed.view_id,
             })
             .collect::<HashSet<_>>();
-        let mut states = self.board_embed_states.as_ref().clone();
+        let mut states = self.embeds.states.as_ref().clone();
         states.retain(|key, _| keys.contains(key));
         let keys_to_load = keys
             .iter()
@@ -380,10 +380,10 @@ impl DocumentEditorView {
         for key in &keys_to_load {
             states.insert(*key, EmbedState::Loading);
         }
-        self.board_embed_states = Arc::new(states);
+        self.embeds.states = Arc::new(states);
         if keys.is_empty() {
-            self._board_embed_task = None;
-            self.board_embed_loading_keys.clear();
+            self.embeds.request.clear();
+            self.embeds.loading_keys.clear();
             cx.notify();
             return;
         }
@@ -426,17 +426,17 @@ impl DocumentEditorView {
 
     fn start_board_embed_load(&mut self, mut keys: HashSet<EmbedKey>, cx: &mut Context<Self>) {
         keys.extend(
-            self.board_embed_loading_keys
+            self.embeds
+                .loading_keys
                 .iter()
                 .copied()
-                .filter(|key| self.board_embed_states.contains_key(key)),
+                .filter(|key| self.embeds.states.contains_key(key)),
         );
-        self.board_embed_loading_keys = keys.clone();
-        self.board_embed_generation = self.board_embed_generation.saturating_add(1);
-        let generation = self.board_embed_generation;
+        self.embeds.loading_keys = keys.clone();
+        let generation = self.embeds.request.begin();
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        self._board_embed_task = Some(cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {
                 tokio::select! {
@@ -472,11 +472,11 @@ impl DocumentEditorView {
             let result = load.await;
             drop(cancel_on_drop);
             this.update(cx, |this, cx| {
-                if this.board_embed_generation != generation {
+                if this.embeds.request.generation() != generation {
                     return;
                 }
-                let loading_keys = std::mem::take(&mut this.board_embed_loading_keys);
-                let mut merged = this.board_embed_states.as_ref().clone();
+                let loading_keys = std::mem::take(&mut this.embeds.loading_keys);
+                let mut merged = this.embeds.states.as_ref().clone();
                 match result {
                     Ok(Some(states)) => {
                         for (key, state) in states {
@@ -492,11 +492,12 @@ impl DocumentEditorView {
                         }
                     }
                 }
-                this.board_embed_states = Arc::new(merged);
+                this.embeds.states = Arc::new(merged);
                 cx.notify();
             })
             .ok();
-        }));
+        });
+        self.embeds.request.set_task(task);
         cx.notify();
     }
 }

@@ -17,7 +17,8 @@ impl BoardView {
             None => SharedString::from("This card is no longer available."),
         };
         let source_project_id = selected_entry.and_then(|(_, entry)| {
-            self.workspace_link_catalog
+            self.related_notes
+                .catalog
                 .iter()
                 .find(|candidate| {
                     candidate.item.kind == storage::workspace_links::WorkspaceItemKind::Card
@@ -28,7 +29,7 @@ impl BoardView {
         let wikilink_plugin = crate::document_editor::links::WikiLinkPreviewPlugin::new_for_board(
             cx.entity(),
             source_project_id,
-            self.workspace_link_catalog.clone(),
+            self.related_notes.catalog.clone(),
         );
         let placeholder_description = description.clone();
 

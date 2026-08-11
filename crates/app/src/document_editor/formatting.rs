@@ -25,7 +25,7 @@ impl DocumentEditorView {
         let selection = vim_selection.clone().unwrap_or(input_selection);
         let background = cx.background_executor().clone();
 
-        self._format_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self.persistence.format_task = Some(cx.spawn_in(window, async move |this, cx| {
             let (source, result) = background
                 .spawn(async move {
                     let result = format_document_text(kind, &source);

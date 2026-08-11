@@ -3,8 +3,9 @@ use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
     pub(crate) fn active_note_view(&self) -> Option<Entity<DocumentEditorView>> {
-        self.open_tabs
-            .get(self.active_tab_index)
+        self.tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
             .and_then(|tab| match &tab.kind {
                 OpenTabKind::Note { view, .. } => Some(view.clone()),
                 _ => None,
@@ -22,7 +23,7 @@ impl AppShell {
                 note_id,
                 source_offset,
             } => {
-                let Some(note) = self.notes.iter().find(|note| note.id == note_id) else {
+                let Some(note) = self.workspace.notes.iter().find(|note| note.id == note_id) else {
                     window.push_notification(
                         Notification::warning("The linked note is no longer available."),
                         cx,
@@ -31,7 +32,7 @@ impl AppShell {
                 };
                 self.open_note_tab(note_id, note.project_id, note.title.clone(), window, cx);
                 if let Some(offset) = source_offset
-                    && let Some(view) = self.note_views.get(&note_id)
+                    && let Some(view) = self.tabs.note_views.get(&note_id)
                 {
                     view.update(cx, |editor, cx| {
                         editor.navigate_to_offset(offset, window, cx)
@@ -39,7 +40,12 @@ impl AppShell {
                 }
             }
             crate::workspace_navigation::WorkspaceNavigationTarget::Board { board_id, .. } => {
-                let Some(board) = self.boards.iter().find(|board| board.id == board_id) else {
+                let Some(board) = self
+                    .workspace
+                    .boards
+                    .iter()
+                    .find(|board| board.id == board_id)
+                else {
                     window.push_notification(
                         Notification::warning("The linked board is no longer available."),
                         cx,
@@ -62,23 +68,25 @@ impl AppShell {
     }
 
     pub(super) fn cancel_pending_board_open(&mut self) {
-        let Some(pending) = self.pending_board_open.take() else {
+        let Some(pending) = self.workspace.pending_board_open.take() else {
             return;
         };
         if let Some(index) = self
+            .tabs
             .open_tabs
             .iter()
             .position(|tab| tab.id == pending.tab_id)
         {
-            self.open_tabs.remove(index);
-            if self.active_tab_index > index {
-                self.active_tab_index -= 1;
+            self.tabs.open_tabs.remove(index);
+            if self.tabs.active_tab_index > index {
+                self.tabs.active_tab_index -= 1;
             }
         }
     }
 
     pub(super) fn persist_tab_session(&mut self, cx: &mut Context<Self>) {
         let tabs = self
+            .tabs
             .open_tabs
             .iter()
             .map(|tab| match &tab.kind {
@@ -106,18 +114,18 @@ impl AppShell {
             .collect();
         let session = TabSession {
             tabs,
-            active_tab_index: self.active_tab_index,
-            active_project_id: self.active_project_id,
+            active_tab_index: self.tabs.active_tab_index,
+            active_project_id: self.workspace.active_project_id,
         };
         AppSettings::set_tab_session(session, cx);
     }
 
     pub(crate) fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_board_open();
-        let index = self.open_tabs.len();
-        let id = self.next_tab_id;
-        self.next_tab_id = self.next_tab_id.saturating_add(1);
-        self.open_tabs.push(OpenTab {
+        let index = self.tabs.open_tabs.len();
+        let id = self.tabs.next_tab_id;
+        self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+        self.tabs.open_tabs.push(OpenTab {
             id,
             title: "Home".into(),
             kind: OpenTabKind::Chooser,
@@ -126,7 +134,7 @@ impl AppShell {
     }
 
     pub(super) fn sync_sidebar_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.open_tabs.get(self.active_tab_index) {
+        if let Some(tab) = self.tabs.open_tabs.get(self.tabs.active_tab_index) {
             match &tab.kind {
                 OpenTabKind::Board {
                     board_id,
@@ -172,21 +180,23 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if index >= self.open_tabs.len() {
+        if index >= self.tabs.open_tabs.len() {
             return;
         }
 
-        let target_tab_id = self.open_tabs[index].id;
+        let target_tab_id = self.tabs.open_tabs[index].id;
         if self
+            .workspace
             .pending_board_open
             .as_ref()
             .is_some_and(|pending| target_tab_id == pending.tab_id)
         {
             return;
         }
-        if self.pending_board_open.is_some() {
+        if self.workspace.pending_board_open.is_some() {
             self.cancel_pending_board_open();
             let Some(updated_index) = self
+                .tabs
                 .open_tabs
                 .iter()
                 .position(|tab| tab.id == target_tab_id)
@@ -196,8 +206,8 @@ impl AppShell {
             index = updated_index;
         }
 
-        self.active_tab_index = index;
-        let tab = &self.open_tabs[index];
+        self.tabs.active_tab_index = index;
+        let tab = &self.tabs.open_tabs[index];
 
         match &tab.kind {
             OpenTabKind::Board {
@@ -205,14 +215,14 @@ impl AppShell {
                 project_id,
                 ..
             } => {
-                self.active_project_id = *project_id;
+                self.workspace.active_project_id = *project_id;
             }
             OpenTabKind::Note {
                 note_id: _,
                 project_id,
                 ..
             } => {
-                self.active_project_id = *project_id;
+                self.workspace.active_project_id = *project_id;
             }
             OpenTabKind::Chooser | OpenTabKind::Trash => {}
         }
@@ -231,11 +241,12 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         self.cancel_pending_board_open();
-        self.active_project_id = Some(project_id);
+        self.workspace.active_project_id = Some(project_id);
 
         if matches!(
-            self.open_tabs
-                .get(self.active_tab_index)
+            self.tabs
+                .open_tabs
+                .get(self.tabs.active_tab_index)
                 .map(|tab| &tab.kind),
             Some(OpenTabKind::Chooser)
         ) {
@@ -246,6 +257,7 @@ impl AppShell {
         }
 
         if let Some(index) = self
+            .tabs
             .open_tabs
             .iter()
             .position(|tab| matches!(tab.kind, OpenTabKind::Chooser))
@@ -254,10 +266,10 @@ impl AppShell {
             return;
         }
 
-        let index = self.open_tabs.len();
-        let id = self.next_tab_id;
-        self.next_tab_id = self.next_tab_id.saturating_add(1);
-        self.open_tabs.push(OpenTab {
+        let index = self.tabs.open_tabs.len();
+        let id = self.tabs.next_tab_id;
+        self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+        self.tabs.open_tabs.push(OpenTab {
             id,
             title: "Home".into(),
             kind: OpenTabKind::Chooser,
@@ -266,35 +278,36 @@ impl AppShell {
     }
 
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.open_tabs.len() {
+        if index >= self.tabs.open_tabs.len() {
             return;
         }
 
-        let closing_tab_id = self.open_tabs[index].id;
+        let closing_tab_id = self.tabs.open_tabs[index].id;
         if self
+            .workspace
             .pending_board_open
             .as_ref()
             .is_some_and(|pending| pending.tab_id == closing_tab_id)
         {
-            self.pending_board_open = None;
+            self.workspace.pending_board_open = None;
         }
-        let was_active = self.active_tab_index == index;
-        self.open_tabs.remove(index);
-        if self.open_tabs.is_empty() {
-            self.open_tabs.push(OpenTab {
-                id: self.next_tab_id,
+        let was_active = self.tabs.active_tab_index == index;
+        self.tabs.open_tabs.remove(index);
+        if self.tabs.open_tabs.is_empty() {
+            self.tabs.open_tabs.push(OpenTab {
+                id: self.tabs.next_tab_id,
                 title: "Home".into(),
                 kind: OpenTabKind::Chooser,
             });
-            self.next_tab_id = self.next_tab_id.saturating_add(1);
-            self.active_tab_index = 0;
-        } else if self.active_tab_index >= self.open_tabs.len() {
-            self.active_tab_index = self.open_tabs.len().saturating_sub(1);
-        } else if self.active_tab_index > index {
-            self.active_tab_index -= 1;
+            self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+            self.tabs.active_tab_index = 0;
+        } else if self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
+            self.tabs.active_tab_index = self.tabs.open_tabs.len().saturating_sub(1);
+        } else if self.tabs.active_tab_index > index {
+            self.tabs.active_tab_index -= 1;
         }
 
-        if was_active || self.active_tab_index >= self.open_tabs.len() {
+        if was_active || self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
             self.sync_sidebar_active(cx);
         }
         self.prune_closed_saved_note_views(cx);
@@ -305,7 +318,7 @@ impl AppShell {
     }
 
     pub(super) fn close_tab_by_id(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.open_tabs.iter().position(|tab| tab.id == id) {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| tab.id == id) {
             self.close_tab(index, window, cx);
         }
     }
@@ -317,6 +330,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let tab_indexes = self
+            .tabs
             .open_tabs
             .iter()
             .enumerate()
@@ -344,16 +358,16 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_tabs.retain(|tab| tab.id == id);
-        if self.open_tabs.is_empty() {
-            self.open_tabs.push(OpenTab {
-                id: self.next_tab_id,
+        self.tabs.open_tabs.retain(|tab| tab.id == id);
+        if self.tabs.open_tabs.is_empty() {
+            self.tabs.open_tabs.push(OpenTab {
+                id: self.tabs.next_tab_id,
                 title: "Home".into(),
                 kind: OpenTabKind::Chooser,
             });
-            self.next_tab_id = self.next_tab_id.saturating_add(1);
+            self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         }
-        self.active_tab_index = 0;
+        self.tabs.active_tab_index = 0;
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
@@ -363,15 +377,15 @@ impl AppShell {
     }
 
     pub(crate) fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.pending_board_open = None;
-        self.open_tabs.clear();
-        self.open_tabs.push(OpenTab {
-            id: self.next_tab_id,
+        self.workspace.pending_board_open = None;
+        self.tabs.open_tabs.clear();
+        self.tabs.open_tabs.push(OpenTab {
+            id: self.tabs.next_tab_id,
             title: "Home".into(),
             kind: OpenTabKind::Chooser,
         });
-        self.next_tab_id = self.next_tab_id.saturating_add(1);
-        self.active_tab_index = 0;
+        self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+        self.tabs.active_tab_index = 0;
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
@@ -381,29 +395,30 @@ impl AppShell {
     }
 
     pub(super) fn cycle_next_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.open_tabs.len() <= 1 {
+        if self.tabs.open_tabs.len() <= 1 {
             return;
         }
-        let next = (self.active_tab_index + 1) % self.open_tabs.len();
+        let next = (self.tabs.active_tab_index + 1) % self.tabs.open_tabs.len();
         self.activate_tab(next, window, cx);
     }
 
     pub(super) fn cycle_prev_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.open_tabs.len() <= 1 {
+        if self.tabs.open_tabs.len() <= 1 {
             return;
         }
-        let prev = if self.active_tab_index == 0 {
-            self.open_tabs.len() - 1
+        let prev = if self.tabs.active_tab_index == 0 {
+            self.tabs.open_tabs.len() - 1
         } else {
-            self.active_tab_index - 1
+            self.tabs.active_tab_index - 1
         };
         self.activate_tab(prev, window, cx);
     }
 
     pub(super) fn sync_title_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let title = self
+            .tabs
             .open_tabs
-            .get(self.active_tab_index)
+            .get(self.tabs.active_tab_index)
             .map(|tab| tab.title.to_string())
             .unwrap_or_else(|| "Home".to_string());
 
@@ -420,7 +435,7 @@ impl AppShell {
             return;
         }
 
-        let Some(tab) = self.open_tabs.get_mut(self.active_tab_index) else {
+        let Some(tab) = self.tabs.open_tabs.get_mut(self.tabs.active_tab_index) else {
             return;
         };
 
@@ -449,7 +464,8 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let generation = self
-            .pending_workspace_title_saves
+            .workspace
+            .pending_title_saves
             .entry(target)
             .and_modify(|pending| {
                 pending.generation = pending.generation.saturating_add(1);
@@ -462,7 +478,7 @@ impl AppShell {
             .generation;
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        let save_lock = self.workspace_title_save_lock.clone();
+        let save_lock = self.workspace.title_save_lock.clone();
 
         cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -470,7 +486,8 @@ impl AppShell {
                 .await;
             let is_current = this
                 .read_with(cx, |this, _| {
-                    this.pending_workspace_title_saves
+                    this.workspace
+                        .pending_title_saves
                         .get(&target)
                         .is_some_and(|pending| pending.generation == generation)
                 })
@@ -488,19 +505,20 @@ impl AppShell {
 
             this.update(cx, |this, cx| {
                 if this
-                    .pending_workspace_title_saves
+                    .workspace
+                    .pending_title_saves
                     .get(&target)
                     .is_none_or(|pending| pending.generation != generation)
                 {
                     return;
                 }
-                this.pending_workspace_title_saves.remove(&target);
+                this.workspace.pending_title_saves.remove(&target);
 
                 match result {
                     Ok(Ok(update)) => {
                         if let WorkspaceTitleTarget::Note(note_id) = target
                             && let Some(view) =
-                                this.open_tabs.iter().find_map(|tab| match &tab.kind {
+                                this.tabs.open_tabs.iter().find_map(|tab| match &tab.kind {
                                     OpenTabKind::Note {
                                         note_id: open_note_id,
                                         view,
@@ -534,13 +552,13 @@ impl AppShell {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> + use<> {
-        let pending = std::mem::take(&mut self.pending_workspace_title_saves)
+        let pending = std::mem::take(&mut self.workspace.pending_title_saves)
             .into_iter()
             .map(|(target, pending)| (target, pending.title))
             .collect::<Vec<_>>();
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        let save_lock = self.workspace_title_save_lock.clone();
+        let save_lock = self.workspace.title_save_lock.clone();
 
         async move {
             if pending.is_empty() {
@@ -576,6 +594,7 @@ impl AppShell {
     ) -> Entity<BoardView> {
         self.record_item_opened(crate::home::WorkspaceItemKind::Board, board_id, cx);
         if let Some(pending) = self
+            .workspace
             .pending_board_open
             .as_ref()
             .filter(|pending| pending.board_id == board_id)
@@ -584,7 +603,8 @@ impl AppShell {
         }
 
         if let Some((index, view)) =
-            self.open_tabs
+            self.tabs
+                .open_tabs
                 .iter()
                 .enumerate()
                 .find_map(|(index, tab)| match &tab.kind {
@@ -603,13 +623,14 @@ impl AppShell {
         let view = BoardView::view(window, cx);
         Self::observe_board_view(&view, window, cx);
         let replaced_chooser_id = self
+            .tabs
             .open_tabs
-            .get(self.active_tab_index)
+            .get(self.tabs.active_tab_index)
             .filter(|tab| matches!(tab.kind, OpenTabKind::Chooser))
             .map(|tab| tab.id);
-        let tab_id = self.next_tab_id;
-        self.next_tab_id = self.next_tab_id.saturating_add(1);
-        self.open_tabs.push(OpenTab {
+        let tab_id = self.tabs.next_tab_id;
+        self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+        self.tabs.open_tabs.push(OpenTab {
             id: tab_id,
             title,
             kind: OpenTabKind::Board {
@@ -618,7 +639,7 @@ impl AppShell {
                 view: view.clone(),
             },
         });
-        self.pending_board_open = Some(PendingBoardOpen {
+        self.workspace.pending_board_open = Some(PendingBoardOpen {
             board_id,
             view: view.clone(),
             tab_id,
@@ -634,18 +655,23 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(pending) = self.pending_board_open.take() else {
+        let Some(pending) = self.workspace.pending_board_open.take() else {
             return;
         };
         if let Some(chooser_id) = pending.replaced_chooser_id
-            && let Some(index) = self.open_tabs.iter().position(|tab| tab.id == chooser_id)
+            && let Some(index) = self
+                .tabs
+                .open_tabs
+                .iter()
+                .position(|tab| tab.id == chooser_id)
         {
-            self.open_tabs.remove(index);
-            if self.active_tab_index > index {
-                self.active_tab_index -= 1;
+            self.tabs.open_tabs.remove(index);
+            if self.tabs.active_tab_index > index {
+                self.tabs.active_tab_index -= 1;
             }
         }
         if let Some(index) = self
+            .tabs
             .open_tabs
             .iter()
             .position(|tab| tab.id == pending.tab_id)
@@ -664,19 +690,19 @@ impl AppShell {
     ) {
         self.cancel_pending_board_open();
         self.record_item_opened(crate::home::WorkspaceItemKind::Note, note_id, cx);
-        if let Some(index) = self.open_tabs.iter().position(
+        if let Some(index) = self.tabs.open_tabs.iter().position(
             |tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == note_id),
         ) {
             self.activate_tab(index, window, cx);
             return;
         }
 
-        let view = if let Some(view) = self.note_views.get(&note_id) {
+        let view = if let Some(view) = self.tabs.note_views.get(&note_id) {
             view.clone()
         } else {
             let view = DocumentEditorView::view(note_id, window, cx);
             Self::observe_document_editor(&view, window, cx);
-            self.note_views.insert(note_id, view.clone());
+            self.tabs.note_views.insert(note_id, view.clone());
             view
         };
         self.replace_or_push_active(
@@ -692,8 +718,8 @@ impl AppShell {
     }
 
     fn prune_closed_saved_note_views(&mut self, cx: &App) {
-        let open_tabs = &self.open_tabs;
-        self.note_views.retain(|note_id, view| {
+        let open_tabs = &self.tabs.open_tabs;
+        self.tabs.note_views.retain(|note_id, view| {
             open_tabs.iter().any(|tab| {
                 matches!(
                     &tab.kind,
@@ -713,7 +739,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(tab) = self.open_tabs.get_mut(self.active_tab_index)
+        if let Some(tab) = self.tabs.open_tabs.get_mut(self.tabs.active_tab_index)
             && matches!(tab.kind, OpenTabKind::Chooser)
         {
             tab.kind = kind;
@@ -725,10 +751,10 @@ impl AppShell {
             return;
         }
 
-        let index = self.open_tabs.len();
-        let id = self.next_tab_id;
-        self.next_tab_id = self.next_tab_id.saturating_add(1);
-        self.open_tabs.push(OpenTab { id, title, kind });
+        let index = self.tabs.open_tabs.len();
+        let id = self.tabs.next_tab_id;
+        self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
+        self.tabs.open_tabs.push(OpenTab { id, title, kind });
         self.activate_tab(index, window, cx);
     }
 }

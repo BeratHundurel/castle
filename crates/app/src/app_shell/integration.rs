@@ -414,7 +414,7 @@ impl AppShell {
                         }
                         block.push_str(&format!("title = \"{title}\"\n```"));
                         app.update(cx, |this, cx| {
-                            if let Some(editor) = this.note_views.get(&note_id) {
+                            if let Some(editor) = this.tabs.note_views.get(&note_id) {
                                 editor.update(cx, |editor, cx| {
                                     editor.insert_text_at_selection(&block, window, cx);
                                 });

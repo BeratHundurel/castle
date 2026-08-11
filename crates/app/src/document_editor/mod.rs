@@ -86,32 +86,23 @@ enum DocumentInspectorTab {
     Links,
 }
 
-pub(crate) struct DocumentEditorView {
-    note_id: u32,
-    title: SharedString,
-    focus_handle: FocusHandle,
-    editor: Entity<InputState>,
-    kind: DocumentKind,
-    mode: EditorMode,
-    vim: VimState,
-    vim_search_active: bool,
+struct PersistenceState {
     current_path: Option<PathBuf>,
     file_managed_by_app: bool,
     save_state: SaveState,
     load_error: Option<SharedString>,
-    stats: DocumentStats,
     is_loading: bool,
     suppress_editor_events: bool,
     auto_save_format_change: Option<SharedString>,
     auto_save_epoch: u64,
-    _load_task: Option<Task<()>>,
-    _auto_save_task: Option<Task<()>>,
-    _format_task: Option<Task<()>>,
-    analysis_generation: u64,
-    _analysis_task: Option<Task<()>>,
-    emmet_input: Entity<InputState>,
-    show_emmet_input: bool,
-    emmet_replacement_range: Option<Range<usize>>,
+    load_task: Option<Task<()>>,
+    auto_save_task: Option<Task<()>>,
+    format_task: Option<Task<()>>,
+}
+
+struct AnalysisState {
+    stats: DocumentStats,
+    request: crate::request_tracker::RequestTracker,
     source_bounds: Option<Bounds<Pixels>>,
     outline: DocumentOutline,
     outline_rows: Arc<Vec<OutlineRow>>,
@@ -121,28 +112,53 @@ pub(crate) struct DocumentEditorView {
     outline_selected: Option<usize>,
     outline_navigation_generation: u64,
     outline_source_highlight: Option<OutlineSourceHighlight>,
-    _outline_source_highlight_task: Option<Task<()>>,
+    outline_source_highlight_task: Option<Task<()>>,
     preview_list_state: gpui::ListState,
     preview_font_size_bits: Cell<u64>,
     outline_scroll_handle: UniformListScrollHandle,
     outline_focus_handle: FocusHandle,
-    inspector_tab: DocumentInspectorTab,
+}
+
+struct InspectorLinksState {
+    tab: DocumentInspectorTab,
     note_links: Arc<storage::note_links::NoteLinkSet>,
-    note_link_catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
+    note_catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
     workspace_links: Arc<storage::workspace_links::NoteWorkspaceLinks>,
-    workspace_link_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
-    workspace_relation_signature: Vec<String>,
+    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    relation_signature: Vec<String>,
     project_id: Option<i64>,
-    wikilink_completion_provider: links::WikiLinkCompletionProvider,
-    note_links_loading: bool,
-    note_links_error: Option<SharedString>,
-    note_links_generation: u64,
-    _note_links_task: Option<Task<()>>,
-    board_embed_states:
-        Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
-    board_embed_generation: u64,
-    board_embed_loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
-    _board_embed_task: Option<Task<()>>,
+    completion_provider: links::WikiLinkCompletionProvider,
+    loading: bool,
+    error: Option<SharedString>,
+    request: crate::request_tracker::RequestTracker,
+}
+
+struct EmbedStateGroup {
+    states: Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
+    request: crate::request_tracker::RequestTracker,
+    loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
+}
+
+struct VimSessionState {
+    state: VimState,
+    search_active: bool,
+}
+
+pub(crate) struct DocumentEditorView {
+    note_id: u32,
+    title: SharedString,
+    focus_handle: FocusHandle,
+    editor: Entity<InputState>,
+    kind: DocumentKind,
+    mode: EditorMode,
+    vim_state: VimSessionState,
+    persistence: PersistenceState,
+    analysis: AnalysisState,
+    emmet_input: Entity<InputState>,
+    show_emmet_input: bool,
+    emmet_replacement_range: Option<Range<usize>>,
+    inspector_links: InspectorLinksState,
+    embeds: EmbedStateGroup,
     pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
@@ -195,12 +211,15 @@ impl DocumentEditorView {
             window,
             |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
-                    if !this.suppress_editor_events && !this.consume_auto_save_format_change(cx) {
+                    if !this.persistence.suppress_editor_events
+                        && !this.consume_auto_save_format_change(cx)
+                    {
                         this.update_from_editor(window, cx);
                     }
                 }
                 InputEvent::PressEnter { .. }
-                    if !this.suppress_editor_events && this.kind == DocumentKind::Markdown =>
+                    if !this.persistence.suppress_editor_events
+                        && this.kind == DocumentKind::Markdown =>
                 {
                     this.continue_markdown_after_enter(window, cx);
                 }
@@ -219,56 +238,67 @@ impl DocumentEditorView {
             editor,
             kind: DocumentKind::PlainText,
             mode: EditorMode::Source,
-            vim: VimState::new(vim_enabled),
-            vim_search_active: false,
-            current_path: None,
-            file_managed_by_app: false,
-            save_state: SaveState::Saved,
-            load_error: None,
-            stats: DocumentStats::from_text(""),
-            is_loading: true,
-            suppress_editor_events: false,
-            auto_save_format_change: None,
-            auto_save_epoch: 0,
-            _load_task: Some(load_task),
-            _auto_save_task: None,
-            _format_task: None,
-            analysis_generation: 0,
-            _analysis_task: None,
+            vim_state: VimSessionState {
+                state: VimState::new(vim_enabled),
+                search_active: false,
+            },
+            persistence: PersistenceState {
+                current_path: None,
+                file_managed_by_app: false,
+                save_state: SaveState::Saved,
+                load_error: None,
+                is_loading: true,
+                suppress_editor_events: false,
+                auto_save_format_change: None,
+                auto_save_epoch: 0,
+                load_task: Some(load_task),
+                auto_save_task: None,
+                format_task: None,
+            },
+            analysis: AnalysisState {
+                stats: DocumentStats::from_text(""),
+                request: crate::request_tracker::RequestTracker::default(),
+                source_bounds: None,
+                outline: DocumentOutline::None,
+                outline_rows: Arc::new(Vec::new()),
+                outline_visible,
+                outline_rendered: false,
+                outline_transition_epoch: 0,
+                outline_selected: None,
+                outline_navigation_generation: 0,
+                outline_source_highlight: None,
+                outline_source_highlight_task: None,
+                preview_list_state: gpui::ListState::new(
+                    0,
+                    gpui::ListAlignment::Top,
+                    gpui::px(2_048.),
+                )
+                .measure_all(),
+                preview_font_size_bits: Cell::new(preview_font_size_bits),
+                outline_scroll_handle: UniformListScrollHandle::default(),
+                outline_focus_handle,
+            },
             emmet_input,
             show_emmet_input: false,
             emmet_replacement_range: None,
-            source_bounds: None,
-            outline: DocumentOutline::None,
-            outline_rows: Arc::new(Vec::new()),
-            outline_visible,
-            outline_rendered: false,
-            outline_transition_epoch: 0,
-            outline_selected: None,
-            outline_navigation_generation: 0,
-            outline_source_highlight: None,
-            _outline_source_highlight_task: None,
-            preview_list_state: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2_048.))
-                .measure_all(),
-            preview_font_size_bits: Cell::new(preview_font_size_bits),
-            outline_scroll_handle: UniformListScrollHandle::default(),
-            outline_focus_handle,
-            inspector_tab: DocumentInspectorTab::Outline,
-            note_links: Arc::new(storage::note_links::NoteLinkSet::default()),
-            note_link_catalog: Arc::new(Vec::new()),
-            workspace_links: Arc::new(storage::workspace_links::NoteWorkspaceLinks::default()),
-            workspace_link_catalog: Arc::new(Vec::new()),
-            workspace_relation_signature: Vec::new(),
-            project_id: None,
-            wikilink_completion_provider,
-            note_links_loading: true,
-            note_links_error: None,
-            note_links_generation: 1,
-            _note_links_task: Some(note_links_task),
-            board_embed_states: Arc::new(std::collections::HashMap::new()),
-            board_embed_generation: 0,
-            board_embed_loading_keys: std::collections::HashSet::new(),
-            _board_embed_task: None,
+            inspector_links: InspectorLinksState {
+                tab: DocumentInspectorTab::Outline,
+                note_links: Arc::new(storage::note_links::NoteLinkSet::default()),
+                note_catalog: Arc::new(Vec::new()),
+                workspace_links: Arc::new(storage::workspace_links::NoteWorkspaceLinks::default()),
+                workspace_catalog: Arc::new(Vec::new()),
+                relation_signature: Vec::new(),
+                project_id: None,
+                completion_provider: wikilink_completion_provider,
+                loading: true,
+                error: None,
+                request: crate::request_tracker::RequestTracker::with_task(1, note_links_task),
+            },
+            embeds: EmbedStateGroup {
+                states: Arc::new(std::collections::HashMap::new()),
+                request: crate::request_tracker::RequestTracker::default(),
+                loading_keys: std::collections::HashSet::new(),
+            },
             pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
@@ -277,7 +307,7 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn save_state(&self) -> SaveState {
-        self.save_state.clone()
+        self.persistence.save_state.clone()
     }
 
     pub(crate) fn reload_after_external_change(
@@ -285,13 +315,13 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.save_state != SaveState::Saved {
+        if self.persistence.save_state != SaveState::Saved {
             return;
         }
 
-        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
-        self.is_loading = true;
-        self._load_task = Some(Self::load_note_async(self.note_id, window, cx));
+        self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
+        self.persistence.is_loading = true;
+        self.persistence.load_task = Some(Self::load_note_async(self.note_id, window, cx));
         self.refresh_note_links(cx);
         cx.notify();
     }
@@ -349,7 +379,7 @@ impl DocumentEditorView {
 
     #[cfg(test)]
     pub(crate) fn loaded_content(&self, cx: &App) -> Option<String> {
-        (!self.is_loading).then(|| self.editor.read(cx).value().to_string())
+        (!self.persistence.is_loading).then(|| self.editor.read(cx).value().to_string())
     }
 
     #[cfg(test)]
@@ -359,10 +389,10 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.suppress_editor_events = true;
+        self.persistence.suppress_editor_events = true;
         self.editor
             .update(cx, |editor, cx| editor.set_value(content, window, cx));
-        self.suppress_editor_events = false;
+        self.persistence.suppress_editor_events = false;
         self.update_from_editor(window, cx);
     }
 
@@ -378,12 +408,12 @@ impl DocumentEditorView {
 
     pub(crate) fn apply_file_path(&mut self, file_path: Option<String>, cx: &mut Context<Self>) {
         let file_path = file_path.map(PathBuf::from);
-        if self.current_path == file_path {
+        if self.persistence.current_path == file_path {
             return;
         }
 
-        self.current_path = file_path;
-        let current_path = self.current_path.clone();
+        self.persistence.current_path = file_path;
+        let current_path = self.persistence.current_path.clone();
         self.apply_document_kind(current_path.as_deref(), cx);
         cx.emit(DocumentEditorEvent::PathChanged);
         cx.notify();
@@ -395,7 +425,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_loading {
+        if self.persistence.is_loading {
             self.pending_navigation_offset = Some(offset);
             return;
         }
@@ -450,7 +480,7 @@ impl DocumentEditorView {
         } else {
             EditorMode::Source
         };
-        self.outline_rendered = kind.supports_outline() && self.outline_visible;
+        self.analysis.outline_rendered = kind.supports_outline() && self.analysis.outline_visible;
         self.editor
             .update(cx, |editor, cx| editor.set_highlighter(kind.language(), cx));
         kind
@@ -460,14 +490,15 @@ impl DocumentEditorView {
         if !self.kind.supports_outline() {
             return;
         }
-        self.outline_visible = !self.outline_visible;
-        self.outline_transition_epoch = self.outline_transition_epoch.saturating_add(1);
-        let transition_epoch = self.outline_transition_epoch;
+        self.analysis.outline_visible = !self.analysis.outline_visible;
+        self.analysis.outline_transition_epoch =
+            self.analysis.outline_transition_epoch.saturating_add(1);
+        let transition_epoch = self.analysis.outline_transition_epoch;
 
-        if self.outline_visible {
-            self.outline_rendered = true;
+        if self.analysis.outline_visible {
+            self.analysis.outline_rendered = true;
             self.schedule_document_analysis(false, cx);
-            self.outline_focus_handle.focus(window, cx);
+            self.analysis.outline_focus_handle.focus(window, cx);
         } else {
             self.focus_active_mode(window, cx);
             cx.spawn(async move |this, cx| {
@@ -475,8 +506,10 @@ impl DocumentEditorView {
                     .timer(OUTLINE_TRANSITION_DURATION)
                     .await;
                 this.update(cx, |this, cx| {
-                    if this.outline_transition_epoch == transition_epoch && !this.outline_visible {
-                        this.outline_rendered = false;
+                    if this.analysis.outline_transition_epoch == transition_epoch
+                        && !this.analysis.outline_visible
+                    {
+                        this.analysis.outline_rendered = false;
                         cx.notify();
                     }
                 })
@@ -485,24 +518,27 @@ impl DocumentEditorView {
             .detach();
         }
 
-        AppSettings::set_document_outline_visible(self.outline_visible, cx);
+        AppSettings::set_document_outline_visible(self.analysis.outline_visible, cx);
         cx.notify();
     }
 
     fn select_outline_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = self.outline_rows.get(index).cloned() else {
+        let Some(item) = self.analysis.outline_rows.get(index).cloned() else {
             return;
         };
         if item.disabled {
             return;
         }
 
-        self.outline_selected = Some(index);
-        self.outline_navigation_generation = self.outline_navigation_generation.saturating_add(1);
-        let navigation_generation = self.outline_navigation_generation;
+        self.analysis.outline_selected = Some(index);
+        self.analysis.outline_navigation_generation = self
+            .analysis
+            .outline_navigation_generation
+            .saturating_add(1);
+        let navigation_generation = self.analysis.outline_navigation_generation;
         match self.mode {
             EditorMode::Source => {
-                let source_bounds = self.source_bounds;
+                let source_bounds = self.analysis.source_bounds;
                 let centered_at_document_start = self.editor.update(cx, |editor, cx| {
                     let position = editor.text().offset_to_position(item.source_offset);
                     let centers_at_document_start = source_bounds.is_some_and(|source_bounds| {
@@ -525,13 +561,15 @@ impl DocumentEditorView {
                 }
             }
             EditorMode::Preview => {
-                self.outline_source_highlight = None;
-                self._outline_source_highlight_task = None;
+                self.analysis.outline_source_highlight = None;
+                self.analysis.outline_source_highlight_task = None;
                 if let Some(section) = item.preview_section_index {
-                    self.preview_list_state.scroll_to(gpui::ListOffset {
-                        item_ix: section,
-                        offset_in_item: gpui::px(0.),
-                    });
+                    self.analysis
+                        .preview_list_state
+                        .scroll_to(gpui::ListOffset {
+                            item_ix: section,
+                            offset_in_item: gpui::px(0.),
+                        });
                 }
             }
         }
@@ -544,20 +582,21 @@ impl DocumentEditorView {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        self.outline_source_highlight = Some(OutlineSourceHighlight {
+        self.analysis.outline_source_highlight = Some(OutlineSourceHighlight {
             generation,
             source_offset,
         });
-        self._outline_source_highlight_task = Some(cx.spawn(async move |this, cx| {
+        self.analysis.outline_source_highlight_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(OUTLINE_SOURCE_HIGHLIGHT_DURATION)
                 .await;
             this.update(cx, |this, cx| {
                 if this
+                    .analysis
                     .outline_source_highlight
                     .is_some_and(|highlight| highlight.generation == generation)
                 {
-                    this.outline_source_highlight = None;
+                    this.analysis.outline_source_highlight = None;
                     cx.notify();
                 }
             })
@@ -566,20 +605,21 @@ impl DocumentEditorView {
     }
 
     fn toggle_outline_node(&mut self, row_index: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.outline_rows.get(row_index) else {
+        let Some(row) = self.analysis.outline_rows.get(row_index) else {
             return;
         };
         let Some(node_index) = row.node_index else {
             return;
         };
         let changed = if row.expanded {
-            self.outline.collapse(node_index)
+            self.analysis.outline.collapse(node_index)
         } else {
-            self.outline.expand(node_index)
+            self.analysis.outline.expand(node_index)
         };
         if changed {
             self.rebuild_outline_rows();
-            self.outline_selected = self
+            self.analysis.outline_selected = self
+                .analysis
                 .outline_rows
                 .iter()
                 .position(|candidate| candidate.node_index == Some(node_index));
@@ -589,13 +629,14 @@ impl DocumentEditorView {
 
     fn set_all_outline_nodes_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         let selected_node = self
+            .analysis
             .outline_selected
-            .and_then(|index| self.outline_rows.get(index))
+            .and_then(|index| self.analysis.outline_rows.get(index))
             .and_then(|row| row.node_index);
         let changed = if expanded {
-            self.outline.expand_all()
+            self.analysis.outline.expand_all()
         } else {
-            self.outline.collapse_all()
+            self.analysis.outline.collapse_all()
         };
         if !changed {
             return;
@@ -604,38 +645,40 @@ impl DocumentEditorView {
         let selected_node = selected_node.and_then(|node_index| {
             expanded
                 .then_some(node_index)
-                .or_else(|| self.outline.root_node_index(node_index))
+                .or_else(|| self.analysis.outline.root_node_index(node_index))
         });
         self.rebuild_outline_rows();
-        self.outline_selected = selected_node.and_then(|node_index| {
-            self.outline_rows
+        self.analysis.outline_selected = selected_node.and_then(|node_index| {
+            self.analysis
+                .outline_rows
                 .iter()
                 .position(|row| row.node_index == Some(node_index))
         });
-        if let Some(index) = self.outline_selected {
-            self.outline_scroll_handle
+        if let Some(index) = self.analysis.outline_selected {
+            self.analysis
+                .outline_scroll_handle
                 .scroll_to_item(index, gpui::ScrollStrategy::Top);
         }
         cx.notify();
     }
 
     fn rebuild_outline_rows(&mut self) {
-        self.outline_rows = Arc::new(self.outline.rows());
-        if self.outline_rows.is_empty() {
-            self.outline_selected = None;
-        } else if let Some(selected) = self.outline_selected {
-            self.outline_selected = Some(selected.min(self.outline_rows.len().saturating_sub(1)));
+        self.analysis.outline_rows = Arc::new(self.analysis.outline.rows());
+        if self.analysis.outline_rows.is_empty() {
+            self.analysis.outline_selected = None;
+        } else if let Some(selected) = self.analysis.outline_selected {
+            self.analysis.outline_selected =
+                Some(selected.min(self.analysis.outline_rows.len().saturating_sub(1)));
         }
     }
 
     fn schedule_document_analysis(&mut self, delayed: bool, cx: &mut Context<Self>) {
-        self.analysis_generation = self.analysis_generation.saturating_add(1);
-        let generation = self.analysis_generation;
+        let generation = self.analysis.request.begin();
         let kind = self.kind;
-        let analyze_json_outline = self.outline_visible;
+        let analyze_json_outline = self.analysis.outline_visible;
         let background = cx.background_executor().clone();
 
-        self._analysis_task = Some(cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             if delayed {
                 cx.background_executor()
                     .timer(DOCUMENT_ANALYSIS_DELAY)
@@ -644,8 +687,13 @@ impl DocumentEditorView {
 
             let content = this
                 .read_with(cx, |this, cx| {
-                    analysis_is_current(this.analysis_generation, this.kind, generation, kind)
-                        .then(|| this.editor.read(cx).value().to_string())
+                    analysis_is_current(
+                        this.analysis.request.generation(),
+                        this.kind,
+                        generation,
+                        kind,
+                    )
+                    .then(|| this.editor.read(cx).value().to_string())
                 })
                 .ok()
                 .flatten();
@@ -657,25 +705,33 @@ impl DocumentEditorView {
                 .spawn(async move { analyze_document(kind, content, analyze_json_outline) })
                 .await;
             this.update(cx, |this, cx| {
-                if !analysis_is_current(this.analysis_generation, this.kind, generation, kind) {
+                if !analysis_is_current(
+                    this.analysis.request.generation(),
+                    this.kind,
+                    generation,
+                    kind,
+                ) {
                     return;
                 }
 
                 let mut outline = analysis.outline;
-                outline.preserve_json_expansion_from(&this.outline);
-                this.stats = analysis.stats;
-                this.outline = outline;
+                outline.preserve_json_expansion_from(&this.analysis.outline);
+                this.analysis.stats = analysis.stats;
+                this.analysis.outline = outline;
                 this.rebuild_outline_rows();
-                this.preview_list_state.remeasure();
+                this.analysis.preview_list_state.remeasure();
                 let cursor_line = this.editor.read(cx).cursor_position().line as usize;
                 if this.kind == DocumentKind::Markdown {
-                    this.outline_selected =
-                        this.outline.active_markdown_index_for_line(cursor_line);
+                    this.analysis.outline_selected = this
+                        .analysis
+                        .outline
+                        .active_markdown_index_for_line(cursor_line);
                 }
                 cx.notify();
             })
             .ok();
-        }));
+        });
+        self.analysis.request.set_task(task);
     }
 
     fn align_source_heading_after_layout(
@@ -691,11 +747,11 @@ impl DocumentEditorView {
 
                 let aligned = this
                     .update(cx, |this, cx| {
-                        if this.outline_navigation_generation != navigation_generation {
+                        if this.analysis.outline_navigation_generation != navigation_generation {
                             return true;
                         }
 
-                        let Some(source_bounds) = this.source_bounds else {
+                        let Some(source_bounds) = this.analysis.source_bounds else {
                             return false;
                         };
 
@@ -726,7 +782,7 @@ impl DocumentEditorView {
                         .timer(OUTLINE_SCROLL_LAYOUT_DELAY)
                         .await;
                     this.update(cx, |this, cx| {
-                        if this.outline_navigation_generation == navigation_generation {
+                        if this.analysis.outline_navigation_generation == navigation_generation {
                             cx.notify();
                         }
                     })
@@ -848,7 +904,7 @@ mod tests {
 
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1120,7 +1176,7 @@ mod tests {
 
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1129,8 +1185,8 @@ mod tests {
         cx.update(|window, cx| {
             view.update(cx, |editor, cx| {
                 editor.kind = DocumentKind::Json;
-                editor.outline = DocumentOutline::Json(JsonOutline::parse(content));
-                editor.outline.expand_all();
+                editor.analysis.outline = DocumentOutline::Json(JsonOutline::parse(content));
+                editor.analysis.outline.expand_all();
                 editor.rebuild_outline_rows();
                 editor.editor.update(cx, |input, cx| {
                     input.set_cursor_position(
@@ -1146,6 +1202,7 @@ mod tests {
         let target_index = view
             .read_with(&cx, |editor, _| {
                 editor
+                    .analysis
                     .outline_rows
                     .iter()
                     .position(|row| row.title.starts_with("colors  ·"))

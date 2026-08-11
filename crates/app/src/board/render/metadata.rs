@@ -3,9 +3,9 @@ use std::cmp::Ordering;
 
 impl BoardView {
     pub(in crate::board) fn selected_entry(&self) -> Option<(&str, &BoardCardDTO)> {
-        let entry_id = self.entry_dialog.entry_id?;
+        let entry_id = self.entry_editing.dialog.entry_id?;
 
-        self.cards.iter().find_map(|card| {
+        self.data.lists.iter().find_map(|card| {
             card.entries
                 .iter()
                 .find(|entry| entry.id == entry_id)
@@ -16,9 +16,9 @@ impl BoardView {
     pub(super) fn entry_matches_filters(&self, entry: &BoardCardDTO) -> bool {
         storage::board_projection::entry_matches_view(
             entry,
-            &self.active_view_config,
-            &self.property_values,
-            &self.board_properties.definitions,
+            &self.properties.active_view_config,
+            &self.properties.values,
+            &self.properties.data.definitions,
             Local::now().date_naive(),
         )
     }
@@ -28,7 +28,8 @@ impl BoardView {
         left: &BoardCardDTO,
         right: &BoardCardDTO,
     ) -> Ordering {
-        self.active_view_config
+        self.properties
+            .active_view_config
             .sort
             .as_ref()
             .map_or(Ordering::Equal, |sort| {
@@ -36,8 +37,8 @@ impl BoardView {
                     left,
                     right,
                     sort,
-                    &self.property_values,
-                    &self.board_properties.definitions,
+                    &self.properties.values,
+                    &self.properties.data.definitions,
                 )
             })
     }

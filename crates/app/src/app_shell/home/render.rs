@@ -2,9 +2,12 @@ use super::*;
 
 impl AppShell {
     pub(in crate::app_shell) fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_project = self
-            .active_project_id
-            .and_then(|id| self.projects.iter().find(|project| project.id == id));
+        let active_project = self.workspace.active_project_id.and_then(|id| {
+            self.workspace
+                .projects
+                .iter()
+                .find(|project| project.id == id)
+        });
         let active_project_id = active_project.map(|project| project.id);
 
         v_flex()
@@ -90,7 +93,7 @@ impl AppShell {
                                             .child(section_title("Pinned", "Keep close", cx))
                                             .child(self.render_home_items(
                                                 "home-pinned",
-                                                &self.home_state.pinned,
+                                                &self.home.data.pinned,
                                                 "Pin notes or boards from their item menu.",
                                                 cx,
                                             )),
@@ -101,7 +104,7 @@ impl AppShell {
                                             .child(section_title("Recent", "Last opened", cx))
                                             .child(self.render_home_items(
                                                 "home-recent",
-                                                &self.home_state.recent,
+                                                &self.home.data.recent,
                                                 "Open a note or board and it will appear here.",
                                                 cx,
                                             )),
@@ -112,7 +115,7 @@ impl AppShell {
     }
 
     pub(in crate::app_shell) fn render_today(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if self.home_refreshing && !self.home_loaded {
+        if self.home.phase.is_loading() && !self.home.phase.has_content() {
             return v_flex()
                 .gap_2()
                 .children((0_usize..3).map(|index| {
@@ -124,11 +127,11 @@ impl AppShell {
                 }))
                 .into_any_element();
         }
-        if let Some(error) = self.home_error.clone() {
+        if let Some(error) = self.home.phase.error() {
             return inline_retry(error, cx.listener(|this, _, _, cx| this.load_home(cx)), cx)
                 .into_any_element();
         }
-        if self.home_state.today.is_empty() {
+        if self.home.data.today.is_empty() {
             return empty_state(
                 IconName::Calendar,
                 "Nothing due today",
@@ -141,7 +144,8 @@ impl AppShell {
         v_flex()
             .gap_2()
             .children(
-                self.home_state
+                self.home
+                    .data
                     .today
                     .iter()
                     .cloned()

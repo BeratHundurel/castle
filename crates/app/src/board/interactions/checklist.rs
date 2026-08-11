@@ -6,11 +6,12 @@ impl BoardView {
         title: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry_id) = self.entry_dialog.entry_id else {
+        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
         let Some(next_position) = self
-            .cards
+            .data
+            .lists
             .iter()
             .flat_map(|list| list.entries.iter())
             .find(|card| card.id == entry_id)
@@ -27,8 +28,11 @@ impl BoardView {
             return;
         };
 
-        let position = std::cmp::max(self.next_checklist_item_position, next_position);
-        self.next_checklist_item_position = position.saturating_add(1);
+        let position = std::cmp::max(
+            self.entry_editing.next_checklist_item_position,
+            next_position,
+        );
+        self.entry_editing.next_checklist_item_position = position.saturating_add(1);
 
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
@@ -47,7 +51,8 @@ impl BoardView {
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
                     let Some(entry) = this
-                        .cards
+                        .data
+                        .lists
                         .iter_mut()
                         .flat_map(|list| list.entries.iter_mut())
                         .find(|card| card.id == entry_id)
@@ -55,21 +60,21 @@ impl BoardView {
                         return;
                     };
                     entry.checklist_items.push(ChecklistItemDTO::from(inserted));
-                    this.mutation_error = None;
+                    this.mutation.mutation_error = None;
                     this.emit_data_committed(cx, false);
                     cx.notify();
                 }
                 Ok(Err(error)) => {
-                    this.mutation_error =
+                    this.mutation.mutation_error =
                         Some(format!("Could not create checklist item: {error}").into());
-                    if let Some(board_id) = this.board_id {
+                    if let Some(board_id) = this.data.board_id {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
                 Err(error) => {
-                    this.mutation_error =
+                    this.mutation.mutation_error =
                         Some(format!("Checklist creation task failed: {error}").into());
-                    if let Some(board_id) = this.board_id {
+                    if let Some(board_id) = this.data.board_id {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
@@ -86,7 +91,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(item) = self
-            .cards
+            .data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .flat_map(|card| card.checklist_items.iter_mut())
@@ -111,7 +117,8 @@ impl BoardView {
 
     pub(in crate::board) fn delete_checklist_item(&mut self, item_id: u32, cx: &mut Context<Self>) {
         for card in self
-            .cards
+            .data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
         {
@@ -132,7 +139,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(items) = self
-            .cards
+            .data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .find_map(|card| {
@@ -175,11 +183,12 @@ impl BoardView {
         title: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(item_id) = self.renaming_checklist_item_id else {
+        let Some(item_id) = self.entry_editing.renaming_checklist_item_id else {
             return;
         };
         let Some(item) = self
-            .cards
+            .data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .flat_map(|card| card.checklist_items.iter_mut())
@@ -188,7 +197,7 @@ impl BoardView {
             return;
         };
         item.title = SharedString::from(title.as_str());
-        self.renaming_checklist_item_id = None;
+        self.entry_editing.renaming_checklist_item_id = None;
         cx.notify();
         let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {

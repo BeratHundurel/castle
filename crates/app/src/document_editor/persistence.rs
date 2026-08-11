@@ -76,7 +76,7 @@ impl DocumentEditorView {
                         window,
                         cx,
                     );
-                    this.auto_save_epoch
+                    this.persistence.auto_save_epoch
                 })
                 .ok()
             } else {
@@ -117,7 +117,7 @@ impl DocumentEditorView {
 
                     this.update_in(window, |this, window, cx| {
                         if let Some(expected_epoch) = cached_epoch
-                            && this.auto_save_epoch != expected_epoch
+                            && this.persistence.auto_save_epoch != expected_epoch
                         {
                             return;
                         }
@@ -142,7 +142,7 @@ impl DocumentEditorView {
 
                     this.update_in(window, |this, window, cx| {
                         if let Some(expected_epoch) = cached_epoch
-                            && this.auto_save_epoch != expected_epoch
+                            && this.persistence.auto_save_epoch != expected_epoch
                         {
                             return;
                         }
@@ -168,38 +168,38 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.workspace_relation_signature =
+        self.inspector_links.relation_signature =
             storage::workspace_links::workspace_relation_signature(&content);
         self.title = model.title.into();
-        self.project_id = model.project_id;
-        self.current_path = model.file_path.map(PathBuf::from);
-        let current_path = self.current_path.clone();
+        self.inspector_links.project_id = model.project_id;
+        self.persistence.current_path = model.file_path.map(PathBuf::from);
+        let current_path = self.persistence.current_path.clone();
         self.apply_document_kind(current_path.as_deref(), cx);
-        self.wikilink_completion_provider.update(
+        self.inspector_links.completion_provider.update(
             self.note_id as i64,
-            self.project_id,
+            self.inspector_links.project_id,
             self.kind == DocumentKind::Markdown,
-            self.note_link_catalog.clone(),
-            self.workspace_link_catalog.clone(),
+            self.inspector_links.note_catalog.clone(),
+            self.inspector_links.workspace_catalog.clone(),
         );
-        self.file_managed_by_app = model.file_managed_by_app;
-        self.auto_save_format_change = None;
-        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
-        self.is_loading = is_loading;
-        self.load_error = None;
+        self.persistence.file_managed_by_app = model.file_managed_by_app;
+        self.persistence.auto_save_format_change = None;
+        self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
+        self.persistence.is_loading = is_loading;
+        self.persistence.load_error = None;
 
-        self.save_state = if missing {
+        self.persistence.save_state = if missing {
             SaveState::Missing
         } else {
             SaveState::Saved
         };
 
-        self.stats = DocumentStats::from_text("");
-        self.outline = DocumentOutline::None;
-        self.outline_selected = None;
+        self.analysis.stats = DocumentStats::from_text("");
+        self.analysis.outline = DocumentOutline::None;
+        self.analysis.outline_selected = None;
         self.rebuild_outline_rows();
 
-        self.suppress_editor_events = true;
+        self.persistence.suppress_editor_events = true;
         let pending_navigation_offset = self.pending_navigation_offset.take();
         self.editor.update(cx, |editor, cx| {
             editor.set_value(content.as_str(), window, cx);
@@ -209,7 +209,7 @@ impl DocumentEditorView {
                 editor.set_cursor_position(position, window, cx);
             }
         });
-        self.suppress_editor_events = false;
+        self.persistence.suppress_editor_events = false;
         self.reset_vim_command();
         self.focus_source_mode(window, cx);
         self.schedule_document_analysis(false, cx);
@@ -220,32 +220,32 @@ impl DocumentEditorView {
 
     pub(super) fn fail_load(&mut self, message: String, cx: &mut Context<Self>) {
         let message = SharedString::from(message);
-        self.is_loading = false;
-        self.load_error = Some(message.clone());
-        self.save_state = SaveState::Error(message);
+        self.persistence.is_loading = false;
+        self.persistence.load_error = Some(message.clone());
+        self.persistence.save_state = SaveState::Error(message);
         cx.notify();
     }
 
     pub(super) fn mark_file_missing(&mut self, cx: &mut Context<Self>) {
-        self.is_loading = false;
-        self.load_error = None;
-        self.save_state = SaveState::Missing;
+        self.persistence.is_loading = false;
+        self.persistence.load_error = None;
+        self.persistence.save_state = SaveState::Missing;
         cx.notify();
     }
 
     pub(super) fn update_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_loading {
+        if self.persistence.is_loading {
             return;
         }
 
-        self.outline_source_highlight = None;
-        self._outline_source_highlight_task = None;
-        let old_save_state = self.save_state.clone();
-        if !matches!(self.save_state, SaveState::Missing) {
-            self.save_state = SaveState::Dirty;
+        self.analysis.outline_source_highlight = None;
+        self.analysis.outline_source_highlight_task = None;
+        let old_save_state = self.persistence.save_state.clone();
+        if !matches!(self.persistence.save_state, SaveState::Missing) {
+            self.persistence.save_state = SaveState::Dirty;
         }
 
-        if self.save_state != old_save_state {
+        if self.persistence.save_state != old_save_state {
             cx.notify();
         }
 
@@ -255,7 +255,7 @@ impl DocumentEditorView {
     }
 
     pub(super) fn consume_auto_save_format_change(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(expected) = self.auto_save_format_change.take() else {
+        let Some(expected) = self.persistence.auto_save_format_change.take() else {
             return false;
         };
 
@@ -263,22 +263,22 @@ impl DocumentEditorView {
     }
 
     pub(super) fn schedule_auto_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
-        let epoch = self.auto_save_epoch;
+        self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
+        let epoch = self.persistence.auto_save_epoch;
         let runtime = cx.global::<AppServices>().runtime();
 
-        self._auto_save_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self.persistence.auto_save_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
 
             let save_request = this
                 .update_in(cx, |this, _window, cx| {
-                    if this.auto_save_epoch != epoch {
+                    if this.persistence.auto_save_epoch != epoch {
                         return None;
                     }
 
                     let note_id = this.note_id;
-                    let path = this.current_path.clone();
-                    let is_missing = matches!(this.save_state, SaveState::Missing);
+                    let path = this.persistence.current_path.clone();
+                    let is_missing = matches!(this.persistence.save_state, SaveState::Missing);
                     let content = this.editor.read(cx).value();
                     let selection = this.editor.read(cx).selected_range();
                     let format_on_auto_save = AppSettings::format_on_auto_save(cx)
@@ -317,7 +317,7 @@ impl DocumentEditorView {
 
             let content = this
                 .update_in(cx, |this, window, cx| {
-                    if this.auto_save_epoch != epoch
+                    if this.persistence.auto_save_epoch != epoch
                         || this.kind != kind
                         || *this.editor.read(cx).text() != source
                     {
@@ -327,7 +327,7 @@ impl DocumentEditorView {
                     let content = if let Some(formatted) = formatted {
                         let mapped_selection =
                             map_range_after_format(&source, &formatted, selection);
-                        this.auto_save_format_change = Some(formatted.clone().into());
+                        this.persistence.auto_save_format_change = Some(formatted.clone().into());
                         this.editor.update(cx, |editor, cx| {
                             let document_end =
                                 editor.text().offset_to_offset_utf16(editor.text().len());
@@ -348,7 +348,7 @@ impl DocumentEditorView {
                     };
 
                     if path.is_some() && !is_missing {
-                        this.save_state = SaveState::Saving;
+                        this.persistence.save_state = SaveState::Saving;
                         cx.notify();
                     }
 
@@ -432,10 +432,10 @@ impl DocumentEditorView {
                         let workspace_relation_signature =
                             storage::workspace_links::workspace_relation_signature(&content);
                         let workspace_links_changed =
-                            this.workspace_relation_signature != workspace_relation_signature;
-                        this.workspace_relation_signature = workspace_relation_signature;
-                        this.save_state = this.resolve_save_state(&content, cx);
-                        if this.save_state == SaveState::Saved {
+                            this.inspector_links.relation_signature != workspace_relation_signature;
+                        this.inspector_links.relation_signature = workspace_relation_signature;
+                        this.persistence.save_state = this.resolve_save_state(&content, cx);
+                        if this.persistence.save_state == SaveState::Saved {
                             this.refresh_note_links_with_runtime(runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                             if workspace_links_changed {
@@ -447,7 +447,7 @@ impl DocumentEditorView {
                 }
                 Err(err) => {
                     this.update(cx, |this, _cx| {
-                        this.save_state = SaveState::Error(err.into());
+                        this.persistence.save_state = SaveState::Error(err.into());
                     })
                     .ok();
                 }
@@ -457,9 +457,10 @@ impl DocumentEditorView {
 
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
         let (path, file_managed_by_app) = self
+            .persistence
             .current_path
             .clone()
-            .map(|path| (path, self.file_managed_by_app))
+            .map(|path| (path, self.persistence.file_managed_by_app))
             .unwrap_or_else(|| {
                 (
                     unique_note_path(
@@ -473,8 +474,10 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let file_name =
-            suggested_save_as_file_name(self.current_path.as_deref(), self.title.as_ref());
+        let file_name = suggested_save_as_file_name(
+            self.persistence.current_path.as_deref(),
+            self.title.as_ref(),
+        );
         self.prompt_save_as(file_name, window, cx);
     }
 
@@ -484,12 +487,12 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kind == kind || self.is_loading {
+        if self.kind == kind || self.persistence.is_loading {
             return;
         }
 
-        if let Some(current_path) = self.current_path.clone()
-            && self.file_managed_by_app
+        if let Some(current_path) = self.persistence.current_path.clone()
+            && self.persistence.file_managed_by_app
         {
             let target_path = current_path.with_extension(kind.extension());
             if target_path.exists() {
@@ -508,7 +511,7 @@ impl DocumentEditorView {
         }
 
         let file_name = suggested_save_as_file_name_with_extension(
-            self.current_path.as_deref(),
+            self.persistence.current_path.as_deref(),
             self.title.as_ref(),
             kind.extension(),
         );
@@ -517,6 +520,7 @@ impl DocumentEditorView {
 
     fn prompt_save_as(&mut self, file_name: String, window: &mut Window, cx: &mut Context<Self>) {
         let start_dir = self
+            .persistence
             .current_path
             .as_ref()
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
@@ -556,8 +560,8 @@ impl DocumentEditorView {
         replaced_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
-        self.save_state = SaveState::Saving;
+        self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
+        self.persistence.save_state = SaveState::Saving;
 
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
@@ -621,24 +625,25 @@ impl DocumentEditorView {
                     }
 
                     this.update(cx, |this, cx| {
-                        let path_changed = this.current_path.as_ref() != Some(&saved_path);
-                        this.current_path = Some(saved_path);
-                        this.file_managed_by_app = file_managed_by_app;
-                        this.is_loading = false;
+                        let path_changed =
+                            this.persistence.current_path.as_ref() != Some(&saved_path);
+                        this.persistence.current_path = Some(saved_path);
+                        this.persistence.file_managed_by_app = file_managed_by_app;
+                        this.persistence.is_loading = false;
                         let workspace_relation_signature =
                             storage::workspace_links::workspace_relation_signature(&content);
                         let workspace_links_changed =
-                            this.workspace_relation_signature != workspace_relation_signature;
-                        this.workspace_relation_signature = workspace_relation_signature;
-                        this.save_state = this.resolve_save_state(&content, cx);
-                        if this.save_state == SaveState::Saved {
+                            this.inspector_links.relation_signature != workspace_relation_signature;
+                        this.inspector_links.relation_signature = workspace_relation_signature;
+                        this.persistence.save_state = this.resolve_save_state(&content, cx);
+                        if this.persistence.save_state == SaveState::Saved {
                             this.refresh_note_links_with_runtime(runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                             if workspace_links_changed {
                                 cx.emit(DocumentEditorEvent::WorkspaceLinksChanged);
                             }
                         }
-                        let path = this.current_path.clone();
+                        let path = this.persistence.current_path.clone();
                         this.apply_document_kind(path.as_deref(), cx);
                         this.schedule_document_analysis(false, cx);
                         if path_changed {
@@ -649,7 +654,7 @@ impl DocumentEditorView {
                 }
                 Err(err) => {
                     this.update(cx, |this, _cx| {
-                        this.save_state = SaveState::Error(err.into());
+                        this.persistence.save_state = SaveState::Error(err.into());
                     })
                     .ok();
                 }

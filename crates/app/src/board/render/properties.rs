@@ -11,7 +11,7 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut rows = Vec::new();
-        for key in &self.active_view_config.visible_properties {
+        for key in &self.properties.active_view_config.visible_properties {
             if key == &storage::board_properties::PropertyKey::RelatedNotes {
                 if !entry.related_notes.is_empty() {
                     rows.push(
@@ -30,7 +30,8 @@ impl BoardView {
                 continue;
             };
             let Some(property) = self
-                .board_properties
+                .properties
+                .data
                 .definitions
                 .iter()
                 .find(|property| property.id == *property_id)
@@ -38,7 +39,8 @@ impl BoardView {
                 continue;
             };
             let Some(value) = self
-                .property_values
+                .properties
+                .values
                 .get(&(i64::from(entry.id), *property_id))
             else {
                 continue;
@@ -135,12 +137,12 @@ impl BoardView {
         }
     }
     pub(super) fn render_property_manager(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let properties = self.board_properties.definitions.clone();
-        let selected_kind = self.new_property_kind;
+        let properties = self.properties.data.definitions.clone();
+        let selected_kind = self.properties.new_property_kind;
 
         Popover::new("board-property-manager")
             .anchor(Anchor::TopRight)
-            .open(self.property_panel_open)
+            .open(self.properties.property_panel_open)
             .on_open_change(cx.listener(|this, open, _, cx| {
                 this.set_property_panel_open(*open, cx);
             }))
@@ -152,7 +154,7 @@ impl BoardView {
                     .label("Properties")
                     .ghost()
                     .small()
-                    .selected(self.property_panel_open)
+                    .selected(self.properties.property_panel_open)
                     .tooltip("Manage board properties"),
             )
             .child(
@@ -169,7 +171,7 @@ impl BoardView {
                                 h_flex()
                                     .justify_between()
                                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Manage properties"))
-                                    .when(!self.property_form_open, |this| {
+                                    .when(!self.properties.property_form_open, |this| {
                                         this.child(
                                             Button::new("start-property-form")
                                                 .icon(IconName::Plus)
@@ -189,16 +191,16 @@ impl BoardView {
                                     .child("Add fields that fit this board. Lists keep their own meaning."),
                             ),
                     )
-                    .when_some(self.property_update_error.clone(), |this, error| {
+                    .when_some(self.properties.update_error.clone(), |this, error| {
                         this.child(div().px_4().pt_3().text_xs().text_color(cx.theme().danger).child(error))
                     })
-                    .when(!self.view_load_warnings.is_empty(), |this| {
+                    .when(!self.properties.view_load_warnings.is_empty(), |this| {
                         this.child(
                             v_flex()
                                 .gap_1()
                                 .px_4()
                                 .pt_3()
-                                .children(self.view_load_warnings.iter().map(|warning| {
+                                .children(self.properties.view_load_warnings.iter().map(|warning| {
                                     div().text_xs().text_color(cx.theme().warning).child(warning.clone())
                                 })),
                         )
@@ -220,7 +222,7 @@ impl BoardView {
                                 self.render_property_definition_row(property, cx)
                             })),
                     )
-                    .when(self.property_form_open, |this| this.child(
+                    .when(self.properties.property_form_open, |this| this.child(
                         v_flex()
                             .gap_2()
                             .p_4()
@@ -265,7 +267,7 @@ impl BoardView {
                                     .text_color(cx.theme().muted_foreground)
                                     .child(property_kind_description(selected_kind)),
                             )
-                            .child(Input::new(&self.new_property_input).small())
+                            .child(Input::new(&self.properties.new_property_input).small())
                             .child(
                                 h_flex()
                                     .justify_end()
@@ -285,7 +287,7 @@ impl BoardView {
                                             .primary()
                                             .small()
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                let name = this.new_property_input.read(cx).value().to_string();
+                                                let name = this.properties.new_property_input.read(cx).value().to_string();
                                                 this.create_board_property(name, cx);
                                             })),
                                     ),
@@ -299,16 +301,17 @@ impl BoardView {
         property: &PropertyDefinition,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let adding_option = self.adding_property_option_id == Some(property.id);
-        let renaming = self.renaming_property_id == Some(property.id);
+        let adding_option = self.properties.adding_property_option_id == Some(property.id);
+        let renaming = self.properties.renaming_property_id == Some(property.id);
         let property_id = property.id;
         let position = self
-            .board_properties
+            .properties
+            .data
             .definitions
             .iter()
             .position(|candidate| candidate.id == property_id)
             .unwrap_or_default();
-        let can_move_down = position + 1 < self.board_properties.definitions.len();
+        let can_move_down = position + 1 < self.properties.data.definitions.len();
         v_flex()
             .gap_2()
             .px_4()
@@ -326,7 +329,9 @@ impl BoardView {
                     )
                     .child(v_flex().min_w_0().flex_1().when_else(
                         renaming,
-                        |this| this.child(Input::new(&self.rename_property_input).small()),
+                        |this| {
+                            this.child(Input::new(&self.properties.rename_property_input).small())
+                        },
                         |this| {
                             this.child(div().truncate().child(property.name.clone()))
                                 .child(
@@ -408,7 +413,8 @@ impl BoardView {
                         .children(property.options.iter().enumerate().map(
                             |(option_index, option)| {
                                 let option_id = option.id;
-                                let renaming = self.renaming_property_option_id == Some(option_id);
+                                let renaming =
+                                    self.properties.renaming_property_option_id == Some(option_id);
                                 let can_move_down = option_index + 1 < property.options.len();
                                 h_flex()
                                     .min_h_7()
@@ -430,8 +436,10 @@ impl BoardView {
                                         renaming,
                                         |this| {
                                             this.child(
-                                                Input::new(&self.rename_property_option_input)
-                                                    .small(),
+                                                Input::new(
+                                                    &self.properties.rename_property_option_input,
+                                                )
+                                                .small(),
                                             )
                                         },
                                         |this| {
@@ -541,9 +549,9 @@ impl BoardView {
                         .gap_2()
                         .pl_6()
                         .child(
-                            div()
-                                .flex_1()
-                                .child(Input::new(&self.new_property_option_input).small()),
+                            div().flex_1().child(
+                                Input::new(&self.properties.new_property_option_input).small(),
+                            ),
                         )
                         .child(
                             Button::new(SharedString::from(format!("create-option-{property_id}")))
@@ -551,8 +559,12 @@ impl BoardView {
                                 .primary()
                                 .small()
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    let name =
-                                        this.new_property_option_input.read(cx).value().to_string();
+                                    let name = this
+                                        .properties
+                                        .new_property_option_input
+                                        .read(cx)
+                                        .value()
+                                        .to_string();
                                     this.create_board_property_option(name, cx);
                                 })),
                         ),
@@ -567,11 +579,11 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_id = selected_entry.map(|(_, entry)| entry.id as i64);
-        let definitions = &self.board_properties.definitions;
+        let definitions = &self.properties.data.definitions;
 
         v_flex()
             .gap_2()
-            .when_some(self.property_update_error.clone(), |this, error| {
+            .when_some(self.properties.update_error.clone(), |this, error| {
                 this.child(div().text_xs().text_color(cx.theme().danger).child(error))
             })
             .when(!definitions.is_empty(), |this| {
@@ -604,13 +616,13 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let value =
-            entry_id.and_then(|entry_id| self.property_values.get(&(entry_id, property.id)));
+            entry_id.and_then(|entry_id| self.properties.values.get(&(entry_id, property.id)));
         let value_element = self.render_property_value(entry_id, property, value, cx);
         let key = entry_id.map(|entry_id| (entry_id, property.id));
         let error = key
-            .and_then(|key| self.property_field_errors.get(&key))
+            .and_then(|key| self.properties.field_errors.get(&key))
             .cloned();
-        let saving = key.is_some_and(|key| self.saving_property_values.contains(&key));
+        let saving = key.is_some_and(|key| self.properties.saving_values.contains(&key));
 
         v_flex()
             .gap_1()
@@ -735,8 +747,9 @@ impl BoardView {
                     })
                     .map(|option| option.name.clone())
                     .unwrap_or_else(|| "Not set".to_string());
-                let query = if self.selecting_property_id == Some(property_id) {
-                    self.property_select_search_input
+                let query = if self.properties.selecting_property_id == Some(property_id) {
+                    self.properties
+                        .property_select_search_input
                         .read(cx)
                         .value()
                         .to_lowercase()
@@ -753,7 +766,7 @@ impl BoardView {
                     .collect::<Vec<_>>();
                 Popover::new(SharedString::from(format!("property-select-{property_id}")))
                     .anchor(Anchor::TopLeft)
-                    .open(self.selecting_property_id == Some(property_id))
+                    .open(self.properties.selecting_property_id == Some(property_id))
                     .on_open_change(cx.listener(move |this, open, window, cx| {
                         this.set_property_select_open(property_id, *open, window, cx);
                     }))
@@ -772,7 +785,9 @@ impl BoardView {
                             .max_h(px(280.))
                             .overflow_y_scrollbar()
                             .p_1()
-                            .child(Input::new(&self.property_select_search_input).small())
+                            .child(
+                                Input::new(&self.properties.property_select_search_input).small(),
+                            )
                             .when(options.is_empty(), |this| {
                                 this.child(
                                     div()
@@ -831,8 +846,8 @@ impl BoardView {
                 .text_color(cx.theme().muted_foreground)
                 .child("Add options in Manage properties")
                 .into_any_element(),
-            PropertyKind::Date if self.editing_property_id == Some(property.id) => {
-                DatePicker::new(&self.property_date_picker)
+            PropertyKind::Date if self.properties.editing_property_id == Some(property.id) => {
+                DatePicker::new(&self.properties.property_date_picker)
                     .w_full()
                     .cleanable(true)
                     .placeholder("Not set")
@@ -840,9 +855,9 @@ impl BoardView {
                     .into_any_element()
             }
             PropertyKind::Text | PropertyKind::Number | PropertyKind::Url
-                if self.editing_property_id == Some(property.id) =>
+                if self.properties.editing_property_id == Some(property.id) =>
             {
-                Input::new(&self.property_value_input)
+                Input::new(&self.properties.property_value_input)
                     .small()
                     .flex_1()
                     .into_any_element()
@@ -924,14 +939,20 @@ impl BoardView {
 
     pub(super) fn render_view_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_name = self
+            .properties
             .active_view_id
-            .and_then(|id| self.saved_views.iter().find(|view| view.id == id))
+            .and_then(|id| {
+                self.properties
+                    .saved_views
+                    .iter()
+                    .find(|view| view.id == id)
+            })
             .map(|view| view.name.clone())
             .unwrap_or_else(|| "All cards".to_string());
-        let views = self.saved_views.clone();
+        let views = self.properties.saved_views.clone();
         Popover::new("board-view-picker")
             .anchor(Anchor::TopLeft)
-            .open(self.view_panel_open)
+            .open(self.properties.view_panel_open)
             .on_open_change(cx.listener(|this, open, _, cx| {
                 this.set_view_panel_open(*open, cx);
             }))
@@ -940,14 +961,14 @@ impl BoardView {
             .trigger(
                 Button::new("toggle-board-view-picker")
                     .icon(IconName::Eye)
-                    .label(if self.view_config_dirty {
+                    .label(if self.properties.view_config_dirty {
                         format!("{active_name} · Modified")
                     } else {
                         active_name
                     })
                     .ghost()
                     .small()
-                    .selected(self.view_panel_open)
+                    .selected(self.properties.view_panel_open)
                     .dropdown_caret(true)
                     .tooltip("Switch or save board view"),
             )
@@ -973,17 +994,19 @@ impl BoardView {
                                     .ghost()
                                     .small()
                                     .w_full()
-                                    .selected(self.active_view_id.is_none())
+                                    .selected(self.properties.active_view_id.is_none())
                                     .child(
                                         h_flex()
                                             .w_full()
                                             .gap_2()
                                             .child(
-                                                Icon::new(if self.active_view_id.is_none() {
-                                                    IconName::CircleCheck
-                                                } else {
-                                                    IconName::Eye
-                                                })
+                                                Icon::new(
+                                                    if self.properties.active_view_id.is_none() {
+                                                        IconName::CircleCheck
+                                                    } else {
+                                                        IconName::Eye
+                                                    },
+                                                )
                                                 .xsmall(),
                                             )
                                             .child(div().flex_1().child("All cards")),
@@ -995,8 +1018,8 @@ impl BoardView {
                             .children(views.iter().map(|view| {
                                 let view_id = view.id;
                                 let is_default = view.is_default;
-                                let renaming = self.renaming_view_id == Some(view_id);
-                                let selected = self.active_view_id == Some(view_id);
+                                let renaming = self.properties.renaming_view_id == Some(view_id);
+                                let selected = self.properties.active_view_id == Some(view_id);
                                 let view_name = view.name.clone();
                                 h_flex()
                                     .id(SharedString::from(format!("saved-view-row-{view_id}")))
@@ -1009,9 +1032,14 @@ impl BoardView {
                                         renaming,
                                         |this| {
                                             this.p_1()
-                                                .child(div().flex_1().child(
-                                                    Input::new(&self.rename_view_input).small(),
-                                                ))
+                                                .child(
+                                                    div().flex_1().child(
+                                                        Input::new(
+                                                            &self.properties.rename_view_input,
+                                                        )
+                                                        .small(),
+                                                    ),
+                                                )
                                                 .child(
                                                     Button::new(SharedString::from(format!(
                                                         "cancel-rename-view-{view_id}"
@@ -1021,7 +1049,7 @@ impl BoardView {
                                                     .xsmall()
                                                     .tooltip("Cancel rename")
                                                     .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.renaming_view_id = None;
+                                                        this.properties.renaming_view_id = None;
                                                         cx.notify();
                                                     })),
                                                 )
@@ -1121,7 +1149,8 @@ impl BoardView {
                             })),
                     )
                     .when(
-                        self.active_view_id.is_some() && self.view_config_dirty,
+                        self.properties.active_view_id.is_some()
+                            && self.properties.view_config_dirty,
                         |this| {
                             this.child(
                                 h_flex()
@@ -1150,7 +1179,7 @@ impl BoardView {
                         },
                     )
                     .when_else(
-                        self.new_view_form_open,
+                        self.properties.new_view_form_open,
                         |this| {
                             this.child(
                                 v_flex()
@@ -1180,11 +1209,9 @@ impl BoardView {
                                     .child(
                                         h_flex()
                                             .gap_2()
-                                            .child(
-                                                div().flex_1().child(
-                                                    Input::new(&self.new_view_input).small(),
-                                                ),
-                                            )
+                                            .child(div().flex_1().child(
+                                                Input::new(&self.properties.new_view_input).small(),
+                                            ))
                                             .child(
                                                 Button::new("save-new-view")
                                                     .label("Save")
@@ -1192,6 +1219,7 @@ impl BoardView {
                                                     .small()
                                                     .on_click(cx.listener(|this, _, _, cx| {
                                                         let name = this
+                                                            .properties
                                                             .new_view_input
                                                             .read(cx)
                                                             .value()
@@ -1201,7 +1229,7 @@ impl BoardView {
                                             ),
                                     )
                                     .when_some(
-                                        self.property_update_error.clone(),
+                                        self.properties.update_error.clone(),
                                         |this, error| {
                                             this.child(
                                                 div()
@@ -1243,17 +1271,22 @@ impl BoardView {
             PropertyKey::RelatedNotes,
         ];
         fields.extend(
-            self.board_properties
+            self.properties
+                .data
                 .definitions
                 .iter()
                 .map(|property| PropertyKey::Custom(property.id)),
         );
 
-        let selected = self.active_view_config.visible_properties.clone();
+        let selected = self
+            .properties
+            .active_view_config
+            .visible_properties
+            .clone();
 
         Popover::new("board-fields-picker")
             .anchor(Anchor::TopRight)
-            .open(self.fields_panel_open)
+            .open(self.properties.fields_panel_open)
             .on_open_change(cx.listener(|this, open, _, cx| {
                 this.set_fields_panel_open(*open, cx);
             }))
@@ -1265,7 +1298,7 @@ impl BoardView {
                     .label("Fields")
                     .ghost()
                     .small()
-                    .selected(self.fields_panel_open)
+                    .selected(self.properties.fields_panel_open)
                     .tooltip("Choose up to three fields shown on cards"),
             )
             .child(
@@ -1339,7 +1372,7 @@ impl BoardView {
                             .border_color(cx.theme().border.opacity(0.72))
                             .child(
                                 Checkbox::new("compact-board-cards")
-                                    .checked(self.active_view_config.compact_cards)
+                                    .checked(self.properties.active_view_config.compact_cards)
                                     .small()
                                     .label("Compact cards")
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1357,15 +1390,16 @@ impl BoardView {
             PropertyKey::RelatedNotes,
         ];
         fields.extend(
-            self.board_properties
+            self.properties
+                .data
                 .definitions
                 .iter()
                 .map(|property| PropertyKey::Custom(property.id)),
         );
-        let active_sort = self.active_view_config.sort.clone();
+        let active_sort = self.properties.active_view_config.sort.clone();
         Popover::new("board-sort-picker")
             .anchor(Anchor::TopRight)
-            .open(self.sort_panel_open)
+            .open(self.properties.sort_panel_open)
             .on_open_change(cx.listener(|this, open, _, cx| {
                 this.set_sort_panel_open(*open, cx);
             }))
@@ -1381,7 +1415,7 @@ impl BoardView {
                     })
                     .ghost()
                     .small()
-                    .selected(active_sort.is_some() || self.sort_panel_open)
+                    .selected(active_sort.is_some() || self.properties.sort_panel_open)
                     .tooltip("Sort temporarily within each list"),
             )
             .child(
@@ -1453,7 +1487,7 @@ impl BoardView {
     }
 
     pub(super) fn render_custom_filter_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let definitions = self.board_properties.definitions.clone();
+        let definitions = self.properties.data.definitions.clone();
         v_flex()
             .when(!definitions.is_empty(), |this| {
                 this.child(
@@ -1615,7 +1649,7 @@ impl BoardView {
                     .into_any_element()
             }
             _ => {
-                let editing = self.editing_filter_property_id == Some(property_id);
+                let editing = self.properties.editing_filter_property_id == Some(property_id);
                 let operator =
                     filter
                         .map(|filter| filter.operator)
@@ -1655,11 +1689,9 @@ impl BoardView {
                                 this.when_else(
                                     editing,
                                     |this| {
-                                        this.child(
-                                            div().flex_1().child(
-                                                Input::new(&self.filter_value_input).small(),
-                                            ),
-                                        )
+                                        this.child(div().flex_1().child(
+                                            Input::new(&self.properties.filter_value_input).small(),
+                                        ))
                                     },
                                     |this| {
                                         this.child(
@@ -1702,7 +1734,8 @@ impl BoardView {
             PropertyKey::Labels => "Labels".to_string(),
             PropertyKey::RelatedNotes => "Related notes".to_string(),
             PropertyKey::Custom(property_id) => self
-                .board_properties
+                .properties
+                .data
                 .definitions
                 .iter()
                 .find(|property| property.id == *property_id)

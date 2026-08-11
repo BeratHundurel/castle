@@ -19,7 +19,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
         if window.has_active_dialog(cx) {

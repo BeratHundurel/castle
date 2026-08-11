@@ -8,7 +8,7 @@ const COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 
 impl AppShell {
     pub(crate) fn rebuild_command_palette_workspace_commands(&mut self) {
-        let note_commands = self.notes.iter().map(|note| {
+        let note_commands = self.workspace.notes.iter().map(|note| {
             let project_name = note
                 .project_name
                 .clone()
@@ -26,7 +26,7 @@ impl AppShell {
             })
         });
 
-        let board_commands = self.boards.iter().map(|board| {
+        let board_commands = self.workspace.boards.iter().map(|board| {
             let project_name = board
                 .project_name
                 .clone()
@@ -51,8 +51,14 @@ impl AppShell {
         let query = self.command_palette.query.trim().to_lowercase();
         let explicit_new_command = new_command(&self.command_palette.query);
         let project_label = self
+            .workspace
             .active_project_id
-            .and_then(|id| self.projects.iter().find(|project| project.id == id))
+            .and_then(|id| {
+                self.workspace
+                    .projects
+                    .iter()
+                    .find(|project| project.id == id)
+            })
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "Standalone".into());
 
@@ -62,26 +68,26 @@ impl AppShell {
             match command {
                 NewCommand::Any(title) => {
                     commands.push(new_note_command(
-                        self.active_project_id,
+                        self.workspace.active_project_id,
                         title.clone(),
                         project_label.clone(),
                     ));
                     commands.push(new_board_command(
-                        self.active_project_id,
+                        self.workspace.active_project_id,
                         title,
                         project_label.clone(),
                     ));
                 }
                 NewCommand::Note(title) => {
                     commands.push(new_note_command(
-                        self.active_project_id,
+                        self.workspace.active_project_id,
                         title,
                         project_label.clone(),
                     ));
                 }
                 NewCommand::Board(title) => {
                     commands.push(new_board_command(
-                        self.active_project_id,
+                        self.workspace.active_project_id,
                         title,
                         project_label.clone(),
                     ));
@@ -101,7 +107,7 @@ impl AppShell {
                 subtitle: SharedString::from(format!("Create in {project_label}")),
                 icon: IconName::BookOpen,
                 kind: PaletteCommandKind::NewNote {
-                    project_id: self.active_project_id,
+                    project_id: self.workspace.active_project_id,
                     title: "Untitled note".to_string(),
                 },
             },
@@ -110,7 +116,7 @@ impl AppShell {
                 subtitle: SharedString::from(format!("Create in {project_label}")),
                 icon: IconName::LayoutDashboard,
                 kind: PaletteCommandKind::NewBoard {
-                    project_id: self.active_project_id,
+                    project_id: self.workspace.active_project_id,
                     title: "Board".to_string(),
                 },
             },

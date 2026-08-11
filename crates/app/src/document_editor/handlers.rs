@@ -65,12 +65,18 @@ impl DocumentEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.outline_rows.is_empty() {
+        if self.analysis.outline_rows.is_empty() {
             return;
         }
-        self.outline_selected = Some(self.outline_selected.unwrap_or(0).saturating_sub(1));
-        if let Some(index) = self.outline_selected {
-            self.outline_scroll_handle
+        self.analysis.outline_selected = Some(
+            self.analysis
+                .outline_selected
+                .unwrap_or(0)
+                .saturating_sub(1),
+        );
+        if let Some(index) = self.analysis.outline_selected {
+            self.analysis
+                .outline_scroll_handle
                 .scroll_to_item(index, gpui::ScrollStrategy::Top);
         }
         cx.notify();
@@ -82,16 +88,18 @@ impl DocumentEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.outline_rows.is_empty() {
+        if self.analysis.outline_rows.is_empty() {
             return;
         }
         let next = self
+            .analysis
             .outline_selected
             .unwrap_or(0)
             .saturating_add(1)
-            .min(self.outline_rows.len().saturating_sub(1));
-        self.outline_selected = Some(next);
-        self.outline_scroll_handle
+            .min(self.analysis.outline_rows.len().saturating_sub(1));
+        self.analysis.outline_selected = Some(next);
+        self.analysis
+            .outline_scroll_handle
             .scroll_to_item(next, gpui::ScrollStrategy::Bottom);
         cx.notify();
     }
@@ -102,20 +110,20 @@ impl DocumentEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected) = self.outline_selected else {
+        let Some(selected) = self.analysis.outline_selected else {
             return;
         };
-        let Some(row) = self.outline_rows.get(selected) else {
+        let Some(row) = self.analysis.outline_rows.get(selected) else {
             return;
         };
         let Some(node_index) = row.node_index else {
             return;
         };
 
-        if row.expanded && self.outline.collapse(node_index) {
+        if row.expanded && self.analysis.outline.collapse(node_index) {
             self.rebuild_outline_rows();
-        } else if let Some(parent_row) = self.outline.parent_row_index(node_index) {
-            self.outline_selected = Some(parent_row);
+        } else if let Some(parent_row) = self.analysis.outline.parent_row_index(node_index) {
+            self.analysis.outline_selected = Some(parent_row);
         }
         cx.notify();
     }
@@ -126,20 +134,20 @@ impl DocumentEditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected) = self.outline_selected else {
+        let Some(selected) = self.analysis.outline_selected else {
             return;
         };
-        let Some(row) = self.outline_rows.get(selected) else {
+        let Some(row) = self.analysis.outline_rows.get(selected) else {
             return;
         };
         let Some(node_index) = row.node_index else {
             return;
         };
 
-        if row.has_children && !row.expanded && self.outline.expand(node_index) {
+        if row.has_children && !row.expanded && self.analysis.outline.expand(node_index) {
             self.rebuild_outline_rows();
-        } else if let Some(child_row) = self.outline.first_child_row_index(node_index) {
-            self.outline_selected = Some(child_row);
+        } else if let Some(child_row) = self.analysis.outline.first_child_row_index(node_index) {
+            self.analysis.outline_selected = Some(child_row);
         }
         cx.notify();
     }
@@ -150,7 +158,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(index) = self.outline_selected {
+        if let Some(index) = self.analysis.outline_selected {
             self.select_outline_item(index, window, cx);
         }
     }

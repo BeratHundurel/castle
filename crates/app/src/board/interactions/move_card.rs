@@ -2,18 +2,18 @@ use super::*;
 
 impl BoardView {
     pub(in crate::board) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
-        let Some(entry_id) = self.entry_dialog.entry_id else {
+        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
 
-        for card in &mut self.cards {
+        for card in &mut self.data.lists {
             card.entries.retain(|entry| entry.id != entry_id);
         }
 
-        self.is_entry_open = false;
-        self.entry_dialog.open = false;
-        self.entry_dialog.entry_id = None;
-        self.entry_dialog.editing = false;
+        self.entry_editing.open = false;
+        self.entry_editing.dialog.open = false;
+        self.entry_editing.dialog.entry_id = None;
+        self.entry_editing.dialog.editing = false;
         cx.notify();
 
         let db = cx.global::<AppServices>().store().connection();
@@ -41,7 +41,7 @@ impl BoardView {
         target_card_id: u32,
         cx: &mut Context<Self>,
     ) {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
 
@@ -49,15 +49,25 @@ impl BoardView {
             return;
         }
 
-        let Some(from_index) = self.cards.iter().position(|card| card.id == info.card_id) else {
+        let Some(from_index) = self
+            .data
+            .lists
+            .iter()
+            .position(|card| card.id == info.card_id)
+        else {
             return;
         };
-        let Some(to_index) = self.cards.iter().position(|card| card.id == target_card_id) else {
+        let Some(to_index) = self
+            .data
+            .lists
+            .iter()
+            .position(|card| card.id == target_card_id)
+        else {
             return;
         };
 
-        let moved_card = self.cards.remove(from_index);
-        self.cards.insert(to_index, moved_card);
+        let moved_card = self.data.lists.remove(from_index);
+        self.data.lists.insert(to_index, moved_card);
         self.persist_card_positions(cx);
     }
 
@@ -66,7 +76,7 @@ impl BoardView {
         info: &CardDragInfo,
         cx: &mut Context<Self>,
     ) {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
 
@@ -74,21 +84,26 @@ impl BoardView {
             return;
         }
 
-        let Some(from_index) = self.cards.iter().position(|card| card.id == info.card_id) else {
+        let Some(from_index) = self
+            .data
+            .lists
+            .iter()
+            .position(|card| card.id == info.card_id)
+        else {
             return;
         };
 
-        if from_index + 1 == self.cards.len() {
+        if from_index + 1 == self.data.lists.len() {
             return;
         }
 
-        let moved_card = self.cards.remove(from_index);
-        self.cards.push(moved_card);
+        let moved_card = self.data.lists.remove(from_index);
+        self.data.lists.push(moved_card);
         self.persist_card_positions(cx);
     }
 
     pub(in crate::board) fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
-        self.cards.retain(|card| card.id != card_id);
+        self.data.lists.retain(|card| card.id != card_id);
         cx.notify();
 
         let db = cx.global::<AppServices>().store().connection();

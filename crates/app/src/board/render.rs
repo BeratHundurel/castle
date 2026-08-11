@@ -56,14 +56,15 @@ impl Render for BoardView {
             .on_action(cx.listener(Self::on_set_default_board_view_action))
             .on_action(cx.listener(Self::on_delete_board_view_action));
 
-        let Some(board_id_for_render) = self.board_id else {
+        let Some(board_id_for_render) = self.data.board_id else {
             return board.child(self.render_scrollable_board(None, cx));
         };
 
         board
             .child(self.render_scrollable_board(Some(board_id_for_render), cx))
-            .when(self.is_entry_open && self.entry_dialog.open, |this| {
-                this.child(self.render_entry_detail_overlay(cx))
-            })
+            .when(
+                self.entry_editing.open && self.entry_editing.dialog.open,
+                |this| this.child(self.render_entry_detail_overlay(cx)),
+            )
     }
 }

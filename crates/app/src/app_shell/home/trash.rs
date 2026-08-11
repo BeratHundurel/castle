@@ -2,10 +2,11 @@ use super::*;
 
 impl AppShell {
     pub(in crate::app_shell) fn render_trash(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.trash_query.trim().to_lowercase();
-        let filter = self.trash_kind_filter;
+        let query = self.trash.query.trim().to_lowercase();
+        let filter = self.trash.kind_filter;
         let items = self
-            .trash_items
+            .trash
+            .items
             .iter()
             .filter(|item| {
                 filter.is_none_or(|kind| item.kind == kind)
@@ -41,7 +42,7 @@ impl AppShell {
                                     .child(div().text_2xl().font_weight(gpui::FontWeight::SEMIBOLD).child("Trash"))
                                     .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Restore anything you removed, or delete it permanently.")),
                             )
-                            .children((!self.trash_items.is_empty()).then(|| {
+                            .children((!self.trash.items.is_empty()).then(|| {
                                 Button::new("empty-trash")
                                     .label("Empty Trash")
                                     .ghost()
@@ -54,7 +55,7 @@ impl AppShell {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(Input::new(&self.trash_search_input).prefix(IconName::Search).flex_1())
+                            .child(Input::new(&self.trash.search_input).prefix(IconName::Search).flex_1())
                             .children(
                                 [
                                     ("All", None),
@@ -73,7 +74,7 @@ impl AppShell {
                                         .small()
                                         .selected(filter == kind)
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.trash_kind_filter = kind;
+                                            this.trash.kind_filter = kind;
                                             cx.notify();
                                         }))
                                 }),
@@ -88,7 +89,7 @@ impl AppShell {
         items: Vec<crate::trash::TrashItem>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        if self.trash_refreshing && !self.trash_loaded {
+        if self.trash.phase.is_loading() && !self.trash.phase.has_content() {
             return v_flex()
                 .gap_2()
                 .children((0_usize..4).map(|index| {
@@ -100,7 +101,7 @@ impl AppShell {
                 }))
                 .into_any_element();
         }
-        if let Some(error) = self.trash_error.clone() {
+        if let Some(error) = self.trash.phase.error() {
             return inline_retry(error, cx.listener(|this, _, _, cx| this.load_trash(cx)), cx)
                 .into_any_element();
         }
@@ -216,7 +217,8 @@ impl AppShell {
             };
             this.update_in(cx, |this, window, cx| match result {
                 Ok(()) => {
-                    this.trash_items
+                    this.trash
+                        .items
                         .retain(|candidate| candidate.kind != item.kind || candidate.id != item.id);
                     this.reload_open_boards_after_restore(item.kind, cx);
                     this.load_trash(cx);
@@ -248,7 +250,7 @@ impl AppShell {
             return;
         }
 
-        for tab in &mut self.open_tabs {
+        for tab in &mut self.tabs.open_tabs {
             if let OpenTabKind::Board { board_id, view, .. } = &tab.kind {
                 view.update(cx, |board, cx| board.reload_board(*board_id, cx));
             }
@@ -318,7 +320,7 @@ impl AppShell {
                 Ok(_) => {
                     match item.kind {
                         TrashItemKind::Note => {
-                            this.note_views.remove(&item.id);
+                            this.tabs.note_views.remove(&item.id);
                         }
                         TrashItemKind::Board
                         | TrashItemKind::Project
@@ -340,7 +342,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let view = cx.entity();
-        let count = self.trash_items.len();
+        let count = self.trash.items.len();
         window.open_alert_dialog(cx, move |alert, _, cx| {
             alert
                 .icon(Icon::new(IconName::TriangleAlert).text_color(cx.theme().danger))
@@ -387,9 +389,12 @@ impl AppShell {
             }
             this.update(cx, |this, cx| {
                 if let Err(err) = result {
-                    this.trash_error = Some(format!("Could not empty Trash: {err}").into());
+                    this.trash.phase = LoadPhase::Failed {
+                        message: format!("Could not empty Trash: {err}").into(),
+                        had_content: true,
+                    };
                 } else {
-                    this.note_views.clear();
+                    this.tabs.note_views.clear();
                 }
                 this.load_trash(cx);
                 this.refresh_workspace(cx);

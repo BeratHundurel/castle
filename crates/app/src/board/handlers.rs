@@ -15,12 +15,13 @@ impl BoardView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
 
         let title = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| {
                 entry.item.kind == storage::workspace_links::WorkspaceItemKind::Board
@@ -47,7 +48,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let title = self
-            .cards
+            .data
+            .lists
             .iter()
             .find(|list| list.id == action.0)
             .map(|list| list.title.as_ref())
@@ -112,8 +114,8 @@ impl BoardView {
     }
 
     pub(super) fn start_adding_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.is_adding_list = true;
-        self.new_list_input.update(cx, |input, cx| {
+        self.entry_editing.adding_list = true;
+        self.entry_editing.new_list_input.update(cx, |input, cx| {
             input.set_value("", window, cx);
             input.focus(window, cx);
         });
@@ -121,9 +123,9 @@ impl BoardView {
     }
 
     pub(super) fn start_managing_labels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entry_dialog.managing_labels = true;
-        self.renaming_label_id = None;
-        self.new_label_input.update(cx, |input, cx| {
+        self.entry_editing.dialog.managing_labels = true;
+        self.entry_editing.renaming_label_id = None;
+        self.entry_editing.new_label_input.update(cx, |input, cx| {
             input.set_value("", window, cx);
             input.focus(window, cx);
         });
@@ -131,8 +133,8 @@ impl BoardView {
     }
 
     pub(super) fn stop_managing_labels(&mut self, cx: &mut Context<Self>) {
-        self.entry_dialog.managing_labels = false;
-        self.renaming_label_id = None;
+        self.entry_editing.dialog.managing_labels = false;
+        self.entry_editing.renaming_label_id = None;
         cx.notify();
     }
 
@@ -142,20 +144,22 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(label) = self.board_labels.iter().find(|label| label.id == label_id) else {
+        let Some(label) = self.data.labels.iter().find(|label| label.id == label_id) else {
             return;
         };
 
-        self.renaming_label_id = Some(label_id);
-        self.rename_label_input.update(cx, |input, cx| {
-            input.set_value(label.name.clone(), window, cx);
-            input.focus(window, cx);
-        });
+        self.entry_editing.renaming_label_id = Some(label_id);
+        self.entry_editing
+            .rename_label_input
+            .update(cx, |input, cx| {
+                input.set_value(label.name.clone(), window, cx);
+                input.focus(window, cx);
+            });
         cx.notify();
     }
 
     pub(super) fn select_label_color(&mut self, color: &str, cx: &mut Context<Self>) {
-        self.selected_label_color = color.into();
+        self.entry_editing.selected_label_color = color.into();
         cx.notify();
     }
 
@@ -175,8 +179,9 @@ impl BoardView {
         } else {
             self.filters.label_ids.remove(&label_id);
         }
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
@@ -191,43 +196,50 @@ impl BoardView {
         } else {
             self.filters.due_dates.remove(&filter);
         }
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn clear_filters(&mut self, cx: &mut Context<Self>) {
         self.filters.clear();
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn clear_due_date_filters(&mut self, cx: &mut Context<Self>) {
         self.filters.due_dates.clear();
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn clear_label_filters(&mut self, cx: &mut Context<Self>) {
         self.filters.label_ids.clear();
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn set_related_notes_filter(&mut self, value: Option<bool>, cx: &mut Context<Self>) {
         self.filters.related_notes = value;
-        self.filters.sync_config(&mut self.active_view_config);
-        self.view_config_dirty = true;
+        self.filters
+            .sync_config(&mut self.properties.active_view_config);
+        self.properties.view_config_dirty = true;
         cx.notify();
     }
 
     pub(super) fn focus_checklist_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_checklist_item_input.update(cx, |input, cx| {
-            input.focus(window, cx);
-        });
+        self.entry_editing
+            .new_checklist_item_input
+            .update(cx, |input, cx| {
+                input.focus(window, cx);
+            });
     }
 
     pub(super) fn start_renaming_checklist_item(
@@ -237,7 +249,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(item) = self
-            .cards
+            .data
+            .lists
             .iter()
             .flat_map(|list| list.entries.iter())
             .flat_map(|card| card.checklist_items.iter())
@@ -245,11 +258,13 @@ impl BoardView {
         else {
             return;
         };
-        self.renaming_checklist_item_id = Some(item_id);
-        self.rename_checklist_item_input.update(cx, |input, cx| {
-            input.set_value(item.title.clone(), window, cx);
-            input.focus(window, cx);
-        });
+        self.entry_editing.renaming_checklist_item_id = Some(item_id);
+        self.entry_editing
+            .rename_checklist_item_input
+            .update(cx, |input, cx| {
+                input.set_value(item.title.clone(), window, cx);
+                input.focus(window, cx);
+            });
         cx.notify();
     }
 
@@ -259,56 +274,59 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.is_entry_open = true;
-        self.entry_dialog.open = true;
-        self.entry_dialog.entry_id = Some(entry_id);
-        self.entry_dialog.editing = false;
-        self.entry_dialog.managing_labels = false;
+        self.entry_editing.open = true;
+        self.entry_editing.dialog.open = true;
+        self.entry_editing.dialog.entry_id = Some(entry_id);
+        self.entry_editing.dialog.editing = false;
+        self.entry_editing.dialog.managing_labels = false;
         self.sync_entry_edit_inputs(window, cx);
         self.prepare_attachment_previews(entry_id, cx);
         cx.notify();
     }
 
     pub(super) fn close_entry_dialog(&mut self, cx: &mut Context<Self>) {
-        self.is_entry_open = false;
-        self.entry_dialog.open = false;
-        self.entry_dialog.entry_id = None;
-        self.entry_dialog.editing = false;
-        self.entry_dialog.managing_labels = false;
-        self.attachment_preview_paths.clear();
+        self.entry_editing.open = false;
+        self.entry_editing.dialog.open = false;
+        self.entry_editing.dialog.entry_id = None;
+        self.entry_editing.dialog.editing = false;
+        self.entry_editing.dialog.managing_labels = false;
+        self.entry_editing.attachment_preview_paths.clear();
         cx.notify();
     }
 
     pub(super) fn start_editing_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entry_dialog.editing = true;
+        self.entry_editing.dialog.editing = true;
         self.sync_entry_edit_inputs(window, cx);
-        self.entry_title_input.update(cx, |input, cx| {
+        self.entry_editing.title_input.update(cx, |input, cx| {
             input.focus(window, cx);
         });
         cx.notify();
     }
 
     pub(super) fn cancel_editing_entry(&mut self, cx: &mut Context<Self>) {
-        self.entry_dialog.editing = false;
+        self.entry_editing.dialog.editing = false;
         cx.notify();
     }
 
     fn sync_entry_edit_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((title, description, due_on)) = self
-            .entry_dialog
+            .entry_editing
+            .dialog
             .entry_id
             .and_then(|entry_id| self.entry_values(entry_id))
         else {
             return;
         };
 
-        self.entry_title_input.update(cx, |input, cx| {
+        self.entry_editing.title_input.update(cx, |input, cx| {
             input.set_value(title, window, cx);
         });
-        self.entry_description_input.update(cx, |input, cx| {
-            input.set_value(description, window, cx);
-        });
-        self.due_date_picker.update(cx, |picker, cx| {
+        self.entry_editing
+            .description_input
+            .update(cx, |input, cx| {
+                input.set_value(description, window, cx);
+            });
+        self.entry_editing.due_date_picker.update(cx, |picker, cx| {
             let due_on = due_on
                 .as_deref()
                 .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok());
@@ -322,7 +340,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(list) = self.cards.iter().find(|list| list.id == action.0) else {
+        let Some(list) = self.data.lists.iter().find(|list| list.id == action.0) else {
             return;
         };
         let title = list.title.clone();
@@ -368,15 +386,17 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(card) = self.cards.iter().find(|card| card.id == action.0) else {
+        let Some(card) = self.data.lists.iter().find(|card| card.id == action.0) else {
             return;
         };
 
-        self.renaming_card_id = Some(card.id);
-        self.rename_card_input.update(cx, |input, cx| {
-            input.set_value(card.title.clone(), window, cx);
-            input.focus(window, cx);
-        });
+        self.entry_editing.renaming_list_id = Some(card.id);
+        self.entry_editing
+            .rename_list_input
+            .update(cx, |input, cx| {
+                input.set_value(card.title.clone(), window, cx);
+                input.focus(window, cx);
+            });
         cx.notify();
     }
 
@@ -395,7 +415,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry_id) = self.entry_dialog.entry_id else {
+        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
         let Some((title, _, _)) = self.entry_values(entry_id) else {

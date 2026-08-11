@@ -413,29 +413,34 @@ impl DocumentEditorView {
             drop(cancel_on_drop);
 
             this.update(cx, |this, cx| {
-                if this.note_id != note_id || this.note_links_generation != generation {
+                if this.note_id != note_id
+                    || this.inspector_links.request.generation() != generation
+                {
                     return;
                 }
-                this.note_links_loading = false;
+                this.inspector_links.loading = false;
                 match result {
                     Ok(Some(Ok((links, note_catalog, workspace_links, workspace_catalog)))) => {
-                        this.note_links = std::sync::Arc::new(links);
-                        this.note_link_catalog = Arc::new(note_catalog);
-                        this.workspace_links = Arc::new(workspace_links);
-                        this.workspace_link_catalog = Arc::new(workspace_catalog);
-                        this.wikilink_completion_provider.update(
+                        this.inspector_links.note_links = std::sync::Arc::new(links);
+                        this.inspector_links.note_catalog = Arc::new(note_catalog);
+                        this.inspector_links.workspace_links = Arc::new(workspace_links);
+                        this.inspector_links.workspace_catalog = Arc::new(workspace_catalog);
+                        this.inspector_links.completion_provider.update(
                             this.note_id as i64,
-                            this.project_id,
+                            this.inspector_links.project_id,
                             this.kind == super::DocumentKind::Markdown,
-                            this.note_link_catalog.clone(),
-                            this.workspace_link_catalog.clone(),
+                            this.inspector_links.note_catalog.clone(),
+                            this.inspector_links.workspace_catalog.clone(),
                         );
-                        this.note_links_error = None;
+                        this.inspector_links.error = None;
                     }
-                    Ok(Some(Err(error))) => this.note_links_error = Some(error.to_string().into()),
+                    Ok(Some(Err(error))) => {
+                        this.inspector_links.error = Some(error.to_string().into())
+                    }
                     Ok(None) => return,
                     Err(error) => {
-                        this.note_links_error = Some(format!("Link task failed: {error}").into())
+                        this.inspector_links.error =
+                            Some(format!("Link task failed: {error}").into())
                     }
                 }
                 cx.notify();
@@ -454,24 +459,20 @@ impl DocumentEditorView {
         runtime: tokio::runtime::Handle,
         cx: &mut Context<Self>,
     ) {
-        self.note_links_generation = self.note_links_generation.saturating_add(1);
-        self.note_links_loading = true;
-        self._note_links_task = Some(Self::load_note_links_with_runtime(
-            self.note_id,
-            self.note_links_generation,
-            runtime,
-            cx,
-        ));
+        let generation = self.inspector_links.request.begin();
+        self.inspector_links.loading = true;
+        let task = Self::load_note_links_with_runtime(self.note_id, generation, runtime, cx);
+        self.inspector_links.request.set_task(task);
         cx.notify();
     }
 
     pub(super) fn show_outline_inspector(&mut self, cx: &mut Context<Self>) {
-        self.inspector_tab = DocumentInspectorTab::Outline;
+        self.inspector_links.tab = DocumentInspectorTab::Outline;
         cx.notify();
     }
 
     pub(super) fn show_links_inspector(&mut self, cx: &mut Context<Self>) {
-        self.inspector_tab = DocumentInspectorTab::Links;
+        self.inspector_links.tab = DocumentInspectorTab::Links;
         self.refresh_note_links(cx);
     }
 }
@@ -921,7 +922,7 @@ mod tests {
         for _ in 0..100 {
             cx.run_until_parked();
             if view.read_with(&cx, |editor, _| {
-                !editor.is_loading && editor.note_link_catalog.len() == 2
+                !editor.persistence.is_loading && editor.inspector_links.note_catalog.len() == 2
             }) {
                 break;
             }

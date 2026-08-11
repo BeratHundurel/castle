@@ -13,7 +13,7 @@ impl BoardView {
             .map(|note| note.note_id)
             .collect::<std::collections::HashSet<_>>();
         let picker_open =
-            self.related_note_picker.open && self.related_note_picker.target == Some(item);
+            self.related_notes.picker.open && self.related_notes.picker.target == Some(item);
         let candidates = if picker_open {
             self.related_note_candidates(item, cx)
         } else {
@@ -29,7 +29,8 @@ impl BoardView {
             .anchor(Anchor::TopRight)
             .open(picker_open)
             .on_open_change(cx.listener(move |this, open, window, cx| {
-                this.related_note_picker
+                this.related_notes
+                    .picker
                     .set_open(*open, Some(item), window, cx);
                 cx.notify();
             }))
@@ -62,7 +63,8 @@ impl BoardView {
                                                 "up" => this.move_related_note_candidate(-1, cx),
                                                 "down" => this.move_related_note_candidate(1, cx),
                                                 "escape" => this
-                                                    .related_note_picker
+                                                    .related_notes
+                                                    .picker
                                                     .set_open(false, None, window, cx),
                                                 _ => return,
                                             }
@@ -70,7 +72,7 @@ impl BoardView {
                                             cx.stop_propagation();
                                         },
                                     ))
-                                    .child(Input::new(&self.related_note_picker.search_input)),
+                                    .child(Input::new(&self.related_notes.picker.search_input)),
                             )
                             .child(
                                 Button::new(SharedString::from(format!("create-note-{create_id}")))
@@ -92,8 +94,11 @@ impl BoardView {
                                 .children(related.into_iter().map(|note| {
                                     let note_id = note.note_id;
                                     let manual = note.manually_linked();
-                                    let pending =
-                                        self.related_note_picker.pending.contains(&(item, note_id));
+                                    let pending = self
+                                        .related_notes
+                                        .picker
+                                        .pending
+                                        .contains(&(item, note_id));
                                     let related_id = related_id.clone();
                                     h_flex()
                                         .id(SharedString::from(format!(
@@ -148,8 +153,11 @@ impl BoardView {
                                 |(index, candidate)| {
                                     let note_id = candidate.item.id;
                                     let already_linked = linked_ids.contains(&note_id);
-                                    let pending =
-                                        self.related_note_picker.pending.contains(&(item, note_id));
+                                    let pending = self
+                                        .related_notes
+                                        .picker
+                                        .pending
+                                        .contains(&(item, note_id));
                                     Button::new(SharedString::from(format!(
                                         "item-note-candidate-{candidate_id}-{note_id}"
                                     )))
@@ -164,7 +172,7 @@ impl BoardView {
                                     .selected(
                                         !already_linked
                                             && !pending
-                                            && self.related_note_picker.active_row == index,
+                                            && self.related_notes.picker.active_row == index,
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.link_note_to_item(item, note_id, cx);
@@ -193,8 +201,8 @@ impl BoardView {
             .map(|note| note.note_id)
             .collect::<std::collections::HashSet<_>>();
         let picker_open = item.is_some()
-            && self.related_note_picker.open
-            && self.related_note_picker.target == item;
+            && self.related_notes.picker.open
+            && self.related_notes.picker.target == item;
         let candidates = if let Some(item) = item.filter(|_| picker_open) {
             self.related_note_candidates(item, cx)
         } else {
@@ -233,7 +241,9 @@ impl BoardView {
                             .open(picker_open)
                             .on_open_change(cx.listener(|this, open, window, cx| {
                                 let target = this.selected_workspace_item();
-                                this.related_note_picker.set_open(*open, target, window, cx);
+                                this.related_notes
+                                    .picker
+                                    .set_open(*open, target, window, cx);
                                 cx.notify();
                             }))
                             .w_80()
@@ -264,7 +274,8 @@ impl BoardView {
                                                             this.move_related_note_candidate(1, cx)
                                                         }
                                                         "escape" => this
-                                                            .related_note_picker
+                                                            .related_notes
+                                                            .picker
                                                             .set_open(false, None, window, cx),
                                                         _ => return,
                                                     }
@@ -273,7 +284,7 @@ impl BoardView {
                                                 },
                                             ))
                                             .child(Input::new(
-                                                &self.related_note_picker.search_input,
+                                                &self.related_notes.picker.search_input,
                                             )),
                                     )
                                     .child(
@@ -295,7 +306,8 @@ impl BoardView {
                                                     let already_linked =
                                                         linked_ids.contains(&note_id);
                                                     let pending = item.is_some_and(|item| {
-                                                        self.related_note_picker
+                                                        self.related_notes
+                                                            .picker
                                                             .pending
                                                             .contains(&(item, note_id))
                                                     });
@@ -311,7 +323,7 @@ impl BoardView {
                                                     .selected(
                                                         !already_linked
                                                             && !pending
-                                                            && self.related_note_picker.active_row
+                                                            && self.related_notes.picker.active_row
                                                                 == index,
                                                     )
                                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -352,7 +364,7 @@ impl BoardView {
                 let note_id = note.note_id;
                 let manual = note.manually_linked();
                 let pending = item.is_some_and(|item| {
-                    self.related_note_picker.pending.contains(&(item, note_id))
+                    self.related_notes.picker.pending.contains(&(item, note_id))
                 });
                 h_flex()
                     .id(SharedString::from(format!("related-note-{note_id}")))
@@ -395,7 +407,7 @@ impl BoardView {
                         )
                     })
             }))
-            .when_some(self.related_note_error.clone(), |this, error| {
+            .when_some(self.related_notes.error.clone(), |this, error| {
                 this.child(div().text_xs().text_color(theme.danger).child(error))
             })
     }

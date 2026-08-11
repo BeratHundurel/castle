@@ -11,7 +11,7 @@ impl BoardView {
         cx: &mut Context<Self>,
         links_changed: bool,
     ) {
-        if let Some(board_id) = self.board_id {
+        if let Some(board_id) = self.data.board_id {
             cx.emit(BoardViewEvent::DataCommitted {
                 board_id,
                 links_changed,
@@ -28,30 +28,31 @@ impl BoardView {
     ) where
         F: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime.spawn(mutation).await;
             this.update(cx, |this, cx| {
-                if this.board_id != Some(board_id) {
+                if this.data.board_id != Some(board_id) {
                     return;
                 }
                 match result {
                     Ok(Ok(())) => {
-                        this.mutation_error = None;
+                        this.mutation.mutation_error = None;
                         cx.emit(BoardViewEvent::DataCommitted {
                             board_id,
                             links_changed,
                         });
                     }
                     Ok(Err(error)) => {
-                        this.mutation_error = Some(format!("{failure_context}: {error}").into());
+                        this.mutation.mutation_error =
+                            Some(format!("{failure_context}: {error}").into());
                         this.enrich_board_async(cx, board_id);
                     }
                     Err(error) => {
-                        this.mutation_error =
+                        this.mutation.mutation_error =
                             Some(format!("{failure_context} task failed: {error}").into());
                         this.enrich_board_async(cx, board_id);
                     }
@@ -64,11 +65,11 @@ impl BoardView {
 
     #[cfg(test)]
     pub(crate) fn loaded_card_count(&self) -> usize {
-        self.cards.len()
+        self.data.lists.len()
     }
 
     pub(crate) fn load_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
-        if self.board_id == Some(board_id) {
+        if self.data.board_id == Some(board_id) {
             return;
         }
 
@@ -76,21 +77,20 @@ impl BoardView {
     }
 
     pub(crate) fn reload_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
-        if self.board_id != Some(board_id) {
-            self.mutation_error = None;
+        if self.data.board_id != Some(board_id) {
+            self.mutation.mutation_error = None;
         }
-        self.board_id = Some(board_id);
-        self.load_error = None;
-        self.is_adding_list = false;
-        self.next_checklist_item_position = 0;
+        self.data.board_id = Some(board_id);
+        self.mutation.load_error = None;
+        self.entry_editing.adding_list = false;
+        self.entry_editing.next_checklist_item_position = 0;
         self.enrich_board_async(cx, board_id);
     }
 
     pub(super) fn enrich_board_async(&mut self, cx: &mut Context<Self>, board_id: u32) {
-        self.load_generation = self.load_generation.saturating_add(1);
-        self.loaded_generation = None;
-        let generation = self.load_generation;
-        let local_mutation_generation = self.local_mutation_generation;
+        let generation = self.mutation.load_request.begin();
+        self.mutation.loaded_generation = None;
+        let local_mutation_generation = self.mutation.local_generation;
         let app_db = cx.global::<AppServices>();
         let store = app_db.store();
         let db = store.connection();
@@ -154,9 +154,11 @@ impl BoardView {
             drop(cancel_on_drop);
 
             this.update(cx, |this, cx| {
-                if this.board_id == Some(board_id) && this.load_generation == generation {
-                    this.loaded_generation = Some(generation);
-                    if this.local_mutation_generation != local_mutation_generation {
+                if this.data.board_id == Some(board_id)
+                    && this.mutation.load_request.generation() == generation
+                {
+                    this.mutation.loaded_generation = Some(generation);
+                    if this.mutation.local_generation != local_mutation_generation {
                         cx.notify();
                         cx.emit(super::BoardViewEvent::LoadFinished(board_id));
                         return;
@@ -193,11 +195,11 @@ impl BoardView {
                             warnings.extend(
                                 saved_views.warnings.iter().cloned().map(SharedString::from),
                             );
-                            this.cards = cards;
-                            this.board_labels = board_labels;
-                            this.board_properties = board_properties;
-                            this.property_values = property_values;
-                            this.saved_views = saved_views.views;
+                            this.data.lists = cards;
+                            this.data.labels = board_labels;
+                            this.properties.data = board_properties;
+                            this.properties.values = property_values;
+                            this.properties.saved_views = saved_views.views;
                             let workspace_link_catalog = Arc::new(link_catalog);
                             let project_id = workspace_link_catalog
                                 .iter()
@@ -207,36 +209,38 @@ impl BoardView {
                                         && entry.item.id == i64::from(board_id)
                                 })
                                 .and_then(|entry| entry.project_id);
-                            this.entry_wikilink_completion_provider
+                            this.related_notes
+                                .completion_provider
                                 .update_for_workspace_source(
                                     project_id,
                                     workspace_link_catalog.clone(),
                                 );
-                            this.workspace_link_catalog = workspace_link_catalog;
-                            this.related_notes_by_item = related_notes;
-                            this.active_view_id = active_view_id;
-                            this.active_view_config = active_view_config.clone();
+                            this.related_notes.catalog = workspace_link_catalog;
+                            this.related_notes.by_item = related_notes;
+                            this.properties.active_view_id = active_view_id;
+                            this.properties.active_view_config = active_view_config.clone();
                             this.filters =
                                 super::filters::BoardFilters::from_config(&active_view_config);
-                            this.view_config_dirty = false;
-                            this.view_load_warnings = warnings;
-                            this.attachment_preview_paths.clear();
-                            this.load_error = None;
+                            this.properties.view_config_dirty = false;
+                            this.properties.view_load_warnings = warnings;
+                            this.entry_editing.attachment_preview_paths.clear();
+                            this.mutation.load_error = None;
                         }
                         Err(err) => {
                             let message = format!("Failed to load board {board_id}: {err}");
                             eprintln!("{message}");
-                            this.cards.clear();
-                            this.board_properties = Default::default();
-                            this.property_values.clear();
-                            this.saved_views.clear();
-                            this.workspace_link_catalog = Arc::new(Vec::new());
-                            this.related_notes_by_item.clear();
-                            this.active_view_id = None;
-                            this.active_view_config = super::filters::default_view_config();
+                            this.data.lists.clear();
+                            this.properties.data = Default::default();
+                            this.properties.values.clear();
+                            this.properties.saved_views.clear();
+                            this.related_notes.catalog = Arc::new(Vec::new());
+                            this.related_notes.by_item.clear();
+                            this.properties.active_view_id = None;
+                            this.properties.active_view_config =
+                                super::filters::default_view_config();
                             this.filters.clear();
-                            this.view_load_warnings.clear();
-                            this.load_error = Some(SharedString::from(message));
+                            this.properties.view_load_warnings.clear();
+                            this.mutation.load_error = Some(SharedString::from(message));
                         }
                     }
                     cx.notify();
@@ -245,7 +249,7 @@ impl BoardView {
             })
             .ok();
         });
-        self._load_task = Some(task);
+        self.mutation.load_request.set_task(task);
     }
 }
 
@@ -460,15 +464,15 @@ mod tests {
 
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(cx, |board, _| !board.cards.is_empty()) {
+            if view.read_with(cx, |board, _| !board.data.lists.is_empty()) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
 
         view.read_with(cx, |board, _| {
-            assert_eq!(board.cards.len(), 1);
-            assert_eq!(board.cards[0].entries.len(), 1);
+            assert_eq!(board.data.lists.len(), 1);
+            assert_eq!(board.data.lists[0].entries.len(), 1);
         });
     }
 
@@ -540,7 +544,7 @@ mod tests {
         let view = window.root(cx).expect("board view should exist");
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(cx, |board, _| board.cards.len() == 2) {
+            if view.read_with(cx, |board, _| board.data.lists.len() == 2) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -555,7 +559,7 @@ mod tests {
             board.move_entry_to_list_end(entry_id, destination_id, cx)
         });
         assert!(view.read_with(cx, |board, _| {
-            board.cards.iter().any(|list| {
+            board.data.lists.iter().any(|list| {
                 list.id == destination_id && list.entries.iter().any(|entry| entry.id == entry_id)
             })
         }));
@@ -571,7 +575,7 @@ mod tests {
         cx.run_until_parked();
 
         assert!(view.read_with(cx, |board, _| {
-            board.cards.iter().any(|list| {
+            board.data.lists.iter().any(|list| {
                 list.id == destination_id && list.entries.iter().any(|entry| entry.id == entry_id)
             })
         }));
@@ -881,7 +885,8 @@ mod tests {
             cx.run_until_parked();
             if view.read_with(&cx, |board, _| {
                 board
-                    .cards
+                    .data
+                    .lists
                     .first()
                     .is_some_and(|list| list.entries.len() == 2)
             }) {
@@ -907,7 +912,7 @@ mod tests {
 
             assert_eq!(
                 view.read_with(&cx, |board, _| {
-                    board.cards[0]
+                    board.data.lists[0]
                         .entries
                         .iter()
                         .map(|entry| entry.id)

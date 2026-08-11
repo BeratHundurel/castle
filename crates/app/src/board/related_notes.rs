@@ -57,19 +57,22 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> Vec<storage::workspace_links::WorkspaceCatalogEntry> {
         let source_project_id = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.project_id);
         let query = self
-            .related_note_picker
+            .related_notes
+            .picker
             .search_input
             .read(cx)
             .value()
             .trim()
             .to_lowercase();
         let mut candidates = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
             .filter(|entry| {
@@ -94,7 +97,7 @@ impl BoardView {
     }
 
     pub(in crate::board) fn activate_related_note_candidate(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = self.related_note_picker.target else {
+        let Some(item) = self.related_notes.picker.target else {
             return;
         };
         let linked = self
@@ -107,11 +110,12 @@ impl BoardView {
             return;
         }
         let index = self
-            .related_note_picker
+            .related_notes
+            .picker
             .active_row
             .min(candidates.len() - 1);
         let note_id = candidates[index].item.id;
-        if linked.contains(&note_id) || self.related_note_picker.pending.contains(&(item, note_id))
+        if linked.contains(&note_id) || self.related_notes.picker.pending.contains(&(item, note_id))
         {
             return;
         }
@@ -123,15 +127,16 @@ impl BoardView {
         direction: isize,
         cx: &mut Context<Self>,
     ) {
-        let Some(item) = self.related_note_picker.target else {
+        let Some(item) = self.related_notes.picker.target else {
             return;
         };
         let count = self.related_note_candidates(item, cx).len();
         if count == 0 {
-            self.related_note_picker.active_row = 0;
+            self.related_notes.picker.active_row = 0;
         } else {
-            self.related_note_picker.active_row = self
-                .related_note_picker
+            self.related_notes.picker.active_row = self
+                .related_notes
+                .picker
                 .active_row
                 .saturating_add_signed(direction)
                 .min(count - 1);
@@ -144,7 +149,7 @@ impl BoardView {
     ) -> Option<storage::workspace_links::WorkspaceItemRef> {
         Some(storage::workspace_links::WorkspaceItemRef {
             kind: storage::workspace_links::WorkspaceItemKind::Card,
-            id: i64::from(self.entry_dialog.entry_id?),
+            id: i64::from(self.entry_editing.dialog.entry_id?),
         })
     }
 
@@ -154,14 +159,16 @@ impl BoardView {
     ) -> Vec<storage::workspace_links::RelatedNote> {
         if item.kind == storage::workspace_links::WorkspaceItemKind::Card {
             return self
-                .cards
+                .data
+                .lists
                 .iter()
                 .flat_map(|list| list.entries.iter())
                 .find(|card| i64::from(card.id) == item.id)
                 .map(|card| card.related_notes.clone())
                 .unwrap_or_default();
         }
-        self.related_notes_by_item
+        self.related_notes
+            .by_item
             .get(&item)
             .cloned()
             .unwrap_or_default()
@@ -173,13 +180,14 @@ impl BoardView {
     ) -> Option<&mut Vec<storage::workspace_links::RelatedNote>> {
         if item.kind == storage::workspace_links::WorkspaceItemKind::Card {
             return self
-                .cards
+                .data
+                .lists
                 .iter_mut()
                 .flat_map(|list| list.entries.iter_mut())
                 .find(|card| i64::from(card.id) == item.id)
                 .map(|card| &mut card.related_notes);
         }
-        Some(self.related_notes_by_item.entry(item).or_default())
+        Some(self.related_notes.by_item.entry(item).or_default())
     }
 
     pub(in crate::board) fn link_note_to_item(
@@ -188,11 +196,12 @@ impl BoardView {
         note_id: i64,
         cx: &mut Context<Self>,
     ) {
-        if !self.related_note_picker.pending.insert((item, note_id)) {
+        if !self.related_notes.picker.pending.insert((item, note_id)) {
             return;
         }
         let Some(note) = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| {
                 entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note
@@ -200,12 +209,12 @@ impl BoardView {
             })
             .cloned()
         else {
-            self.related_note_picker.pending.remove(&(item, note_id));
+            self.related_notes.picker.pending.remove(&(item, note_id));
             return;
         };
 
         let Some(related_notes) = self.related_notes_for_item_mut(item) else {
-            self.related_note_picker.pending.remove(&(item, note_id));
+            self.related_notes.picker.pending.remove(&(item, note_id));
             return;
         };
 
@@ -231,14 +240,15 @@ impl BoardView {
             });
         }
 
-        self.related_note_picker.open = false;
-        self.related_note_picker.target = None;
-        self.related_note_error = None;
+        self.related_notes.picker.open = false;
+        self.related_notes.picker.target = None;
+        self.related_notes.error = None;
         cx.notify();
 
         let db = cx.global::<AppServices>().store().connection();
         let board_id = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
@@ -259,7 +269,7 @@ impl BoardView {
                 .await;
 
             this.update(cx, |this, cx| {
-                this.related_note_picker.pending.remove(&(item, note_id));
+                this.related_notes.picker.pending.remove(&(item, note_id));
                 let error = match result {
                     Ok(Ok(update)) => {
                         if let Some(related_notes) = this.related_notes_for_item_mut(item) {
@@ -277,9 +287,9 @@ impl BoardView {
                     Err(error) => Some(error.to_string()),
                 };
                 if let Some(error) = error {
-                    this.related_note_error =
+                    this.related_notes.error =
                         Some(SharedString::from(format!("Could not link note: {error}")));
-                    if let Some(board_id) = this.board_id {
+                    if let Some(board_id) = this.data.board_id {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
@@ -296,16 +306,17 @@ impl BoardView {
         note_id: i64,
         cx: &mut Context<Self>,
     ) {
-        if !self.related_note_picker.pending.insert((item, note_id)) {
+        if !self.related_notes.picker.pending.insert((item, note_id)) {
             return;
         }
         self.remove_manual_origin(item, note_id);
-        self.related_note_error = None;
+        self.related_notes.error = None;
         cx.notify();
 
         let db = cx.global::<AppServices>().store().connection();
         let board_id = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
@@ -325,7 +336,7 @@ impl BoardView {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.related_note_picker.pending.remove(&(item, note_id));
+                this.related_notes.picker.pending.remove(&(item, note_id));
                 let error = match result {
                     Ok(Ok(update)) => {
                         if let Some(related_notes) = this.related_notes_for_item_mut(item) {
@@ -343,10 +354,10 @@ impl BoardView {
                     Err(error) => Some(error.to_string()),
                 };
                 if let Some(error) = error {
-                    this.related_note_error = Some(SharedString::from(format!(
+                    this.related_notes.error = Some(SharedString::from(format!(
                         "Could not unlink note: {error}"
                     )));
-                    if let Some(board_id) = this.board_id {
+                    if let Some(board_id) = this.data.board_id {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
@@ -388,7 +399,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(source) = self
-            .workspace_link_catalog
+            .related_notes
+            .catalog
             .iter()
             .find(|entry| entry.item == item)
         else {

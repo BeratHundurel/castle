@@ -97,13 +97,14 @@ impl AppShell {
     }
 
     fn render_note_save_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(view) =
-            self.open_tabs
-                .get(self.active_tab_index)
-                .and_then(|tab| match &tab.kind {
-                    OpenTabKind::Note { view, .. } => Some(view.clone()),
-                    _ => None,
-                })
+        let Some(view) = self
+            .tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
+            .and_then(|tab| match &tab.kind {
+                OpenTabKind::Note { view, .. } => Some(view.clone()),
+                _ => None,
+            })
         else {
             return div().into_any_element();
         };
@@ -179,10 +180,11 @@ impl AppShell {
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_index = self
+            .tabs
             .active_tab_index
-            .min(self.open_tabs.len().saturating_sub(1));
+            .min(self.tabs.open_tabs.len().saturating_sub(1));
 
-        let active_tab_id = self.open_tabs.get(active_index).map(|t| t.id);
+        let active_tab_id = self.tabs.open_tabs.get(active_index).map(|t| t.id);
 
         let tab_bar = TabBar::new("open-tabs")
             .pill()
@@ -201,7 +203,7 @@ impl AppShell {
                     .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
             )
             .suffix(div().w_0())
-            .children(self.open_tabs.iter().enumerate().map(|(index, tab)| {
+            .children(self.tabs.open_tabs.iter().enumerate().map(|(index, tab)| {
                 Tab::new()
                     .px_2()
                     .text_color(cx.theme().primary_foreground)
@@ -233,7 +235,7 @@ impl AppShell {
     }
 
     fn render_active_tab(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(tab) = self.open_tabs.get(self.active_tab_index) else {
+        let Some(tab) = self.tabs.open_tabs.get(self.tabs.active_tab_index) else {
             return div().size_full().into_any_element();
         };
 

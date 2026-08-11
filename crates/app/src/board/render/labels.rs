@@ -25,7 +25,7 @@ impl BoardView {
                     .child("Labels"),
             )
             .when_else(
-                self.entry_dialog.managing_labels,
+                self.entry_editing.dialog.managing_labels,
                 |this| {
                     this.child(
                         Button::new("done-managing-labels")
@@ -50,7 +50,7 @@ impl BoardView {
                 },
             );
 
-        if self.entry_dialog.managing_labels {
+        if self.entry_editing.dialog.managing_labels {
             return v_flex()
                 .min_h(px(132.))
                 .p_3()
@@ -114,7 +114,7 @@ impl BoardView {
         entry_id: Option<u32>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let labels = self.board_labels.clone();
+        let labels = self.data.labels.clone();
 
         v_flex()
             .gap_3()
@@ -122,7 +122,8 @@ impl BoardView {
                 let label_id = label.id;
                 let assigned = entry_id
                     .and_then(|entry_id| {
-                        self.cards
+                        self.data
+                            .lists
                             .iter()
                             .flat_map(|list| list.entries.iter())
                             .find(|entry| entry.id == entry_id)
@@ -150,10 +151,10 @@ impl BoardView {
                     .hover(|this| this.bg(cx.theme().secondary_hover))
                     .child(div().size_2p5().flex_shrink_0().rounded(px(3.)).bg(color))
                     .child(div().flex_1().min_w_0().overflow_hidden().when_else(
-                        self.renaming_label_id == Some(label_id),
+                        self.entry_editing.renaming_label_id == Some(label_id),
                         |this| {
                             this.child(
-                                Input::new(&self.rename_label_input)
+                                Input::new(&self.entry_editing.rename_label_input)
                                     .w_full()
                                     .min_w_0()
                                     .xsmall()
@@ -258,12 +259,13 @@ impl BoardView {
                             .child("Press Enter to save"),
                     )
                     .child(
-                        Input::new(&self.new_label_input)
+                        Input::new(&self.entry_editing.new_label_input)
                             .w_full()
                             .small()
-                            .prefix(div().size_2p5().rounded(px(3.)).bg(
-                                self.label_marker_color(self.selected_label_color.as_ref(), cx),
-                            ))
+                            .prefix(div().size_2p5().rounded(px(3.)).bg(self.label_marker_color(
+                                self.entry_editing.selected_label_color.as_ref(),
+                                cx,
+                            )))
                             .bg(cx.theme().input_background()),
                     )
                     .child(
@@ -280,7 +282,8 @@ impl BoardView {
                             .enumerate()
                             .map(|(index, (key, label))| {
                                 let color = self.label_marker_color(key, cx);
-                                let selected = self.selected_label_color.as_ref() == key;
+                                let selected =
+                                    self.entry_editing.selected_label_color.as_ref() == key;
 
                                 Button::new(("label-color", index))
                                     .tooltip(label)

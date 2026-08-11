@@ -157,7 +157,8 @@ impl AppShell {
             return div().into_any_element();
         };
         let project_name = picker.project_id.and_then(|project_id| {
-            self.projects
+            self.workspace
+                .projects
                 .iter()
                 .find(|project| project.id == project_id)
                 .map(|project| project.name.clone())

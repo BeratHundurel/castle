@@ -27,21 +27,43 @@ use gpui_component::input::{InputEvent, InputState};
 
 use crate::board::entry_dialog::EntryDialog;
 
-pub(crate) struct BoardView {
+struct BoardDataState {
     board_id: Option<u32>,
-    cards: Vec<BoardListDTO>,
-    board_labels: Vec<BoardLabelDTO>,
-    board_properties: storage::board_properties::BoardProperties,
-    property_values: HashMap<(i64, i64), storage::board_properties::PropertyValue>,
+    lists: Vec<BoardListDTO>,
+    labels: Vec<BoardLabelDTO>,
+}
+
+struct RelatedNotesState {
+    picker: related_notes::RelatedNotePickerState,
+    by_item: HashMap<
+        storage::workspace_links::WorkspaceItemRef,
+        Vec<storage::workspace_links::RelatedNote>,
+    >,
+    catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    completion_provider: crate::document_editor::links::WikiLinkCompletionProvider,
+    error: Option<SharedString>,
+}
+
+struct BoardMutationState {
+    load_error: Option<SharedString>,
+    mutation_error: Option<SharedString>,
+    load_request: crate::request_tracker::RequestTracker,
+    layout_commit_task: Option<Task<()>>,
+    loaded_generation: Option<u64>,
+    local_generation: u64,
+}
+
+struct BoardPropertiesState {
+    data: storage::board_properties::BoardProperties,
+    values: HashMap<(i64, i64), storage::board_properties::PropertyValue>,
     saved_views: Vec<storage::board_properties::BoardView>,
     active_view_id: Option<i64>,
     active_view_config: storage::board_properties::BoardViewConfig,
     view_config_dirty: bool,
     view_load_warnings: Vec<SharedString>,
-    property_update_error: Option<SharedString>,
-    related_note_error: Option<SharedString>,
-    property_field_errors: HashMap<(i64, i64), SharedString>,
-    saving_property_values: HashSet<(i64, i64)>,
+    update_error: Option<SharedString>,
+    field_errors: HashMap<(i64, i64), SharedString>,
+    saving_values: HashSet<(i64, i64)>,
     property_panel_open: bool,
     property_form_open: bool,
     fields_panel_open: bool,
@@ -65,54 +87,51 @@ pub(crate) struct BoardView {
     rename_view_input: Entity<InputState>,
     renaming_view_id: Option<i64>,
     filter_value_input: Entity<InputState>,
-    related_note_picker: related_notes::RelatedNotePickerState,
-    related_notes_by_item: HashMap<
-        storage::workspace_links::WorkspaceItemRef,
-        Vec<storage::workspace_links::RelatedNote>,
-    >,
-    workspace_link_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
-    entry_wikilink_completion_provider: crate::document_editor::links::WikiLinkCompletionProvider,
     editing_filter_property_id: Option<i64>,
-    next_property_update_revision: u64,
-    property_update_revisions: HashMap<(i64, i64), u64>,
-    persisted_property_revisions: Arc<tokio::sync::Mutex<HashMap<(i64, i64), u64>>>,
-    load_error: Option<SharedString>,
-    mutation_error: Option<SharedString>,
-    is_adding_list: bool,
-    is_entry_open: bool,
-    entry_dialog: EntryDialog,
+    next_update_revision: u64,
+    update_revisions: HashMap<(i64, i64), u64>,
+    persisted_revisions: Arc<tokio::sync::Mutex<HashMap<(i64, i64), u64>>>,
+}
+
+struct EntryEditingState {
+    adding_list: bool,
+    open: bool,
+    dialog: EntryDialog,
     new_list_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
     dialog_description_input: Entity<InputState>,
-    entry_title_input: Entity<InputState>,
-    entry_description_input: Entity<InputState>,
+    title_input: Entity<InputState>,
+    description_input: Entity<InputState>,
     due_date_picker: Entity<DatePickerState>,
     new_label_input: Entity<InputState>,
     rename_label_input: Entity<InputState>,
     new_checklist_item_input: Entity<InputState>,
     rename_checklist_item_input: Entity<InputState>,
-    rename_card_input: Entity<InputState>,
-    renaming_card_id: Option<u32>,
-    pending_card_id: Option<u32>,
+    rename_list_input: Entity<InputState>,
+    renaming_list_id: Option<u32>,
+    pending_list_id: Option<u32>,
     renaming_label_id: Option<u32>,
     renaming_checklist_item_id: Option<u32>,
     selected_label_color: SharedString,
-    filters: filters::BoardFilters,
-    filter_panel_open: bool,
+    next_temporary_list_id: u32,
     next_temporary_card_id: u32,
-    next_temporary_entry_id: u32,
     next_checklist_item_position: i32,
     next_due_date_update_revision: u64,
     persisted_due_date_revisions: Arc<tokio::sync::Mutex<HashMap<u32, u64>>>,
     attachment_preview_paths: HashMap<u32, PathBuf>,
+}
+
+pub(crate) struct BoardView {
+    data: BoardDataState,
+    properties: BoardPropertiesState,
+    related_notes: RelatedNotesState,
+    mutation: BoardMutationState,
+    entry_editing: EntryEditingState,
+    filters: filters::BoardFilters,
+    filter_panel_open: bool,
     board_scroll_handle: ScrollHandle,
     pending_reveal_target: Option<crate::workspace_navigation::WorkspaceNavigationTarget>,
     revealed_list_id: Option<u32>,
-    _load_task: Option<Task<()>>,
-    _layout_commit_task: Option<Task<()>>,
-    load_generation: u64,
-    loaded_generation: Option<u64>,
-    local_mutation_generation: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -206,7 +225,7 @@ impl BoardView {
             &related_note_search_input,
             |this: &mut Self, _, event: &InputEvent, cx| match event {
                 InputEvent::Change => {
-                    this.related_note_picker.active_row = 0;
+                    this.related_notes.picker.active_row = 0;
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.activate_related_note_candidate(cx),
@@ -223,29 +242,29 @@ impl BoardView {
                 InputEvent::PressEnter { .. } => {
                     let text = input.read(cx).text().to_string();
                     let name = text.trim();
-                    if let Some(board_id) = this.board_id
+                    if let Some(board_id) = this.data.board_id
                         && !name.is_empty()
                     {
                         let card_id = this.next_card_id();
-                        this.is_adding_list = false;
+                        this.entry_editing.adding_list = false;
                         this.add_card(
                             cx,
                             BoardListDTO {
                                 id: card_id,
                                 title: SharedString::from(name),
                                 board_id,
-                                position: this.cards.len() as i32,
+                                position: this.data.lists.len() as i32,
                                 entries: vec![],
                             },
                             card_id,
                         );
                     } else {
-                        this.is_adding_list = false;
+                        this.entry_editing.adding_list = false;
                         cx.notify();
                     }
                 }
                 InputEvent::Blur => {
-                    this.is_adding_list = false;
+                    this.entry_editing.adding_list = false;
                     cx.notify();
                 }
                 _ => {}
@@ -291,7 +310,7 @@ impl BoardView {
                 InputEvent::PressEnter { .. } => {
                     let name = input.read(cx).value().trim().to_string();
                     if name.is_empty() {
-                        this.renaming_label_id = None;
+                        this.entry_editing.renaming_label_id = None;
                         cx.notify();
                     } else {
                         this.rename_board_label(name, cx);
@@ -301,7 +320,7 @@ impl BoardView {
                     }
                 }
                 InputEvent::Blur => {
-                    this.renaming_label_id = None;
+                    this.entry_editing.renaming_label_id = None;
                     cx.notify();
                 }
                 _ => {}
@@ -334,7 +353,7 @@ impl BoardView {
                     }
                 }
                 InputEvent::Blur => {
-                    this.renaming_checklist_item_id = None;
+                    this.entry_editing.renaming_checklist_item_id = None;
                     cx.notify();
                 }
                 _ => {}
@@ -351,12 +370,12 @@ impl BoardView {
                     if !name.is_empty() {
                         this.rename_card(cx, name);
                     } else {
-                        this.renaming_card_id = None;
+                        this.entry_editing.renaming_list_id = None;
                         cx.notify();
                     }
                 }
                 InputEvent::Blur => {
-                    this.renaming_card_id = None;
+                    this.entry_editing.renaming_list_id = None;
                     cx.notify();
                 }
                 _ => {}
@@ -399,7 +418,7 @@ impl BoardView {
                     let value = input.read(cx).value().to_string();
                     this.commit_property_value(value, cx);
                 }
-                InputEvent::Blur if this.editing_property_id.is_some() => {
+                InputEvent::Blur if this.properties.editing_property_id.is_some() => {
                     let value = input.read(cx).value().to_string();
                     this.commit_property_value(value, cx);
                 }
@@ -413,8 +432,10 @@ impl BoardView {
             window,
             |this: &mut Self, _, event: &DatePickerEvent, _, cx| {
                 if let DatePickerEvent::Change(Date::Single(date)) = event
-                    && let (Some(entry_id), Some(property_id)) =
-                        (this.entry_dialog.entry_id, this.editing_property_id)
+                    && let (Some(entry_id), Some(property_id)) = (
+                        this.entry_editing.dialog.entry_id,
+                        this.properties.editing_property_id,
+                    )
                 {
                     this.set_entry_property_value(
                         i64::from(entry_id),
@@ -492,94 +513,103 @@ impl BoardView {
         .detach();
 
         Self {
-            board_id: None,
-            cards: vec![],
-            board_labels: vec![],
-            board_properties: storage::board_properties::BoardProperties::default(),
-            property_values: HashMap::new(),
-            saved_views: vec![],
-            active_view_id: None,
-            active_view_config: storage::board_properties::BoardViewConfig {
-                visible_properties: vec![
-                    storage::board_properties::PropertyKey::Labels,
-                    storage::board_properties::PropertyKey::DueDate,
-                ],
-                ..Default::default()
+            data: BoardDataState {
+                board_id: None,
+                lists: vec![],
+                labels: vec![],
             },
-            view_config_dirty: false,
-            view_load_warnings: vec![],
-            property_update_error: None,
-            related_note_error: None,
-            property_field_errors: HashMap::new(),
-            saving_property_values: HashSet::new(),
-            property_panel_open: false,
-            property_form_open: false,
-            fields_panel_open: false,
-            view_panel_open: false,
-            new_view_form_open: false,
-            sort_panel_open: false,
-            new_property_kind: storage::board_properties::PropertyKind::Text,
-            new_property_input,
-            rename_property_input,
-            renaming_property_id: None,
-            new_property_option_input,
-            rename_property_option_input,
-            renaming_property_option_id: None,
-            adding_property_option_id: None,
-            property_value_input,
-            property_date_picker,
-            editing_property_id: None,
-            property_select_search_input,
-            selecting_property_id: None,
-            new_view_input,
-            rename_view_input,
-            renaming_view_id: None,
-            filter_value_input,
-            related_note_picker,
-            related_notes_by_item: HashMap::new(),
-            workspace_link_catalog: Arc::new(Vec::new()),
-            entry_wikilink_completion_provider,
-            editing_filter_property_id: None,
-            next_property_update_revision: 0,
-            property_update_revisions: HashMap::new(),
-            persisted_property_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            load_error: None,
-            mutation_error: None,
-            is_adding_list: false,
-            is_entry_open: false,
-            entry_dialog,
-            new_list_input,
-            dialog_title_input,
-            dialog_description_input,
-            entry_title_input,
-            entry_description_input,
-            due_date_picker,
-            new_label_input,
-            rename_label_input,
-            new_checklist_item_input,
-            rename_checklist_item_input,
-            rename_card_input: card_edit_input,
-            renaming_card_id: None,
-            pending_card_id: None,
-            renaming_label_id: None,
-            renaming_checklist_item_id: None,
-            selected_label_color: SharedString::from("blue"),
+            properties: BoardPropertiesState {
+                data: storage::board_properties::BoardProperties::default(),
+                values: HashMap::new(),
+                saved_views: vec![],
+                active_view_id: None,
+                active_view_config: storage::board_properties::BoardViewConfig {
+                    visible_properties: vec![
+                        storage::board_properties::PropertyKey::Labels,
+                        storage::board_properties::PropertyKey::DueDate,
+                    ],
+                    ..Default::default()
+                },
+                view_config_dirty: false,
+                view_load_warnings: vec![],
+                update_error: None,
+                field_errors: HashMap::new(),
+                saving_values: HashSet::new(),
+                property_panel_open: false,
+                property_form_open: false,
+                fields_panel_open: false,
+                view_panel_open: false,
+                new_view_form_open: false,
+                sort_panel_open: false,
+                new_property_kind: storage::board_properties::PropertyKind::Text,
+                new_property_input,
+                rename_property_input,
+                renaming_property_id: None,
+                new_property_option_input,
+                rename_property_option_input,
+                renaming_property_option_id: None,
+                adding_property_option_id: None,
+                property_value_input,
+                property_date_picker,
+                editing_property_id: None,
+                property_select_search_input,
+                selecting_property_id: None,
+                new_view_input,
+                rename_view_input,
+                renaming_view_id: None,
+                filter_value_input,
+                editing_filter_property_id: None,
+                next_update_revision: 0,
+                update_revisions: HashMap::new(),
+                persisted_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            },
+            related_notes: RelatedNotesState {
+                picker: related_note_picker,
+                by_item: HashMap::new(),
+                catalog: Arc::new(Vec::new()),
+                completion_provider: entry_wikilink_completion_provider,
+                error: None,
+            },
+            mutation: BoardMutationState {
+                load_error: None,
+                mutation_error: None,
+                load_request: crate::request_tracker::RequestTracker::default(),
+                layout_commit_task: None,
+                loaded_generation: None,
+                local_generation: 0,
+            },
+            entry_editing: EntryEditingState {
+                adding_list: false,
+                open: false,
+                dialog: entry_dialog,
+                new_list_input,
+                dialog_title_input,
+                dialog_description_input,
+                title_input: entry_title_input,
+                description_input: entry_description_input,
+                due_date_picker,
+                new_label_input,
+                rename_label_input,
+                new_checklist_item_input,
+                rename_checklist_item_input,
+                rename_list_input: card_edit_input,
+                renaming_list_id: None,
+                pending_list_id: None,
+                renaming_label_id: None,
+                renaming_checklist_item_id: None,
+                selected_label_color: SharedString::from("blue"),
+                next_temporary_list_id: 0,
+                next_temporary_card_id: 0,
+                next_checklist_item_position: 0,
+                next_due_date_update_revision: 0,
+                persisted_due_date_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+                attachment_preview_paths: HashMap::new(),
+            },
             filters: filters::BoardFilters::default(),
             filter_panel_open: false,
-            next_temporary_card_id: 0,
-            next_temporary_entry_id: 0,
-            next_checklist_item_position: 0,
-            next_due_date_update_revision: 0,
-            persisted_due_date_revisions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            attachment_preview_paths: HashMap::new(),
             board_scroll_handle: ScrollHandle::new(),
             pending_reveal_target: None,
             revealed_list_id: None,
-            _load_task: None,
-            _layout_commit_task: None,
-            load_generation: 0,
-            loaded_generation: None,
-            local_mutation_generation: 0,
         }
     }
 
@@ -608,17 +638,17 @@ impl BoardView {
         else {
             return false;
         };
-        if self.board_id != Some(board_id) {
+        if self.data.board_id != Some(board_id) {
             return false;
         }
         if list_id.is_none() && card_id.is_none() {
             self.pending_reveal_target = None;
             return true;
         }
-        if self.loaded_generation != Some(self.load_generation) {
+        if self.mutation.loaded_generation != Some(self.mutation.load_request.generation()) {
             return false;
         }
-        if self.cards.is_empty() {
+        if self.data.lists.is_empty() {
             self.pending_reveal_target = None;
             cx.emit(BoardViewEvent::NavigationUnavailable(
                 "The linked list or card is no longer available.".to_string(),
@@ -628,19 +658,21 @@ impl BoardView {
 
         let resolved_list_id = card_id
             .and_then(|card_id| {
-                self.cards
+                self.data
+                    .lists
                     .iter()
                     .find(|list| list.entries.iter().any(|card| card.id == card_id))
                     .map(|list| list.id)
             })
             .or(list_id);
         let Some(resolved_list_id) =
-            resolved_list_id.or_else(|| self.cards.first().map(|list| list.id))
+            resolved_list_id.or_else(|| self.data.lists.first().map(|list| list.id))
         else {
             return false;
         };
         let Some(list_index) = self
-            .cards
+            .data
+            .lists
             .iter()
             .position(|list| list.id == resolved_list_id)
         else {
@@ -651,7 +683,7 @@ impl BoardView {
             return false;
         };
         if let Some(card_id) = card_id {
-            if !self.cards[list_index]
+            if !self.data.lists[list_index]
                 .entries
                 .iter()
                 .any(|card| card.id == card_id)
@@ -667,13 +699,13 @@ impl BoardView {
         self.board_scroll_handle.scroll_to_item(list_index);
         self.revealed_list_id = Some(resolved_list_id);
         self.pending_reveal_target = None;
-        let generation = self.load_generation;
+        let generation = self.mutation.load_request.generation();
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(1_200))
                 .await;
             this.update(cx, |this, cx| {
-                if this.load_generation == generation {
+                if this.mutation.load_request.generation() == generation {
                     this.revealed_list_id = None;
                     cx.notify();
                 }

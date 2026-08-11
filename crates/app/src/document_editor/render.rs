@@ -46,8 +46,8 @@ impl Focusable for DocumentEditorView {
 impl DocumentEditorView {
     pub(crate) fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let source_is_ready = self.source_bounds.is_some();
-        let outline_in_layout = self.outline_rendered && self.view_width >= px(760.);
+        let source_is_ready = self.analysis.source_bounds.is_some();
+        let outline_in_layout = self.analysis.outline_rendered && self.view_width >= px(760.);
         let outline_width = outline_width_for_view(self.outline_width, self.view_width);
         let source_width = self.view_width
             - if outline_in_layout {
@@ -71,8 +71,8 @@ impl DocumentEditorView {
             .text_size(cx.theme().mono_font_size)
             .focus_bordered(false);
 
-        let input = if outline_in_layout && self.outline_transition_epoch > 0 {
-            let (from_width, to_width) = if self.outline_visible {
+        let input = if outline_in_layout && self.analysis.outline_transition_epoch > 0 {
+            let (from_width, to_width) = if self.analysis.outline_visible {
                 (self.view_width, self.view_width - outline_width)
             } else {
                 (self.view_width - outline_width, self.view_width)
@@ -84,7 +84,7 @@ impl DocumentEditorView {
                 .with_animation(
                     (
                         "document-source-padding-transition",
-                        self.outline_transition_epoch,
+                        self.analysis.outline_transition_epoch,
                     ),
                     Animation::new(super::OUTLINE_TRANSITION_DURATION)
                         .with_easing(ease_in_out_cubic),
@@ -108,8 +108,8 @@ impl DocumentEditorView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_vim_mouse_down))
             .on_prepaint(move |bounds, _, cx| {
                 view.update(cx, |this, cx| {
-                    if this.source_bounds != Some(bounds) {
-                        this.source_bounds = Some(bounds);
+                    if this.analysis.source_bounds != Some(bounds) {
+                        this.analysis.source_bounds = Some(bounds);
                         cx.notify();
                     }
                 });
@@ -123,7 +123,7 @@ impl DocumentEditorView {
         if !self.vim_is_enabled() || self.vim_mode() == VimMode::Insert {
             return Vec::new();
         }
-        let Some(source_bounds) = self.source_bounds else {
+        let Some(source_bounds) = self.analysis.source_bounds else {
             return Vec::new();
         };
 
@@ -173,8 +173,8 @@ impl DocumentEditorView {
         source_width: Pixels,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let highlight = self.outline_source_highlight?;
-        let source_bounds = self.source_bounds?;
+        let highlight = self.analysis.outline_source_highlight?;
+        let source_bounds = self.analysis.source_bounds?;
         let editor = self.editor.read(cx);
         let row = editor.text().offset_to_point(highlight.source_offset).row;
         if !super::row_is_in_visible_layout(editor.visible_row_range(), row) {
@@ -223,15 +223,15 @@ impl DocumentEditorView {
         let font_size_value = AppSettings::markdown_preview_font_size(cx);
         let font_size = px(font_size_value as f32);
 
-        let sections = if self.outline.markdown_sections().is_empty() {
+        let sections = if self.analysis.outline.markdown_sections().is_empty() {
             vec![self.editor.read(cx).value()]
         } else {
-            self.outline.markdown_sections().to_vec()
+            self.analysis.outline.markdown_sections().to_vec()
         };
         let section_count = sections.len();
 
-        let virtualization = markdown_preview_virtualization(self.outline_rows.is_empty());
-        let outline_in_layout = self.outline_rendered && self.view_width >= px(760.);
+        let virtualization = markdown_preview_virtualization(self.analysis.outline_rows.is_empty());
+        let outline_in_layout = self.analysis.outline_rendered && self.view_width >= px(760.);
         let preview_width = self.view_width
             - if outline_in_layout {
                 outline_width_for_view(self.outline_width, self.view_width)
@@ -242,30 +242,29 @@ impl DocumentEditorView {
         let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
             cx.global::<AppServices>().data_dir(),
-            self.current_path.as_deref(),
+            self.persistence.current_path.as_deref(),
         );
         let wikilink_plugin = super::links::WikiLinkPreviewPlugin::new(
             cx.entity(),
-            self.project_id,
-            self.note_link_catalog.clone(),
-            self.note_links.clone(),
-            self.workspace_link_catalog.clone(),
+            self.inspector_links.project_id,
+            self.inspector_links.note_catalog.clone(),
+            self.inspector_links.note_links.clone(),
+            self.inspector_links.workspace_catalog.clone(),
         );
-        let board_embed_plugin = super::board_embeds::BoardViewEmbedPlugin::new(
-            cx.entity(),
-            self.board_embed_states.clone(),
-        );
+        let board_embed_plugin =
+            super::board_embeds::BoardViewEmbedPlugin::new(cx.entity(), self.embeds.states.clone());
         let preview_style = markdown_preview_style(font_size);
 
-        if self.preview_list_state.item_count() != section_count {
-            self.preview_list_state.reset(section_count);
+        if self.analysis.preview_list_state.item_count() != section_count {
+            self.analysis.preview_list_state.reset(section_count);
         }
         if self
+            .analysis
             .preview_font_size_bits
             .replace(font_size_value.to_bits())
             != font_size_value.to_bits()
         {
-            self.preview_list_state.remeasure();
+            self.analysis.preview_list_state.remeasure();
         }
 
         let content = match virtualization {
@@ -287,35 +286,37 @@ impl DocumentEditorView {
             .scrollable(true)
             .selectable(true)
             .into_any_element(),
-            MarkdownPreviewVirtualization::Sections => list(self.preview_list_state.clone(), {
-                move |index, _window, _cx| {
-                    div()
-                        .w_full()
-                        .px(horizontal_padding)
-                        .pt(markdown_preview_section_top_padding(index))
-                        .when(index == 0, |this| this.pt_6())
-                        .when(index + 1 == section_count, |this| this.pb_6())
-                        .child(
-                            TextView::markdown(
-                                ("markdown-preview-section", index),
-                                sections[index].clone(),
+            MarkdownPreviewVirtualization::Sections => {
+                list(self.analysis.preview_list_state.clone(), {
+                    move |index, _window, _cx| {
+                        div()
+                            .w_full()
+                            .px(horizontal_padding)
+                            .pt(markdown_preview_section_top_padding(index))
+                            .when(index == 0, |this| this.pt_6())
+                            .when(index + 1 == section_count, |this| this.pb_6())
+                            .child(
+                                TextView::markdown(
+                                    ("markdown-preview-section", index),
+                                    sections[index].clone(),
+                                )
+                                .plugin(local_image_plugin.clone())
+                                .plugin(board_embed_plugin.clone())
+                                .plugin(wikilink_plugin.clone())
+                                .style(preview_style.clone())
+                                .code_block_actions(|code_block, _window, _cx| {
+                                    Clipboard::new("copy-code").value(code_block.code().clone())
+                                })
+                                .text_size(font_size)
+                                .scrollable(false)
+                                .selectable(true),
                             )
-                            .plugin(local_image_plugin.clone())
-                            .plugin(board_embed_plugin.clone())
-                            .plugin(wikilink_plugin.clone())
-                            .style(preview_style.clone())
-                            .code_block_actions(|code_block, _window, _cx| {
-                                Clipboard::new("copy-code").value(code_block.code().clone())
-                            })
-                            .text_size(font_size)
-                            .scrollable(false)
-                            .selectable(true),
-                        )
-                        .into_any_element()
-                }
-            })
-            .size_full()
-            .into_any_element(),
+                            .into_any_element()
+                    }
+                })
+                .size_full()
+                .into_any_element()
+            }
         };
 
         div()
@@ -327,20 +328,20 @@ impl DocumentEditorView {
             .child(content)
             .when(
                 virtualization == MarkdownPreviewVirtualization::Sections,
-                |this| this.vertical_scrollbar(&self.preview_list_state),
+                |this| this.vertical_scrollbar(&self.analysis.preview_list_state),
             )
     }
 
     fn render_outline(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.inspector_tab == DocumentInspectorTab::Links {
+        if self.inspector_links.tab == DocumentInspectorTab::Links {
             return self.render_links_inspector(cx).into_any_element();
         }
-        let selected = self.outline_selected;
-        let rows = self.outline_rows.clone();
+        let selected = self.analysis.outline_selected;
+        let rows = self.analysis.outline_rows.clone();
         let kind = self.kind;
         let empty = rows.is_empty();
-        let can_expand_all = self.outline.can_expand_all();
-        let can_collapse_all = self.outline.can_collapse_all();
+        let can_expand_all = self.analysis.outline.can_expand_all();
+        let can_collapse_all = self.analysis.outline.can_collapse_all();
         let empty_message = if self.kind == DocumentKind::Json {
             "Add JSON properties or array items to navigate this document."
         } else {
@@ -351,7 +352,7 @@ impl DocumentEditorView {
         v_flex()
             .id("document-outline")
             .key_context("DocumentOutline")
-            .track_focus(&self.outline_focus_handle)
+            .track_focus(&self.analysis.outline_focus_handle)
             .relative()
             .w(outline_width)
             .h_full()
@@ -494,7 +495,8 @@ impl DocumentEditorView {
                                                         })
                                                         .on_click(cx.listener(
                                                             move |this, _, window, cx| {
-                                                                this.outline_focus_handle
+                                                                this.analysis
+                                                                    .outline_focus_handle
                                                                     .focus(window, cx);
                                                                 this.select_outline_item(
                                                                     index, window, cx,
@@ -525,13 +527,13 @@ impl DocumentEditorView {
                         .flex_1()
                         .min_h_0()
                         .p_2()
-                        .track_scroll(&self.outline_scroll_handle)
+                        .track_scroll(&self.analysis.outline_scroll_handle)
                         .with_sizing_behavior(ListSizingBehavior::Auto),
                     )
                 },
             )
             .child(self.render_outline_resize_handle(cx))
-            .vertical_scrollbar(&self.outline_scroll_handle)
+            .vertical_scrollbar(&self.analysis.outline_scroll_handle)
             .into_any_element()
     }
 
@@ -593,11 +595,11 @@ impl DocumentEditorView {
             .overflow_hidden()
             .child(self.render_outline(cx));
 
-        if self.outline_transition_epoch == 0 {
+        if self.analysis.outline_transition_epoch == 0 {
             return wrapper.w(outline_width).into_any_element();
         }
 
-        let (from_width, to_width) = if self.outline_visible {
+        let (from_width, to_width) = if self.analysis.outline_visible {
             (px(0.), outline_width)
         } else {
             (outline_width, px(0.))
@@ -605,7 +607,10 @@ impl DocumentEditorView {
 
         wrapper
             .with_animation(
-                ("document-outline-transition", self.outline_transition_epoch),
+                (
+                    "document-outline-transition",
+                    self.analysis.outline_transition_epoch,
+                ),
                 Animation::new(super::OUTLINE_TRANSITION_DURATION).with_easing(ease_in_out_cubic),
                 move |this, delta| this.w(from_width + (to_width - from_width) * delta),
             )
@@ -613,7 +618,7 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn render_editor_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.is_loading {
+        if self.persistence.is_loading {
             return div()
                 .id("document-loading")
                 .size_full()
@@ -625,7 +630,7 @@ impl DocumentEditorView {
                 .into_any_element();
         }
 
-        if let Some(error) = self.load_error.clone() {
+        if let Some(error) = self.persistence.load_error.clone() {
             return div()
                 .id("document-load-error")
                 .size_full()
@@ -646,6 +651,7 @@ impl DocumentEditorView {
 
     pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let path = self
+            .persistence
             .current_path
             .as_ref()
             .map(|path| path.display().to_string())
@@ -708,7 +714,7 @@ impl DocumentEditorView {
                             .icon(IconName::PanelRight)
                             .ghost()
                             .xsmall()
-                            .selected(self.outline_visible)
+                            .selected(self.analysis.outline_visible)
                             .tooltip("Toggle outline (Ctrl+Shift+O)")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_outline(window, cx);
@@ -726,15 +732,15 @@ impl DocumentEditorView {
                             .gap_3()
                             .child(status_metric(
                                 IconName::PanelBottom,
-                                format!("{} lines", self.stats.lines),
+                                format!("{} lines", self.analysis.stats.lines),
                             ))
                             .child(status_metric(
                                 IconName::BookOpen,
-                                format!("{} words", self.stats.words),
+                                format!("{} words", self.analysis.stats.words),
                             ))
                             .child(status_metric(
                                 IconName::File,
-                                format!("{} chars", self.stats.characters),
+                                format!("{} chars", self.analysis.stats.characters),
                             )),
                     ),
             )
@@ -749,30 +755,32 @@ impl DocumentEditorView {
                     .label("Outline")
                     .ghost()
                     .small()
-                    .selected(self.inspector_tab == DocumentInspectorTab::Outline)
+                    .selected(self.inspector_links.tab == DocumentInspectorTab::Outline)
                     .on_click(cx.listener(|this, _, _, cx| this.show_outline_inspector(cx))),
             )
             .children(
-                (self.kind == DocumentKind::Json && self.outline.json_has_error()).then(|| {
-                    Icon::new(IconName::TriangleAlert)
-                        .xsmall()
-                        .text_color(cx.theme().warning)
-                }),
+                (self.kind == DocumentKind::Json && self.analysis.outline.json_has_error()).then(
+                    || {
+                        Icon::new(IconName::TriangleAlert)
+                            .xsmall()
+                            .text_color(cx.theme().warning)
+                    },
+                ),
             )
             .children((self.kind == DocumentKind::Markdown).then(|| {
                 Button::new("document-inspector-links")
                     .label("Links")
                     .ghost()
                     .small()
-                    .selected(self.inspector_tab == DocumentInspectorTab::Links)
+                    .selected(self.inspector_links.tab == DocumentInspectorTab::Links)
                     .on_click(cx.listener(|this, _, _, cx| this.show_links_inspector(cx)))
             }))
     }
 
     fn render_links_inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let outline_width = outline_width_for_view(self.outline_width, self.view_width);
-        let inbound = self.note_links.inbound.clone();
-        let outbound = self.note_links.outbound.clone();
+        let inbound = self.inspector_links.note_links.inbound.clone();
+        let outbound = self.inspector_links.note_links.outbound.clone();
         let inbound_rows = if inbound.is_empty() {
             vec![link_empty_state("No notes link here yet", cx).into_any_element()]
         } else {
@@ -845,7 +853,7 @@ impl DocumentEditorView {
                             })),
                     ),
             )
-            .when(self.note_links_loading, |this| {
+            .when(self.inspector_links.loading, |this| {
                 this.child(
                     div()
                         .p_4()
@@ -854,7 +862,7 @@ impl DocumentEditorView {
                         .child("Loading links…"),
                 )
             })
-            .when_some(self.note_links_error.clone(), |this, error| {
+            .when_some(self.inspector_links.error.clone(), |this, error| {
                 this.child(
                     v_flex()
                         .p_4()
@@ -866,7 +874,7 @@ impl DocumentEditorView {
                 )
             })
             .when(
-                !self.note_links_loading && self.note_links_error.is_none(),
+                !self.inspector_links.loading && self.inspector_links.error.is_none(),
                 |this| {
                     this.child(
                         v_flex()
@@ -912,7 +920,8 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut seen = HashSet::new();
-        self.workspace_links
+        self.inspector_links
+            .workspace_links
             .references
             .iter()
             .filter(|reference| reference.item.item.kind == kind)
@@ -1042,7 +1051,7 @@ impl DocumentEditorView {
     }
 
     fn render_save_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (icon, color, label) = save_state_status(&self.save_state, cx);
+        let (icon, color, label) = save_state_status(&self.persistence.save_state, cx);
 
         h_flex()
             .id("document-save-state")
@@ -1122,7 +1131,7 @@ impl Render for DocumentEditorView {
                                     .child(self.render_editor_body(cx)),
                             )
                             .children(
-                                (self.outline_rendered && self.view_width >= px(760.))
+                                (self.analysis.outline_rendered && self.view_width >= px(760.))
                                     .then(|| self.render_outline_transition(cx)),
                             ),
                     ),
@@ -1175,7 +1184,7 @@ impl DocumentEditorView {
             VimMode::Visual => ("VISUAL", cx.theme().warning),
             VimMode::VisualLine => ("VISUAL LINE", cx.theme().warning),
         };
-        let command = self.vim.command_text();
+        let command = self.vim_state.state.command_text();
         h_flex()
             .id("vim-mode-indicator")
             .h_5()

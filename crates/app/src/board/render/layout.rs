@@ -9,7 +9,7 @@ impl BoardView {
         let theme = cx.theme().clone();
         let mut cards = Vec::new();
 
-        if let Some(error) = self.load_error.clone() {
+        if let Some(error) = self.mutation.load_error.clone() {
             return div()
                 .id("board-load-error")
                 .size_full()
@@ -22,12 +22,15 @@ impl BoardView {
                 .into_any_element();
         }
 
-        if board_id_for_render.is_some() && self.cards.is_empty() && !self.is_adding_list {
+        if board_id_for_render.is_some()
+            && self.data.lists.is_empty()
+            && !self.entry_editing.adding_list
+        {
             return self.render_empty_board(cx).into_any_element();
         }
 
         if let Some(board_id) = board_id_for_render {
-            for card in &self.cards {
+            for card in &self.data.lists {
                 cards.push(self.render_card(card, board_id, cx).into_any_element());
             }
         }
@@ -42,8 +45,8 @@ impl BoardView {
             .items_start()
             .children(cards)
             .child({
-                if self.is_adding_list {
-                    Input::new(&self.new_list_input)
+                if self.entry_editing.adding_list {
+                    Input::new(&self.entry_editing.new_list_input)
                         .w_80()
                         .h_10()
                         .rounded_none()
@@ -62,7 +65,7 @@ impl BoardView {
             v_flex()
                 .size_full()
                 .overflow_hidden()
-                .when_some(self.mutation_error.clone(), |this, error| {
+                .when_some(self.mutation.mutation_error.clone(), |this, error| {
                     this.child(
                         div()
                             .px_4()
@@ -105,7 +108,7 @@ impl BoardView {
                     .bg(cx.theme().drop_target)
             })
             .on_drop(cx.listener(|this, info: &SidebarDragInfo, _, cx| {
-                if let (Some(board_id), Some(note_id)) = (this.board_id, info.note_id()) {
+                if let (Some(board_id), Some(note_id)) = (this.data.board_id, info.note_id()) {
                     this.link_note_to_item(
                         storage::workspace_links::WorkspaceItemRef {
                             kind: storage::workspace_links::WorkspaceItemKind::Board,
@@ -183,7 +186,7 @@ impl BoardView {
                     })),
                 )
             }))
-            .when_some(self.board_id, |this, board_id| {
+            .when_some(self.data.board_id, |this, board_id| {
                 this.child(self.render_related_notes_popover(
                     storage::workspace_links::WorkspaceItemRef {
                         kind: storage::workspace_links::WorkspaceItemKind::Board,
@@ -195,7 +198,7 @@ impl BoardView {
             })
             .child(div().flex_1())
             .when(
-                self.filters.is_active() || self.active_view_config.sort.is_some(),
+                self.filters.is_active() || self.properties.active_view_config.sort.is_some(),
                 |this| {
                     this.child(
                         div()
@@ -270,7 +273,7 @@ impl BoardView {
     }
 
     pub(super) fn render_filter_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let labels = self.board_labels.clone();
+        let labels = self.data.labels.clone();
         let board_view = cx.entity();
 
         v_flex()

@@ -246,11 +246,12 @@ mod tests {
         cx.run_until_parked();
         shell.read_with(&cx, |shell, _| {
             assert!(matches!(
-                shell.open_tabs[shell.active_tab_index].kind,
+                shell.tabs.open_tabs[shell.tabs.active_tab_index].kind,
                 OpenTabKind::Note { .. }
             ));
             assert_eq!(
                 shell
+                    .workspace
                     .pending_board_open
                     .as_ref()
                     .map(|pending| pending.board_id),
@@ -260,6 +261,7 @@ mod tests {
         });
         let (pending_note_view, pending_board_view) = shell.read_with(&cx, |shell, _| {
             let note = shell
+                .tabs
                 .open_tabs
                 .iter()
                 .find_map(|tab| match &tab.kind {
@@ -268,6 +270,7 @@ mod tests {
                 })
                 .expect("note tab should have a view");
             let board = shell
+                .tabs
                 .open_tabs
                 .iter()
                 .find_map(|tab| match &tab.kind {
@@ -334,11 +337,11 @@ mod tests {
         drop(held_connection);
 
         let (note_view, board_view) = shell.read_with(&cx, |shell, _| {
-            let note_view = shell.open_tabs.iter().find_map(|tab| match &tab.kind {
+            let note_view = shell.tabs.open_tabs.iter().find_map(|tab| match &tab.kind {
                 OpenTabKind::Note { view, .. } => Some(view.clone()),
                 _ => None,
             });
-            let board_view = shell.open_tabs.iter().find_map(|tab| match &tab.kind {
+            let board_view = shell.tabs.open_tabs.iter().find_map(|tab| match &tab.kind {
                 OpenTabKind::Board { view, .. } => Some(view.clone()),
                 _ => None,
             });
@@ -395,7 +398,7 @@ mod tests {
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
                 shell.refresh_workspace(cx);
-                if let Some(index) = shell.open_tabs.iter().position(
+                if let Some(index) = shell.tabs.open_tabs.iter().position(
                     |tab| matches!(tab.kind, OpenTabKind::Board { board_id: id, .. } if id == board_id),
                 ) {
                     shell.close_tab(index, window, cx);
@@ -413,7 +416,7 @@ mod tests {
                     .contains_project_named("Created after restore")
             });
             let reopened_board_has_lists = shell.read_with(&cx, |shell, cx| {
-                shell.open_tabs.iter().any(|tab| match &tab.kind {
+                shell.tabs.open_tabs.iter().any(|tab| match &tab.kind {
                     OpenTabKind::Board { view, .. } => view.read(cx).loaded_card_count() == 2,
                     _ => false,
                 })
@@ -431,7 +434,7 @@ mod tests {
                 .contains_project_named("Created after restore")
         }));
         assert!(shell.read_with(&cx, |shell, cx| {
-            shell.open_tabs.iter().any(|tab| match &tab.kind {
+            shell.tabs.open_tabs.iter().any(|tab| match &tab.kind {
                 OpenTabKind::Board { view, .. } => view.read(cx).loaded_card_count() == 2,
                 _ => false,
             })
@@ -452,13 +455,14 @@ mod tests {
         );
         assert_eq!(
             shell.read_with(&cx, |shell, _| {
-                shell.note_views.get(&note_id).map(Entity::entity_id)
+                shell.tabs.note_views.get(&note_id).map(Entity::entity_id)
             }),
             Some(note_view.entity_id())
         );
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
                 let note_index = shell
+                    .tabs
                     .open_tabs
                     .iter()
                     .position(|tab| matches!(tab.kind, OpenTabKind::Note { .. }))
@@ -467,7 +471,7 @@ mod tests {
             });
         });
         let closed_dirty_note = note_view.downgrade();
-        assert!(shell.read_with(&cx, |shell, _| shell.note_views.contains_key(&note_id)));
+        assert!(shell.read_with(&cx, |shell, _| shell.tabs.note_views.contains_key(&note_id)));
         drop(note_view);
         assert!(
             closed_dirty_note.upgrade().is_some(),

@@ -56,7 +56,7 @@ impl AppShell {
         ));
         drop(poller);
 
-        self.external_change_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self.external_changes.task = Some(cx.spawn_in(window, async move |this, cx| {
             while revision_receiver.changed().await.is_ok() {
                 let Some(revision) = *revision_receiver.borrow_and_update() else {
                     continue;
@@ -65,21 +65,25 @@ impl AppShell {
                 if this
                     .update_in(cx, |this, window, cx| {
                         let changed = this
-                            .last_change_revision
+                            .external_changes
+                            .revision
                             .is_some_and(|previous| previous != revision.revision);
                         let board_changed = this
-                            .last_board_revision
+                            .external_changes
+                            .board_revision
                             .is_some_and(|previous| previous != revision.board_revision);
                         let note_changed = this
-                            .last_note_revision
+                            .external_changes
+                            .note_revision
                             .is_some_and(|previous| previous != revision.note_revision);
                         let link_changed = this
-                            .last_link_revision
+                            .external_changes
+                            .link_revision
                             .is_some_and(|previous| previous != revision.link_revision);
-                        this.last_change_revision = Some(revision.revision);
-                        this.last_board_revision = Some(revision.board_revision);
-                        this.last_note_revision = Some(revision.note_revision);
-                        this.last_link_revision = Some(revision.link_revision);
+                        this.external_changes.revision = Some(revision.revision);
+                        this.external_changes.board_revision = Some(revision.board_revision);
+                        this.external_changes.note_revision = Some(revision.note_revision);
+                        this.external_changes.link_revision = Some(revision.link_revision);
                         if changed {
                             this.refresh_after_external_change(
                                 board_changed || link_changed,
@@ -106,6 +110,7 @@ impl AppShell {
     ) {
         if board_changed {
             let board_views = self
+                .tabs
                 .open_tabs
                 .iter()
                 .filter_map(|tab| match &tab.kind {
@@ -117,13 +122,13 @@ impl AppShell {
             for (board_id, view) in board_views {
                 view.update(cx, |board, cx| board.reload_board(board_id, cx));
             }
-            for view in self.note_views.values() {
+            for view in self.tabs.note_views.values() {
                 view.update(cx, |note, cx| note.reload_board_embeds(cx));
             }
         }
 
         if note_changed {
-            let note_views = self.note_views.values().cloned().collect::<Vec<_>>();
+            let note_views = self.tabs.note_views.values().cloned().collect::<Vec<_>>();
             for view in note_views {
                 view.update(cx, |note, cx| note.reload_after_external_change(window, cx));
             }
@@ -134,14 +139,14 @@ impl AppShell {
     }
 
     pub(crate) fn refresh_workspace(&mut self, cx: &mut Context<Self>) {
-        if self.workspace_refreshing {
-            self.workspace_refresh_pending = true;
+        if self.workspace.refreshing {
+            self.workspace.refresh_pending = true;
             return;
         }
 
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        self.workspace_refreshing = true;
+        self.workspace.refreshing = true;
 
         cx.spawn(async move |this, cx| {
             let rows = match runtime
@@ -152,8 +157,8 @@ impl AppShell {
                 Ok(Err(err)) => {
                     eprintln!("Failed to refresh workspace: {err}");
                     this.update(cx, |this, cx| {
-                        this.workspace_refreshing = false;
-                        if std::mem::take(&mut this.workspace_refresh_pending) {
+                        this.workspace.refreshing = false;
+                        if std::mem::take(&mut this.workspace.refresh_pending) {
                             this.refresh_workspace(cx);
                         }
                     })
@@ -163,8 +168,8 @@ impl AppShell {
                 Err(err) => {
                     eprintln!("Failed to refresh workspace: {err}");
                     this.update(cx, |this, cx| {
-                        this.workspace_refreshing = false;
-                        if std::mem::take(&mut this.workspace_refresh_pending) {
+                        this.workspace.refreshing = false;
+                        if std::mem::take(&mut this.workspace.refresh_pending) {
                             this.refresh_workspace(cx);
                         }
                     })
@@ -174,8 +179,8 @@ impl AppShell {
             };
 
             let Ok(should_apply) = this.update(cx, |this, cx| {
-                if std::mem::take(&mut this.workspace_refresh_pending) {
-                    this.workspace_refreshing = false;
+                if std::mem::take(&mut this.workspace.refresh_pending) {
+                    this.workspace.refreshing = false;
                     this.refresh_workspace(cx);
                     false
                 } else {
@@ -241,7 +246,7 @@ impl AppShell {
                     .map(|note| (note.id, note.title.clone()))
                     .collect();
                 let mut tab_titles_changed = false;
-                for tab in &mut this.open_tabs {
+                for tab in &mut this.tabs.open_tabs {
                     let OpenTabKind::Note { note_id, .. } = &tab.kind else {
                         continue;
                     };
@@ -254,15 +259,15 @@ impl AppShell {
                     }
                 }
 
-                this.workspace_refreshing = false;
-                this.projects = project_choices;
-                this.boards = board_choices;
-                this.notes = note_choices;
+                this.workspace.refreshing = false;
+                this.workspace.projects = project_choices;
+                this.workspace.boards = board_choices;
+                this.workspace.notes = note_choices;
                 this.rebuild_command_palette_workspace_commands();
                 if tab_titles_changed {
                     this.persist_tab_session(cx);
                 }
-                if std::mem::take(&mut this.workspace_refresh_pending) {
+                if std::mem::take(&mut this.workspace.refresh_pending) {
                     this.refresh_workspace(cx);
                 }
                 cx.notify();
@@ -511,7 +516,7 @@ impl AppShell {
                     view.update(cx, |this, cx| match result {
                         Ok(Ok((inserted, board_id))) => {
                             if let Some(board_id) = board_id {
-                                for tab in &this.open_tabs {
+                                for tab in &this.tabs.open_tabs {
                                     if let OpenTabKind::Board {
                                         board_id: open_board_id,
                                         view,
@@ -910,7 +915,7 @@ mod tests {
         for _ in 0..50 {
             cx.run_until_parked();
             if crate::workspace_data::workspace_load_count() >= 1
-                && !shell.read_with(&cx, |shell, _| shell.workspace_refreshing)
+                && !shell.read_with(&cx, |shell, _| shell.workspace.refreshing)
             {
                 break;
             }
@@ -921,6 +926,7 @@ mod tests {
         shell.read_with(&cx, |shell, cx| {
             assert!(
                 shell
+                    .workspace
                     .projects
                     .iter()
                     .any(|project| project.name == "Shared snapshot")
@@ -983,7 +989,7 @@ mod tests {
 
         for _ in 0..50 {
             cx.run_until_parked();
-            if !shell.read_with(&cx, |shell, _| shell.workspace_refreshing) {
+            if !shell.read_with(&cx, |shell, _| shell.workspace.refreshing) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1001,7 +1007,8 @@ mod tests {
         assert_eq!(
             shell.read_with(&cx, |shell, _| {
                 shell
-                    .pending_workspace_title_saves
+                    .workspace
+                    .pending_title_saves
                     .get(&WorkspaceTitleTarget::Note(note_id))
                     .map(|pending| pending.generation)
             }),
@@ -1013,7 +1020,7 @@ mod tests {
         for _ in 0..100 {
             cx.run_until_parked();
             if crate::workspace_data::workspace_load_count() == 1
-                && !shell.read_with(&cx, |shell, _| shell.workspace_refreshing)
+                && !shell.read_with(&cx, |shell, _| shell.workspace.refreshing)
             {
                 break;
             }
@@ -1027,7 +1034,13 @@ mod tests {
         assert_eq!(saved.title, "Final title");
         assert_eq!(crate::workspace_data::workspace_load_count(), 1);
         shell.read_with(&cx, |shell, cx| {
-            assert!(shell.notes.iter().any(|note| note.title == "Final title"));
+            assert!(
+                shell
+                    .workspace
+                    .notes
+                    .iter()
+                    .any(|note| note.title == "Final title")
+            );
             assert!(shell.sidebar.read(cx).contains_note_named("Final title"));
         });
 
@@ -1045,7 +1058,7 @@ mod tests {
             .expect("saved note should exist");
         assert_eq!(saved.title, "Shutdown title");
         assert!(shell.read_with(&cx, |shell, _| {
-            shell.pending_workspace_title_saves.is_empty()
+            shell.workspace.pending_title_saves.is_empty()
         }));
     }
 }

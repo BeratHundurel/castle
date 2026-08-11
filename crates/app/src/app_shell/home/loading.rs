@@ -2,14 +2,16 @@ use super::*;
 
 impl AppShell {
     pub(in crate::app_shell) fn load_home(&mut self, cx: &mut Context<Self>) {
-        if self.home_refreshing {
-            self.home_refresh_pending = true;
+        if self.home.phase.is_loading() {
+            self.home.refresh_pending = true;
             return;
         }
 
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        self.home_refreshing = true;
+        self.home.phase = LoadPhase::Loading {
+            had_content: self.home.phase.has_content(),
+        };
         cx.spawn(async move |this, cx| {
             let result = match runtime
                 .spawn(async move { crate::home::load_home(db.as_ref()).await })
@@ -19,18 +21,19 @@ impl AppShell {
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
             this.update(cx, |this, cx| {
-                this.home_refreshing = false;
-                this.home_loaded = true;
                 match result {
                     Ok(state) => {
-                        this.home_state = state;
-                        this.home_error = None;
+                        this.home.data = state;
+                        this.home.phase = LoadPhase::Ready;
                     }
                     Err(err) => {
-                        this.home_error = Some(format!("Could not load Home: {err}").into())
+                        this.home.phase = LoadPhase::Failed {
+                            message: format!("Could not load Home: {err}").into(),
+                            had_content: this.home.phase.has_content(),
+                        };
                     }
                 }
-                if std::mem::take(&mut this.home_refresh_pending) {
+                if std::mem::take(&mut this.home.refresh_pending) {
                     this.load_home(cx);
                 }
                 cx.notify();
@@ -41,14 +44,16 @@ impl AppShell {
     }
 
     pub(in crate::app_shell) fn load_trash(&mut self, cx: &mut Context<Self>) {
-        if self.trash_refreshing {
-            self.trash_refresh_pending = true;
+        if self.trash.phase.is_loading() {
+            self.trash.refresh_pending = true;
             return;
         }
 
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
-        self.trash_refreshing = true;
+        self.trash.phase = LoadPhase::Loading {
+            had_content: self.trash.phase.has_content(),
+        };
         cx.spawn(async move |this, cx| {
             let result = match runtime
                 .spawn(async move { crate::trash::load_trash(db.as_ref()).await })
@@ -58,18 +63,19 @@ impl AppShell {
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
             this.update(cx, |this, cx| {
-                this.trash_refreshing = false;
-                this.trash_loaded = true;
                 match result {
                     Ok(items) => {
-                        this.trash_items = items;
-                        this.trash_error = None;
+                        this.trash.items = items;
+                        this.trash.phase = LoadPhase::Ready;
                     }
                     Err(err) => {
-                        this.trash_error = Some(format!("Could not load Trash: {err}").into())
+                        this.trash.phase = LoadPhase::Failed {
+                            message: format!("Could not load Trash: {err}").into(),
+                            had_content: this.trash.phase.has_content(),
+                        };
                     }
                 }
-                if std::mem::take(&mut this.trash_refresh_pending) {
+                if std::mem::take(&mut this.trash.refresh_pending) {
                     this.load_trash(cx);
                 }
                 cx.notify();
@@ -81,6 +87,7 @@ impl AppShell {
 
     pub(in crate::app_shell) fn open_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self
+            .tabs
             .open_tabs
             .iter()
             .position(|tab| matches!(tab.kind, OpenTabKind::Chooser))
@@ -96,6 +103,7 @@ impl AppShell {
     pub(in crate::app_shell) fn open_trash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_board_open();
         if let Some(index) = self
+            .tabs
             .open_tabs
             .iter()
             .position(|tab| matches!(tab.kind, OpenTabKind::Trash))

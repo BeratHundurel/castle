@@ -2,11 +2,11 @@ use super::*;
 
 impl BoardView {
     pub(in crate::board) fn create_board_label(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(board_id) = self.board_id else {
+        let Some(board_id) = self.data.board_id else {
             return;
         };
 
-        let color = self.selected_label_color.to_string();
+        let color = self.entry_editing.selected_label_color.to_string();
         let db = cx.global::<AppServices>().store().connection();
         let runtime = cx.global::<AppServices>().runtime();
 
@@ -18,9 +18,9 @@ impl BoardView {
                 .await;
 
             this.update(cx, |this, cx| match result {
-                Ok(Ok(inserted)) if this.board_id == Some(board_id) => {
-                    this.mutation_error = None;
-                    this.board_labels.push(BoardLabelDTO::from(inserted));
+                Ok(Ok(inserted)) if this.data.board_id == Some(board_id) => {
+                    this.mutation.mutation_error = None;
+                    this.data.labels.push(BoardLabelDTO::from(inserted));
                     cx.emit(BoardViewEvent::DataCommitted {
                         board_id,
                         links_changed: false,
@@ -29,15 +29,16 @@ impl BoardView {
                 }
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => {
-                    this.mutation_error = Some(format!("Could not create label: {error}").into());
-                    if this.board_id == Some(board_id) {
+                    this.mutation.mutation_error =
+                        Some(format!("Could not create label: {error}").into());
+                    if this.data.board_id == Some(board_id) {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
                 Err(error) => {
-                    this.mutation_error =
+                    this.mutation.mutation_error =
                         Some(format!("Label creation task failed: {error}").into());
-                    if this.board_id == Some(board_id) {
+                    if this.data.board_id == Some(board_id) {
                         this.enrich_board_async(cx, board_id);
                     }
                 }
@@ -48,11 +49,12 @@ impl BoardView {
     }
 
     pub(in crate::board) fn rename_board_label(&mut self, name: String, cx: &mut Context<Self>) {
-        let Some(label_id) = self.renaming_label_id else {
+        let Some(label_id) = self.entry_editing.renaming_label_id else {
             return;
         };
         let Some(label) = self
-            .board_labels
+            .data
+            .labels
             .iter_mut()
             .find(|label| label.id == label_id)
         else {
@@ -60,8 +62,9 @@ impl BoardView {
         };
 
         label.name = SharedString::from(name.as_str());
-        self.renaming_label_id = None;
-        self.cards
+        self.entry_editing.renaming_label_id = None;
+        self.data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .for_each(|card| {
@@ -85,7 +88,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(label) = self
-            .board_labels
+            .data
+            .labels
             .iter()
             .find(|label| label.id == label_id)
             .cloned()
@@ -93,7 +97,8 @@ impl BoardView {
             return;
         };
         let Some(entry) = self
-            .cards
+            .data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .find(|card| card.id == entry_id)
@@ -125,13 +130,14 @@ impl BoardView {
     }
 
     pub(in crate::board) fn delete_board_label(&mut self, label_id: u32, cx: &mut Context<Self>) {
-        self.board_labels.retain(|label| label.id != label_id);
+        self.data.labels.retain(|label| label.id != label_id);
         self.filters.label_ids.remove(&label_id);
-        self.cards
+        self.data
+            .lists
             .iter_mut()
             .flat_map(|list| list.entries.iter_mut())
             .for_each(|card| card.labels.retain(|label| label.id != label_id));
-        self.renaming_label_id = None;
+        self.entry_editing.renaming_label_id = None;
         cx.notify();
 
         let db = cx.global::<AppServices>().store().connection();

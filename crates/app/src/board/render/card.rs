@@ -28,14 +28,14 @@ impl BoardView {
         let card_drag_info =
             CardDragInfo::new(card_id, board_id, card.title.clone(), card.entries.len());
         let cards_are_filterable =
-            self.filters.is_active() || self.active_view_config.sort.is_some();
+            self.filters.is_active() || self.properties.active_view_config.sort.is_some();
         let mut entries = Vec::new();
         let mut matching_entries = card
             .entries
             .iter()
             .filter(|entry| self.entry_matches_filters(entry))
             .collect::<Vec<_>>();
-        if self.active_view_config.sort.is_some() {
+        if self.properties.active_view_config.sort.is_some() {
             matching_entries
                 .sort_by(|left, right| self.compare_entries_for_active_sort(left, right));
         }
@@ -137,10 +137,10 @@ impl BoardView {
                 cx.new(|_| info.clone().position(position))
             })
             .when_else(
-                self.renaming_card_id == Some(card_id),
+                self.entry_editing.renaming_list_id == Some(card_id),
                 |this| {
                     this.child(
-                        Input::new(&self.rename_card_input)
+                        Input::new(&self.entry_editing.rename_list_input)
                             .bg(theme.secondary)
                             .focus_bordered(false)
                             .rounded_none()
@@ -246,14 +246,16 @@ impl BoardView {
         let entry_id = entry.id;
         let drag_info = DragInfo::new(entry.id, board_id, card_id, entry.title.clone());
         let show_labels = self
+            .properties
             .active_view_config
             .visible_properties
             .contains(&storage::board_properties::PropertyKey::Labels);
         let show_due_date = self
+            .properties
             .active_view_config
             .visible_properties
             .contains(&storage::board_properties::PropertyKey::DueDate);
-        let compact = self.active_view_config.compact_cards;
+        let compact = self.properties.active_view_config.compact_cards;
 
         div()
             .id(entry.id as usize)
@@ -354,7 +356,7 @@ impl BoardView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
-                    this.pending_card_id = Some(card_id);
+                    this.entry_editing.pending_list_id = Some(card_id);
                     this.show_add_entry_dialog(window, cx);
                 }),
             )

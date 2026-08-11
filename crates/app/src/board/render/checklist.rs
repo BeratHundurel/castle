@@ -121,10 +121,10 @@ impl BoardView {
                     .hover(|this| this.bg(cx.theme().secondary_hover))
                     .when(item.checked, |this| this.opacity(0.62))
                     .child(div().flex_1().min_w_0().overflow_hidden().when_else(
-                        self.renaming_checklist_item_id == Some(item_id),
+                        self.entry_editing.renaming_checklist_item_id == Some(item_id),
                         |this| {
                             this.child(
-                                Input::new(&self.rename_checklist_item_input)
+                                Input::new(&self.entry_editing.rename_checklist_item_input)
                                     .w_full()
                                     .min_w_0()
                                     .xsmall()
@@ -205,7 +205,7 @@ impl BoardView {
                     )
             }))
             .child(
-                Input::new(&self.new_checklist_item_input)
+                Input::new(&self.entry_editing.new_checklist_item_input)
                     .w_full()
                     .h_9()
                     .bg(cx.theme().input_background()),

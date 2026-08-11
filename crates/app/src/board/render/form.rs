@@ -20,7 +20,7 @@ impl BoardView {
                             .child("Title"),
                     )
                     .child(
-                        Input::new(&self.entry_title_input)
+                        Input::new(&self.entry_editing.title_input)
                             .w_full()
                             .bg(theme.secondary)
                             .border_1()
@@ -41,7 +41,7 @@ impl BoardView {
                             .child("Description"),
                     )
                     .child(
-                        Input::new(&self.entry_description_input)
+                        Input::new(&self.entry_editing.description_input)
                             .w_full()
                             .min_h(px(180.))
                             .bg(theme.secondary)

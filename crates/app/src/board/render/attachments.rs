@@ -72,8 +72,11 @@ impl BoardView {
                             .flex_wrap()
                             .children(attachments.into_iter().map(|attachment| {
                                 let attachment_id = attachment.id;
-                                let preview_path =
-                                    self.attachment_preview_paths.get(&attachment_id).cloned();
+                                let preview_path = self
+                                    .entry_editing
+                                    .attachment_preview_paths
+                                    .get(&attachment_id)
+                                    .cloned();
                                 v_flex()
                                     .w(px(252.))
                                     .overflow_hidden()

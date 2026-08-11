@@ -7,6 +7,7 @@ pub(crate) mod command_palette;
 pub mod document_editor;
 pub mod keymap;
 pub mod mcp_registration;
+pub(crate) mod request_tracker;
 pub mod sidebar;
 pub mod system_notifications;
 pub mod tray;

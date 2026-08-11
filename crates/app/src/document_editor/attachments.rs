@@ -185,7 +185,7 @@ impl DocumentEditorView {
 
                 if imported.is_empty() {
                     if let Some(error) = errors.into_iter().next() {
-                        this.save_state = super::SaveState::Error(error.into());
+                        this.persistence.save_state = super::SaveState::Error(error.into());
                         cx.notify();
                     }
                     return;

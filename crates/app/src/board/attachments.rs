@@ -25,7 +25,7 @@ struct CopiedImage {
 
 impl BoardView {
     pub(super) fn add_image_attachments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry_id) = self.entry_dialog.entry_id else {
+        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
         if entry_id > i32::MAX as u32 {
@@ -94,7 +94,8 @@ impl BoardView {
                     let count = attachments.len();
                     this.update_in(cx, |this, window, cx| {
                         if let Some(entry) = this
-                            .cards
+                            .data
+                            .lists
                             .iter_mut()
                             .flat_map(|list| list.entries.iter_mut())
                             .find(|entry| entry.id == entry_id)
@@ -109,7 +110,7 @@ impl BoardView {
                                     &attachment_directory(&data_dir, attachment.entry_id),
                                     attachment.file_name.as_ref(),
                                 );
-                                this.attachment_preview_paths.insert(
+                                this.entry_editing.attachment_preview_paths.insert(
                                     attachment.id,
                                     if thumbnail.exists() {
                                         thumbnail
@@ -167,7 +168,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         let Some(attachment) = self
-            .cards
+            .data
+            .lists
             .iter()
             .flat_map(|list| list.entries.iter())
             .flat_map(|entry| entry.attachments.iter())
@@ -208,13 +210,16 @@ impl BoardView {
                         .await;
                     this.update_in(cx, |this, _, cx| {
                         if let Some(entry) = this
-                            .cards
+                            .data
+                            .lists
                             .iter_mut()
                             .flat_map(|list| list.entries.iter_mut())
                             .find(|entry| entry.id == attachment.entry_id)
                         {
                             entry.attachments.retain(|item| item.id != attachment_id);
-                            this.attachment_preview_paths.remove(&attachment_id);
+                            this.entry_editing
+                                .attachment_preview_paths
+                                .remove(&attachment_id);
                             this.emit_data_committed(cx, false);
                             cx.notify();
                         }
@@ -248,11 +253,11 @@ impl BoardView {
 impl BoardView {
     pub(super) fn prepare_attachment_previews(&mut self, entry_id: u32, cx: &mut Context<Self>) {
         let data_dir = cx.global::<AppServices>().data_dir();
-        let generation = self.load_generation;
-        let board_id = self.board_id;
-        let attachments = attachment_preview_specs(&self.cards, &data_dir, entry_id);
+        let generation = self.mutation.load_request.generation();
+        let board_id = self.data.board_id;
+        let attachments = attachment_preview_specs(&self.data.lists, &data_dir, entry_id);
 
-        self.attachment_preview_paths.clear();
+        self.entry_editing.attachment_preview_paths.clear();
         if attachments.is_empty() {
             return;
         }
@@ -273,10 +278,12 @@ impl BoardView {
                 .await;
 
             this.update(cx, |this, cx| {
-                if this.board_id != board_id || this.load_generation != generation {
+                if this.data.board_id != board_id
+                    || this.mutation.load_request.generation() != generation
+                {
                     return;
                 }
-                this.attachment_preview_paths.extend(previews);
+                this.entry_editing.attachment_preview_paths.extend(previews);
                 cx.notify();
             })
             .ok();

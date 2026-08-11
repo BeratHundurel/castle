@@ -39,7 +39,7 @@ impl BoardView {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(self.render_entry_detail_header(selected_entry, cx))
                     .child(self.render_entry_detail_body(selected_entry, cx))
-                    .when(self.entry_dialog.editing, |this| {
+                    .when(self.entry_editing.dialog.editing, |this| {
                         this.child(self.render_entry_detail_footer(cx))
                     }),
             )
@@ -80,7 +80,7 @@ impl BoardView {
                             }),
                     )
                     .when_else(
-                        self.entry_dialog.editing,
+                        self.entry_editing.dialog.editing,
                         |this| {
                             this.child(
                                 div()
@@ -109,14 +109,16 @@ impl BoardView {
     }
 
     pub(super) fn render_entry_header_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_id = self.entry_dialog.entry_id;
+        let entry_id = self.entry_editing.dialog.entry_id;
         let move_destinations = entry_id
             .and_then(|entry_id| {
-                self.cards
+                self.data
+                    .lists
                     .iter()
                     .find(|card| card.entries.iter().any(|entry| entry.id == entry_id))
                     .map(|source_card| {
-                        self.cards
+                        self.data
+                            .lists
                             .iter()
                             .filter(|card| card.id != source_card.id)
                             .map(|card| (card.id, card.title.clone()))
@@ -129,7 +131,7 @@ impl BoardView {
             .flex_shrink_0()
             .items_center()
             .gap_1()
-            .when(!self.entry_dialog.editing, |this| {
+            .when(!self.entry_editing.dialog.editing, |this| {
                 this.child(
                     Button::new("edit-entry")
                         .icon(IconName::Replace)
@@ -224,7 +226,7 @@ impl BoardView {
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
 
-        if self.entry_dialog.editing {
+        if self.entry_editing.dialog.editing {
             return div().flex_1().overflow_hidden().child(
                 v_flex()
                     .id("entry-detail-edit-scroll")
@@ -382,7 +384,7 @@ impl BoardView {
                     ),
             )
             .child(
-                DatePicker::new(&self.due_date_picker)
+                DatePicker::new(&self.entry_editing.due_date_picker)
                     .w_full()
                     .cleanable(true)
                     .placeholder("No due date")

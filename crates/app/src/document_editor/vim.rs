@@ -276,25 +276,28 @@ struct Motion {
 
 impl DocumentEditorView {
     pub(super) fn vim_is_enabled(&self) -> bool {
-        self.vim.enabled()
+        self.vim_state.state.enabled()
     }
 
     pub(super) fn vim_mode(&self) -> VimMode {
-        self.vim.mode()
+        self.vim_state.state.mode()
     }
 
     pub(super) fn vim_context(&self) -> String {
-        format!("DocumentEditor vim_mode = {}", self.vim.key_context())
+        format!(
+            "DocumentEditor vim_mode = {}",
+            self.vim_state.state.key_context()
+        )
     }
 
     pub(super) fn vim_visual_range(&self, cx: &gpui::App) -> Option<Range<usize>> {
-        if !self.vim.enabled || !self.vim.mode.is_visual() {
+        if !self.vim_state.state.enabled || !self.vim_state.state.mode.is_visual() {
             return None;
         }
-        let anchor = self.vim.visual_anchor?;
-        let head = self.vim.visual_head?;
+        let anchor = self.vim_state.state.visual_anchor?;
+        let head = self.vim_state.state.visual_head?;
         let editor = self.editor.read(cx);
-        if self.vim.mode == VimMode::VisualLine {
+        if self.vim_state.state.mode == VimMode::VisualLine {
             let start_row = row_at(editor.text(), anchor).min(row_at(editor.text(), head));
             let end_row = row_at(editor.text(), anchor).max(row_at(editor.text(), head));
             Some(line_rows_range(editor.text(), start_row, end_row))
@@ -315,36 +318,36 @@ impl DocumentEditorView {
 
     pub(super) fn sync_vim_setting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let enabled = AppSettings::editor_vim_mode(cx);
-        if self.vim.enabled == enabled {
+        if self.vim_state.state.enabled == enabled {
             return;
         }
 
-        self.vim.enabled = enabled;
-        self.vim.mode = if enabled {
+        self.vim_state.state.enabled = enabled;
+        self.vim_state.state.mode = if enabled {
             VimMode::Normal
         } else {
             VimMode::Insert
         };
-        self.vim.visual_anchor = None;
-        self.vim.visual_head = None;
-        self.vim.reset_command();
-        self.vim_search_active = false;
+        self.vim_state.state.visual_anchor = None;
+        self.vim_state.state.visual_head = None;
+        self.vim_state.state.reset_command();
+        self.vim_state.search_active = false;
         self.focus_source_mode(window, cx);
         cx.notify();
     }
 
     pub(super) fn reset_vim_command(&mut self) {
-        self.vim.reset_command();
-        self.vim.visual_anchor = None;
-        self.vim.visual_head = None;
-        self.vim_search_active = false;
-        if self.vim.enabled {
-            self.vim.mode = VimMode::Normal;
+        self.vim_state.state.reset_command();
+        self.vim_state.state.visual_anchor = None;
+        self.vim_state.state.visual_head = None;
+        self.vim_state.search_active = false;
+        if self.vim_state.state.enabled {
+            self.vim_state.state.mode = VimMode::Normal;
         }
     }
 
     pub(super) fn focus_source_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.vim.enabled && self.vim.mode != VimMode::Insert {
+        if self.vim_state.state.enabled && self.vim_state.state.mode != VimMode::Insert {
             self.focus_handle.focus(window, cx);
         } else {
             self.editor
@@ -358,10 +361,10 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim.enabled || self.mode != EditorMode::Source {
+        if !self.vim_state.state.enabled || self.mode != EditorMode::Source {
             return;
         }
-        if self.vim.mode != VimMode::Insert {
+        if self.vim_state.state.mode != VimMode::Insert {
             self.focus_handle.focus(window, cx);
         }
 
@@ -371,28 +374,29 @@ impl DocumentEditorView {
             self.enter_vim_normal(window, cx);
             return;
         }
-        if let Some(pending) = self.vim.pending_char.take()
+        if let Some(pending) = self.vim_state.state.pending_char.take()
             && let Some(target) = vim_literal_for_key(key)
         {
-            let before_mode = self.vim.mode;
+            let before_mode = self.vim_state.state.mode;
             let before_text = self.editor.read(cx).text().clone();
             let before_cursor = self.editor.read(cx).cursor();
-            if !self.vim.replaying {
-                self.vim
+            if !self.vim_state.state.replaying {
+                self.vim_state
+                    .state
                     .change_candidate
                     .push(VimReplayStep::Literal(target.clone()));
             }
             self.apply_pending_vim_char(pending, target, window, cx);
-            if !self.vim.replaying {
+            if !self.vim_state.state.replaying {
                 self.finish_vim_action_recording(before_mode, before_text, before_cursor, cx);
             }
             return;
         }
 
-        let before_mode = self.vim.mode;
+        let before_mode = self.vim_state.state.mode;
         let before_text = self.editor.read(cx).text().clone();
         let before_cursor = self.editor.read(cx).cursor();
-        let record_action = !self.vim.replaying
+        let record_action = !self.vim_state.state.replaying
             && !matches!(
                 key,
                 VimKey::RepeatLastChange | VimKey::Undo | VimKey::Redo | VimKey::Search
@@ -404,14 +408,14 @@ impl DocumentEditorView {
         }
 
         if let VimKey::Digit(digit) = key
-            && (digit != 0 || self.vim.count.is_some())
+            && (digit != 0 || self.vim_state.state.count.is_some())
         {
-            self.vim.push_digit(digit);
+            self.vim_state.state.push_digit(digit);
             cx.notify();
             return;
         }
 
-        if self.vim.mode.is_visual() {
+        if self.vim_state.state.mode.is_visual() {
             self.handle_visual_key(key, window, cx);
         } else {
             self.handle_normal_key(key, window, cx);
@@ -427,16 +431,16 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim.enabled
+        if !self.vim_state.state.enabled
             || self.mode != EditorMode::Source
-            || self.vim.mode == VimMode::Insert
-            || self.vim.pending_char.is_none()
+            || self.vim_state.state.mode == VimMode::Insert
+            || self.vim_state.state.pending_char.is_none()
         {
             return;
         }
 
         if event.keystroke.key == "escape" {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             window.prevent_default();
             cx.stop_propagation();
             cx.notify();
@@ -445,7 +449,7 @@ impl DocumentEditorView {
 
         let modifiers = event.keystroke.modifiers;
         if modifiers.control || modifiers.platform || modifiers.function {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             window.prevent_default();
             cx.stop_propagation();
             cx.notify();
@@ -465,26 +469,27 @@ impl DocumentEditorView {
         let Some(target) =
             target.filter(|target| !target.is_empty() && !target.chars().any(|ch| ch.is_control()))
         else {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             window.prevent_default();
             cx.stop_propagation();
             cx.notify();
             return;
         };
 
-        let Some(pending) = self.vim.pending_char.take() else {
+        let Some(pending) = self.vim_state.state.pending_char.take() else {
             return;
         };
-        let before_mode = self.vim.mode;
+        let before_mode = self.vim_state.state.mode;
         let before_text = self.editor.read(cx).text().clone();
         let before_cursor = self.editor.read(cx).cursor();
-        if !self.vim.replaying {
-            self.vim
+        if !self.vim_state.state.replaying {
+            self.vim_state
+                .state
                 .change_candidate
                 .push(VimReplayStep::Literal(target.clone()));
         }
         self.apply_pending_vim_char(pending, target, window, cx);
-        if !self.vim.replaying {
+        if !self.vim_state.state.replaying {
             self.finish_vim_action_recording(before_mode, before_text, before_cursor, cx);
         }
         window.prevent_default();
@@ -497,7 +502,9 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim.enabled || self.vim.mode == VimMode::Insert || self.mode != EditorMode::Source
+        if !self.vim_state.state.enabled
+            || self.vim_state.state.mode == VimMode::Insert
+            || self.mode != EditorMode::Source
         {
             return;
         }
@@ -512,10 +519,10 @@ impl DocumentEditorView {
             .read(cx)
             .text()
             .offset_utf16_to_offset(utf16_offset);
-        self.vim.mode = VimMode::Normal;
-        self.vim.visual_anchor = None;
-        self.vim.visual_head = None;
-        self.vim.reset_command();
+        self.vim_state.state.mode = VimMode::Normal;
+        self.vim_state.state.visual_anchor = None;
+        self.vim_state.state.visual_head = None;
+        self.vim_state.state.reset_command();
         self.set_vim_cursor(offset, window, cx);
         cx.stop_propagation();
     }
@@ -526,11 +533,11 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim.enabled || self.mode != EditorMode::Source {
+        if !self.vim_state.state.enabled || self.mode != EditorMode::Source {
             cx.propagate();
             return;
         }
-        if self.vim.mode == VimMode::Insert && !self.show_emmet_input {
+        if self.vim_state.state.mode == VimMode::Insert && !self.show_emmet_input {
             self.finish_vim_insert_capture(window, cx);
             self.enter_vim_normal(window, cx);
         } else {
@@ -541,22 +548,25 @@ impl DocumentEditorView {
     }
 
     fn vim_command_in_progress(&self) -> bool {
-        self.vim.count.is_some()
-            || self.vim.pending_operator.is_some()
-            || self.vim.pending_g
-            || self.vim.pending_text_object.is_some()
-            || self.vim.pending_char.is_some()
+        self.vim_state.state.count.is_some()
+            || self.vim_state.state.pending_operator.is_some()
+            || self.vim_state.state.pending_g
+            || self.vim_state.state.pending_text_object.is_some()
+            || self.vim_state.state.pending_char.is_some()
     }
 
     fn prepare_vim_change_candidate(&mut self, key: VimKey, cx: &gpui::App) {
-        if self.vim.mode.is_visual() {
-            self.vim.change_candidate.clear();
-            self.vim.candidate_visual = self.vim_visual_repeat(cx);
+        if self.vim_state.state.mode.is_visual() {
+            self.vim_state.state.change_candidate.clear();
+            self.vim_state.state.candidate_visual = self.vim_visual_repeat(cx);
         } else if !self.vim_command_in_progress() {
-            self.vim.change_candidate.clear();
-            self.vim.candidate_visual = None;
+            self.vim_state.state.change_candidate.clear();
+            self.vim_state.state.candidate_visual = None;
         }
-        self.vim.change_candidate.push(VimReplayStep::Key(key));
+        self.vim_state
+            .state
+            .change_candidate
+            .push(VimReplayStep::Key(key));
     }
 
     fn finish_vim_action_recording(
@@ -567,31 +577,31 @@ impl DocumentEditorView {
         cx: &gpui::App,
     ) {
         let changed = before_text != *self.editor.read(cx).text();
-        if self.vim.mode == VimMode::Insert && before_mode != VimMode::Insert {
-            let (steps, count) = normalized_replay_steps(&self.vim.change_candidate);
-            self.vim.insert_capture = Some(VimInsertCapture {
+        if self.vim_state.state.mode == VimMode::Insert && before_mode != VimMode::Insert {
+            let (steps, count) = normalized_replay_steps(&self.vim_state.state.change_candidate);
+            self.vim_state.state.insert_capture = Some(VimInsertCapture {
                 before: self.editor.read(cx).text().clone(),
                 anchor: self.editor.read(cx).cursor(),
                 steps,
                 count,
-                visual: self.vim.candidate_visual,
+                visual: self.vim_state.state.candidate_visual,
                 pre_edit_changed: changed,
                 history_before: before_text,
                 history_cursor: before_cursor,
             });
-            self.vim.change_candidate.clear();
-            self.vim.candidate_visual = None;
-        } else if changed && self.vim.mode != VimMode::Insert {
+            self.vim_state.state.change_candidate.clear();
+            self.vim_state.state.candidate_visual = None;
+        } else if changed && self.vim_state.state.mode != VimMode::Insert {
             self.push_vim_history(before_text, before_cursor, cx);
             self.commit_vim_change(None);
-        } else if self.vim.mode.is_visual() || !self.vim_command_in_progress() {
+        } else if self.vim_state.state.mode.is_visual() || !self.vim_command_in_progress() {
             self.discard_vim_change_candidate();
         }
     }
 
     fn vim_visual_repeat(&self, cx: &gpui::App) -> Option<VimVisualRepeat> {
         let range = self.vim_visual_range(cx)?;
-        if self.vim.mode == VimMode::VisualLine {
+        if self.vim_state.state.mode == VimMode::VisualLine {
             let rope = self.editor.read(cx).text();
             let start = row_at(rope, range.start);
             let end_offset = previous_boundary(rope, range.end);
@@ -609,25 +619,25 @@ impl DocumentEditorView {
     }
 
     fn commit_vim_change(&mut self, insert_patch: Option<VimInsertPatch>) {
-        let (steps, count) = normalized_replay_steps(&self.vim.change_candidate);
+        let (steps, count) = normalized_replay_steps(&self.vim_state.state.change_candidate);
         if !steps.is_empty() {
-            self.vim.last_change = Some(VimChangeRecipe {
+            self.vim_state.state.last_change = Some(VimChangeRecipe {
                 steps,
                 count,
                 insert_patch,
-                visual: self.vim.candidate_visual,
+                visual: self.vim_state.state.candidate_visual,
             });
         }
         self.discard_vim_change_candidate();
     }
 
     fn discard_vim_change_candidate(&mut self) {
-        self.vim.change_candidate.clear();
-        self.vim.candidate_visual = None;
+        self.vim_state.state.change_candidate.clear();
+        self.vim_state.state.candidate_visual = None;
     }
 
     fn finish_vim_insert_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(capture) = self.vim.insert_capture.take() else {
+        let Some(capture) = self.vim_state.state.insert_capture.take() else {
             return;
         };
         let after = self.editor.read(cx).text();
@@ -648,7 +658,7 @@ impl DocumentEditorView {
             self.replace_vim_range(cursor..cursor, &extra, window, cx);
             self.set_input_cursor(cursor.saturating_add(extra.len()), window, cx);
         }
-        self.vim.last_change = Some(VimChangeRecipe {
+        self.vim_state.state.last_change = Some(VimChangeRecipe {
             steps: capture.steps,
             count: capture.count,
             insert_patch,
@@ -662,44 +672,44 @@ impl DocumentEditorView {
         if before == after {
             return;
         }
-        if self.vim.undo_stack.len() >= 1_000 {
-            self.vim.undo_stack.remove(0);
+        if self.vim_state.state.undo_stack.len() >= 1_000 {
+            self.vim_state.state.undo_stack.remove(0);
         }
-        self.vim.undo_stack.push(VimHistoryEntry {
+        self.vim_state.state.undo_stack.push(VimHistoryEntry {
             before,
             after,
             cursor_before,
             cursor_after: self.editor.read(cx).cursor(),
         });
-        self.vim.redo_stack.clear();
+        self.vim_state.state.redo_stack.clear();
     }
 
     pub(super) fn sync_vim_search_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.vim_search_active
-            || !self.vim.enabled
-            || self.vim.mode == VimMode::Insert
+        if !self.vim_state.search_active
+            || !self.vim_state.state.enabled
+            || self.vim_state.state.mode == VimMode::Insert
             || self.mode != EditorMode::Source
             || !self.editor.focus_handle(cx).is_focused(window)
         {
             return;
         }
 
-        self.vim_search_active = false;
+        self.vim_state.search_active = false;
         self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
     fn handle_normal_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(operator) = self.vim.pending_operator {
+        if let Some(operator) = self.vim_state.state.pending_operator {
             if self.handle_pending_operator(operator, key, window, cx) {
                 return;
             }
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         }
-        if self.vim.pending_g && key != VimKey::Go {
-            self.vim.reset_command();
+        if self.vim_state.state.pending_g && key != VimKey::Go {
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         }
@@ -726,11 +736,11 @@ impl DocumentEditorView {
             VimKey::RepeatFind => self.repeat_find(false, window, cx),
             VimKey::RepeatFindReverse => self.repeat_find(true, window, cx),
             VimKey::Go => {
-                if self.vim.pending_g {
-                    self.vim.pending_g = false;
+                if self.vim_state.state.pending_g {
+                    self.vim_state.state.pending_g = false;
                     self.apply_motion_key(VimKey::Go, window, cx);
                 } else {
-                    self.vim.pending_g = true;
+                    self.vim_state.state.pending_g = true;
                     cx.notify();
                 }
             }
@@ -759,20 +769,20 @@ impl DocumentEditorView {
             VimKey::OpenBelow => self.open_vim_line(false, window, cx),
             VimKey::OpenAbove => self.open_vim_line(true, window, cx),
             VimKey::Visual => {
-                self.vim.mode = VimMode::Visual;
+                self.vim_state.state.mode = VimMode::Visual;
                 let cursor = self.editor.read(cx).cursor();
-                self.vim.visual_anchor = Some(cursor);
-                self.vim.visual_head = Some(cursor);
-                self.vim.reset_command();
+                self.vim_state.state.visual_anchor = Some(cursor);
+                self.vim_state.state.visual_head = Some(cursor);
+                self.vim_state.state.reset_command();
                 self.focus_handle.focus(window, cx);
                 cx.notify();
             }
             VimKey::VisualLine => {
-                self.vim.mode = VimMode::VisualLine;
+                self.vim_state.state.mode = VimMode::VisualLine;
                 let cursor = self.editor.read(cx).cursor();
-                self.vim.visual_anchor = Some(cursor);
-                self.vim.visual_head = Some(cursor);
-                self.vim.reset_command();
+                self.vim_state.state.visual_anchor = Some(cursor);
+                self.vim_state.state.visual_head = Some(cursor);
+                self.vim_state.state.reset_command();
                 self.focus_handle.focus(window, cx);
                 cx.notify();
             }
@@ -780,15 +790,15 @@ impl DocumentEditorView {
             VimKey::DeletePreviousChar => self.delete_vim_previous_char(window, cx),
             VimKey::SubstituteChar => self.substitute_vim_char(window, cx),
             VimKey::ReplaceChar => {
-                self.vim.pending_char = Some(VimPendingChar::Replace);
+                self.vim_state.state.pending_char = Some(VimPendingChar::Replace);
                 cx.notify();
             }
             VimKey::SubstituteLine => {
-                let count = self.vim.take_count();
+                let count = self.vim_state.state.take_count();
                 self.apply_line_operator(VimOperator::Change, count, window, cx);
             }
             VimKey::YankLine => {
-                let count = self.vim.take_count();
+                let count = self.vim_state.state.take_count();
                 self.apply_line_operator(VimOperator::Yank, count, window, cx);
             }
             VimKey::JoinLines => self.join_vim_lines(window, cx),
@@ -808,29 +818,29 @@ impl DocumentEditorView {
             VimKey::RepeatLastChange => self.repeat_last_change(window, cx),
             VimKey::Search => self.dispatch_search(window, cx),
             _ => {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 cx.notify();
             }
         }
     }
 
     fn handle_visual_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(prefix) = self.vim.pending_text_object.take() {
+        if let Some(prefix) = self.vim_state.state.pending_text_object.take() {
             if is_text_object_key(key) {
                 self.apply_visual_text_object(prefix, key, window, cx);
             } else {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 cx.notify();
             }
             return;
         }
-        if self.vim.pending_g && key != VimKey::Go {
-            self.vim.reset_command();
+        if self.vim_state.state.pending_g && key != VimKey::Go {
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         }
         match key {
-            VimKey::Digit(0) if self.vim.count.is_none() => {
+            VimKey::Digit(0) if self.vim_state.state.count.is_none() => {
                 self.apply_motion_key(VimKey::LineStart, window, cx)
             }
             VimKey::Left
@@ -853,37 +863,37 @@ impl DocumentEditorView {
             VimKey::RepeatFind => self.repeat_find(false, window, cx),
             VimKey::RepeatFindReverse => self.repeat_find(true, window, cx),
             VimKey::Go => {
-                if self.vim.pending_g {
-                    self.vim.pending_g = false;
+                if self.vim_state.state.pending_g {
+                    self.vim_state.state.pending_g = false;
                     self.apply_motion_key(VimKey::Go, window, cx);
                 } else {
-                    self.vim.pending_g = true;
+                    self.vim_state.state.pending_g = true;
                     cx.notify();
                 }
             }
             VimKey::Insert => {
-                self.vim.pending_text_object = Some(VimTextObjectPrefix::Inner);
+                self.vim_state.state.pending_text_object = Some(VimTextObjectPrefix::Inner);
                 cx.notify();
             }
             VimKey::Append => {
-                self.vim.pending_text_object = Some(VimTextObjectPrefix::Around);
+                self.vim_state.state.pending_text_object = Some(VimTextObjectPrefix::Around);
                 cx.notify();
             }
             VimKey::Visual => {
-                if self.vim.mode == VimMode::Visual {
+                if self.vim_state.state.mode == VimMode::Visual {
                     self.enter_vim_normal(window, cx);
                 } else {
-                    self.vim.mode = VimMode::Visual;
-                    self.vim.reset_command();
+                    self.vim_state.state.mode = VimMode::Visual;
+                    self.vim_state.state.reset_command();
                     cx.notify();
                 }
             }
             VimKey::VisualLine => {
-                if self.vim.mode == VimMode::VisualLine {
+                if self.vim_state.state.mode == VimMode::VisualLine {
                     self.enter_vim_normal(window, cx);
                 } else {
-                    self.vim.mode = VimMode::VisualLine;
-                    self.vim.reset_command();
+                    self.vim_state.state.mode = VimMode::VisualLine;
+                    self.vim_state.state.reset_command();
                     cx.notify();
                 }
             }
@@ -897,7 +907,7 @@ impl DocumentEditorView {
                 self.apply_visual_operator(VimOperator::Change, window, cx)
             }
             VimKey::ReplaceChar => {
-                self.vim.pending_char = Some(VimPendingChar::Replace);
+                self.vim_state.state.pending_char = Some(VimPendingChar::Replace);
                 cx.notify();
             }
             VimKey::PasteAfter | VimKey::PasteBefore => self.paste_vim(true, window, cx),
@@ -909,16 +919,16 @@ impl DocumentEditorView {
             }
             VimKey::Search => self.dispatch_search(window, cx),
             _ => {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 cx.notify();
             }
         }
     }
 
     fn begin_operator(&mut self, operator: VimOperator, cx: &mut Context<Self>) {
-        self.vim.operator_count = self.vim.count.take();
-        self.vim.pending_operator = Some(operator);
-        self.vim.pending_g = false;
+        self.vim_state.state.operator_count = self.vim_state.state.count.take();
+        self.vim_state.state.pending_operator = Some(operator);
+        self.vim_state.state.pending_g = false;
         cx.notify();
     }
 
@@ -929,16 +939,16 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Some(prefix) = self.vim.pending_text_object.take() {
+        if let Some(prefix) = self.vim_state.state.pending_text_object.take() {
             if is_text_object_key(key) {
-                let count = combined_operator_count(&mut self.vim).unwrap_or(1);
+                let count = combined_operator_count(&mut self.vim_state.state).unwrap_or(1);
                 let range = {
                     let editor = self.editor.read(cx);
                     text_object_range(editor.text(), editor.cursor(), count, prefix, key)
                 };
                 self.apply_operator(operator, range, false, window, cx);
             } else {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 cx.notify();
             }
             return true;
@@ -948,8 +958,8 @@ impl DocumentEditorView {
             VimKey::Append => Some(VimTextObjectPrefix::Around),
             _ => None,
         } {
-            self.vim.pending_text_object = Some(prefix);
-            self.vim.pending_g = false;
+            self.vim_state.state.pending_text_object = Some(prefix);
+            self.vim_state.state.pending_g = false;
             cx.notify();
             return true;
         }
@@ -965,28 +975,28 @@ impl DocumentEditorView {
                 | (VimOperator::Change, VimKey::Change)
         );
         if repeated {
-            let count = combined_operator_count(&mut self.vim).unwrap_or(1);
+            let count = combined_operator_count(&mut self.vim_state.state).unwrap_or(1);
             self.apply_line_operator(operator, count, window, cx);
             return true;
         }
 
-        if key == VimKey::Go && !self.vim.pending_g {
-            self.vim.pending_g = true;
+        if key == VimKey::Go && !self.vim_state.state.pending_g {
+            self.vim_state.state.pending_g = true;
             cx.notify();
             return true;
         }
-        if key == VimKey::Go && self.vim.pending_g {
-            self.vim.pending_g = false;
+        if key == VimKey::Go && self.vim_state.state.pending_g {
+            self.vim_state.state.pending_g = false;
             return self.apply_operator_motion(operator, VimKey::Go, window, cx);
         }
-        if self.vim.pending_g {
-            self.vim.reset_command();
+        if self.vim_state.state.pending_g {
+            self.vim_state.state.reset_command();
             cx.notify();
             return true;
         }
 
         if let Some(kind) = vim_find_kind_for_key(key) {
-            self.vim.pending_char = Some(VimPendingChar::Find(kind));
+            self.vim_state.state.pending_char = Some(VimPendingChar::Find(kind));
             cx.notify();
             return true;
         }
@@ -1003,7 +1013,7 @@ impl DocumentEditorView {
     }
 
     fn begin_find(&mut self, kind: VimFindKind, cx: &mut Context<Self>) {
-        self.vim.pending_char = Some(VimPendingChar::Find(kind));
+        self.vim_state.state.pending_char = Some(VimPendingChar::Find(kind));
         cx.notify();
     }
 
@@ -1028,11 +1038,11 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let operator = self.vim.pending_operator;
+        let operator = self.vim_state.state.pending_operator;
         let count = if operator.is_some() {
-            combined_operator_count(&mut self.vim)
+            combined_operator_count(&mut self.vim_state.state)
         } else {
-            self.vim.count.take()
+            self.vim_state.state.count.take()
         };
         let motion = {
             let editor = self.editor.read(cx);
@@ -1046,13 +1056,13 @@ impl DocumentEditorView {
             )
         };
         let Some(motion) = motion else {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         };
 
         if !repeating {
-            self.vim.last_find = Some(VimLastFind {
+            self.vim_state.state.last_find = Some(VimLastFind {
                 kind,
                 target: target.clone(),
             });
@@ -1065,14 +1075,14 @@ impl DocumentEditorView {
             self.apply_operator(operator, range, false, window, cx);
         } else {
             self.set_vim_cursor(motion.target, window, cx);
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             cx.notify();
         }
     }
 
     fn repeat_find(&mut self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(last) = self.vim.last_find.clone() else {
-            self.vim.reset_command();
+        let Some(last) = self.vim_state.state.last_find.clone() else {
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         };
@@ -1091,8 +1101,8 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(last) = self.vim.last_find.clone() else {
-            self.vim.reset_command();
+        let Some(last) = self.vim_state.state.last_find.clone() else {
+            self.vim_state.state.reset_command();
             cx.notify();
             return true;
         };
@@ -1101,29 +1111,29 @@ impl DocumentEditorView {
         } else {
             last.kind
         };
-        self.vim.pending_operator = Some(operator);
+        self.vim_state.state.pending_operator = Some(operator);
         self.apply_find(kind, last.target, true, window, cx);
         true
     }
 
     fn replace_vim_chars(&mut self, target: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let (range, replacement, linewise) = if self.vim.mode.is_visual() {
+        let (range, replacement, linewise) = if self.vim_state.state.mode.is_visual() {
             let Some(range) = self.vim_visual_range(cx) else {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 return;
             };
-            let linewise = self.vim.mode == VimMode::VisualLine;
+            let linewise = self.vim_state.state.mode == VimMode::VisualLine;
             let selected = self.editor.read(cx).text().slice(range.clone()).to_string();
             let replacement = replace_visual_text(&selected, target);
             (range, replacement, linewise)
         } else {
-            let count = self.vim.take_count();
+            let count = self.vim_state.state.take_count();
             let editor = self.editor.read(cx);
             let range = forward_char_range(editor.text(), editor.cursor(), count);
             if range.is_empty()
                 || editor.text().slice(range.clone()).chars().count() != count as usize
             {
-                self.vim.reset_command();
+                self.vim_state.state.reset_command();
                 cx.notify();
                 return;
             }
@@ -1137,7 +1147,7 @@ impl DocumentEditorView {
         };
 
         let replaced = self.editor.read(cx).text().slice(range.clone()).to_string();
-        self.vim.register = Some(VimRegister {
+        self.vim_state.state.register = Some(VimRegister {
             text: replaced.clone(),
             linewise,
         });
@@ -1156,9 +1166,9 @@ impl DocumentEditorView {
     }
 
     fn repeat_last_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count_override = self.vim.count.take();
-        let Some(recipe) = self.vim.last_change.clone() else {
-            self.vim.reset_command();
+        let count_override = self.vim_state.state.count.take();
+        let Some(recipe) = self.vim_state.state.last_change.clone() else {
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         };
@@ -1180,13 +1190,13 @@ impl DocumentEditorView {
             );
         });
         self.editor = scratch_editor;
-        self.vim.replaying = true;
-        self.vim.reset_command();
+        self.vim_state.state.replaying = true;
+        self.vim_state.state.reset_command();
 
         if replay_is_open_line(&recipe.steps) && recipe.visual.is_none() {
             for _ in 0..count {
                 self.replay_vim_steps(&recipe.steps, window, cx);
-                if self.vim.mode == VimMode::Insert {
+                if self.vim_state.state.mode == VimMode::Insert {
                     if let Some(patch) = recipe.insert_patch.as_ref() {
                         self.apply_insert_patch(patch, 1, window, cx);
                     }
@@ -1201,11 +1211,11 @@ impl DocumentEditorView {
                 recipe.visual.is_none() && replay_repeats_insert_text(&recipe.steps);
             if !repeat_insert_text {
                 for digit in count.to_string().bytes() {
-                    self.vim.push_digit(digit.saturating_sub(b'0'));
+                    self.vim_state.state.push_digit(digit.saturating_sub(b'0'));
                 }
             }
             self.replay_vim_steps(&recipe.steps, window, cx);
-            if self.vim.mode == VimMode::Insert {
+            if self.vim_state.state.mode == VimMode::Insert {
                 if let Some(patch) = recipe.insert_patch.as_ref() {
                     let repetitions = if repeat_insert_text { count } else { 1 };
                     self.apply_insert_patch(patch, repetitions, window, cx);
@@ -1216,8 +1226,8 @@ impl DocumentEditorView {
         let replayed_text = self.editor.read(cx).text().clone();
         let replayed_cursor = self.editor.read(cx).cursor();
         self.editor = live_editor;
-        self.vim.replaying = false;
-        self.vim.last_change = Some(recipe);
+        self.vim_state.state.replaying = false;
+        self.vim_state.state.last_change = Some(recipe);
         self.discard_vim_change_candidate();
         if let Some((range, replacement)) =
             rope_replacement_between(&history_before, &replayed_text)
@@ -1240,14 +1250,14 @@ impl DocumentEditorView {
             match step {
                 VimReplayStep::Key(VimKey::Digit(_)) => {}
                 VimReplayStep::Key(key) => {
-                    if self.vim.mode.is_visual() {
+                    if self.vim_state.state.mode.is_visual() {
                         self.handle_visual_key(*key, window, cx);
                     } else {
                         self.handle_normal_key(*key, window, cx);
                     }
                 }
                 VimReplayStep::Literal(target) => {
-                    if let Some(pending) = self.vim.pending_char.take() {
+                    if let Some(pending) = self.vim_state.state.pending_char.take() {
                         self.apply_pending_vim_char(pending, target.clone(), window, cx);
                     }
                 }
@@ -1256,26 +1266,26 @@ impl DocumentEditorView {
     }
 
     fn undo_vim_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.vim.undo_stack.pop() else {
+        let Some(entry) = self.vim_state.state.undo_stack.pop() else {
             self.dispatch_input_action(Box::new(Undo), window, cx);
             return;
         };
         if entry.after != *self.editor.read(cx).text() {
-            self.vim.redo_stack.clear();
+            self.vim_state.state.redo_stack.clear();
             self.dispatch_input_action(Box::new(Undo), window, cx);
             return;
         }
         let current_len = self.editor.read(cx).text().len();
-        self.vim.replaying = true;
+        self.vim_state.state.replaying = true;
         self.replace_vim_range(0..current_len, &entry.before.to_string(), window, cx);
         self.set_vim_cursor(entry.cursor_before, window, cx);
         self.enter_vim_normal(window, cx);
-        self.vim.replaying = false;
-        self.vim.redo_stack.push(entry);
+        self.vim_state.state.replaying = false;
+        self.vim_state.state.redo_stack.push(entry);
     }
 
     fn redo_vim_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.vim.redo_stack.pop() else {
+        let Some(entry) = self.vim_state.state.redo_stack.pop() else {
             self.dispatch_input_action(Box::new(Redo), window, cx);
             return;
         };
@@ -1284,12 +1294,12 @@ impl DocumentEditorView {
             return;
         }
         let current_len = self.editor.read(cx).text().len();
-        self.vim.replaying = true;
+        self.vim_state.state.replaying = true;
         self.replace_vim_range(0..current_len, &entry.after.to_string(), window, cx);
         self.set_vim_cursor(entry.cursor_after, window, cx);
         self.enter_vim_normal(window, cx);
-        self.vim.replaying = false;
-        self.vim.undo_stack.push(entry);
+        self.vim_state.state.replaying = false;
+        self.vim_state.state.undo_stack.push(entry);
     }
 
     fn prepare_visual_repeat(
@@ -1312,13 +1322,13 @@ impl DocumentEditorView {
                 move_by_chars(rope, anchor, visual.extent.saturating_sub(1) as isize)
             }
         };
-        self.vim.mode = if visual.linewise {
+        self.vim_state.state.mode = if visual.linewise {
             VimMode::VisualLine
         } else {
             VimMode::Visual
         };
-        self.vim.visual_anchor = Some(anchor);
-        self.vim.visual_head = Some(head);
+        self.vim_state.state.visual_anchor = Some(anchor);
+        self.vim_state.state.visual_head = Some(head);
         self.set_vim_cursor(head, window, cx);
     }
 
@@ -1363,8 +1373,8 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.vim.operator_count = self.vim.count.take();
-        self.vim.pending_operator = Some(operator);
+        self.vim_state.state.operator_count = self.vim_state.state.count.take();
+        self.vim_state.state.pending_operator = Some(operator);
         _ = self.apply_operator_motion(operator, motion_key, window, cx);
     }
 
@@ -1375,7 +1385,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let count = combined_operator_count(&mut self.vim);
+        let count = combined_operator_count(&mut self.vim_state.state);
         let motion = {
             let editor = self.editor.read(cx);
             motion_for_key(editor.text(), editor.cursor(), key, count, None)
@@ -1416,7 +1426,7 @@ impl DocumentEditorView {
         let Some(range) = self.vim_visual_range(cx) else {
             return;
         };
-        let linewise = self.vim.mode == VimMode::VisualLine;
+        let linewise = self.vim_state.state.mode == VimMode::VisualLine;
         self.apply_operator(operator, range, linewise, window, cx);
     }
 
@@ -1427,22 +1437,23 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.vim.take_count();
+        let count = self.vim_state.state.take_count();
         let range = {
             let editor = self.editor.read(cx);
             text_object_range(editor.text(), editor.cursor(), count, prefix, key)
         };
         if range.is_empty() {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         }
 
-        self.vim.mode = VimMode::Visual;
-        self.vim.visual_anchor = Some(range.start);
-        self.vim.visual_head = Some(previous_boundary(self.editor.read(cx).text(), range.end));
-        self.vim.reset_command();
-        if let Some(head) = self.vim.visual_head {
+        self.vim_state.state.mode = VimMode::Visual;
+        self.vim_state.state.visual_anchor = Some(range.start);
+        self.vim_state.state.visual_head =
+            Some(previous_boundary(self.editor.read(cx).text(), range.end));
+        self.vim_state.state.reset_command();
+        if let Some(head) = self.vim_state.state.visual_head {
             self.set_vim_cursor(head, window, cx);
         }
         cx.notify();
@@ -1457,12 +1468,12 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) {
         if range.is_empty() {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             return;
         }
 
         let text = self.editor.read(cx).text().slice(range.clone()).to_string();
-        self.vim.register = Some(VimRegister {
+        self.vim_state.state.register = Some(VimRegister {
             text: text.clone(),
             linewise,
         });
@@ -1488,7 +1499,12 @@ impl DocumentEditorView {
             }
             VimOperator::Change => {
                 let (replacement, cursor) = if linewise {
-                    let register = self.vim.register.as_ref().map_or("", |r| &r.text);
+                    let register = self
+                        .vim_state
+                        .state
+                        .register
+                        .as_ref()
+                        .map_or("", |r| &r.text);
                     let indent = leading_indent(register);
                     let replacement = if range.end < self.editor.read(cx).text().len() {
                         let line_break = if register.contains("\r\n") {
@@ -1509,24 +1525,24 @@ impl DocumentEditorView {
                 self.enter_vim_insert(cursor, window, cx);
             }
         }
-        self.vim.reset_command();
+        self.vim_state.state.reset_command();
     }
 
     fn apply_motion_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.count.take();
-        let preferred = self.vim.preferred_column;
+        let count = self.vim_state.state.count.take();
+        let preferred = self.vim_state.state.preferred_column;
         let motion = {
             let editor = self.editor.read(cx);
             motion_for_key(editor.text(), editor.cursor(), key, count, preferred)
         };
         let Some(motion) = motion else {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             return;
         };
 
         if matches!(key, VimKey::Up | VimKey::Down) {
-            if self.vim.preferred_column.is_none() {
-                self.vim.preferred_column = Some(
+            if self.vim_state.state.preferred_column.is_none() {
+                self.vim_state.state.preferred_column = Some(
                     self.editor
                         .read(cx)
                         .text()
@@ -1535,15 +1551,15 @@ impl DocumentEditorView {
                 );
             }
         } else {
-            self.vim.preferred_column = None;
+            self.vim_state.state.preferred_column = None;
         }
-        self.vim.pending_g = false;
+        self.vim_state.state.pending_g = false;
         self.set_vim_cursor(motion.target, window, cx);
         cx.notify();
     }
 
     fn delete_vim_char(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.take_count();
+        let count = self.vim_state.state.take_count();
         let range = {
             let editor = self.editor.read(cx);
             forward_char_range(editor.text(), editor.cursor(), count)
@@ -1552,7 +1568,7 @@ impl DocumentEditorView {
     }
 
     fn delete_vim_previous_char(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.take_count();
+        let count = self.vim_state.state.take_count();
         let range = {
             let editor = self.editor.read(cx);
             backward_char_range(editor.text(), editor.cursor(), count)
@@ -1561,7 +1577,7 @@ impl DocumentEditorView {
     }
 
     fn substitute_vim_char(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.take_count();
+        let count = self.vim_state.state.take_count();
         let range = {
             let editor = self.editor.read(cx);
             forward_char_range(editor.text(), editor.cursor(), count)
@@ -1574,13 +1590,13 @@ impl DocumentEditorView {
     }
 
     fn join_vim_lines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.vim.take_count().max(2);
+        let count = self.vim_state.state.take_count().max(2);
         let edit = {
             let editor = self.editor.read(cx);
             join_line_edit(editor.text(), editor.cursor(), count)
         };
         let Some((range, replacement)) = edit else {
-            self.vim.reset_command();
+            self.vim_state.state.reset_command();
             cx.notify();
             return;
         };
@@ -1598,7 +1614,7 @@ impl DocumentEditorView {
             item.text().map(|text| VimRegister { text, linewise })
         });
         let register = clipboard_register
-            .or_else(|| self.vim.register.clone())
+            .or_else(|| self.vim_state.state.register.clone())
             .unwrap_or_else(|| VimRegister {
                 text: String::new(),
                 linewise: false,
@@ -1606,7 +1622,7 @@ impl DocumentEditorView {
         if register.text.is_empty() {
             return;
         }
-        let count = self.vim.take_count() as usize;
+        let count = self.vim_state.state.take_count() as usize;
         let replacement = if register.linewise {
             let mut text = register.text;
             if !text.ends_with('\n') {
@@ -1617,7 +1633,7 @@ impl DocumentEditorView {
             register.text.repeat(count)
         };
 
-        if self.vim.mode.is_visual() {
+        if self.vim_state.state.mode.is_visual() {
             let Some(range) = self.vim_visual_range(cx) else {
                 return;
             };
@@ -1713,10 +1729,10 @@ impl DocumentEditorView {
     }
 
     fn enter_vim_insert(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.vim.mode = VimMode::Insert;
-        self.vim.visual_anchor = None;
-        self.vim.visual_head = None;
-        self.vim.reset_command();
+        self.vim_state.state.mode = VimMode::Insert;
+        self.vim_state.state.visual_anchor = None;
+        self.vim_state.state.visual_head = None;
+        self.vim_state.state.reset_command();
         self.set_input_cursor(offset, window, cx);
         self.editor
             .update(cx, |editor, cx| editor.focus(window, cx));
@@ -1724,7 +1740,7 @@ impl DocumentEditorView {
     }
 
     fn enter_vim_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let was_insert = self.vim.mode == VimMode::Insert;
+        let was_insert = self.vim_state.state.mode == VimMode::Insert;
         let target = {
             let editor = self.editor.read(cx);
             let cursor = editor.cursor();
@@ -1737,11 +1753,11 @@ impl DocumentEditorView {
                 cursor.min(normal_line_end(editor.text(), row))
             }
         };
-        self.vim.mode = VimMode::Normal;
-        self.vim.visual_anchor = None;
-        self.vim.visual_head = None;
-        self.vim.preferred_column = None;
-        self.vim.reset_command();
+        self.vim_state.state.mode = VimMode::Normal;
+        self.vim_state.state.visual_anchor = None;
+        self.vim_state.state.visual_head = None;
+        self.vim_state.state.preferred_column = None;
+        self.vim_state.state.reset_command();
         self.set_vim_cursor(target, window, cx);
         cx.notify();
     }
@@ -1751,8 +1767,8 @@ impl DocumentEditorView {
             let editor = self.editor.read(cx);
             clamp_normal_offset(editor.text(), offset)
         };
-        if self.vim.mode.is_visual() {
-            self.vim.visual_head = Some(offset);
+        if self.vim_state.state.mode.is_visual() {
+            self.vim_state.state.visual_head = Some(offset);
         }
         self.set_input_cursor(offset, window, cx);
         self.focus_handle.focus(window, cx);
@@ -1796,17 +1812,17 @@ impl DocumentEditorView {
             .update(cx, |editor, cx| editor.focus(window, cx));
         window.dispatch_action(action, cx);
         self.focus_handle.focus(window, cx);
-        self.vim.reset_command();
+        self.vim_state.state.reset_command();
         cx.notify();
     }
 
     fn dispatch_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.vim_search_active = false;
+        self.vim_state.search_active = false;
         self.editor
             .update(cx, |editor, cx| editor.focus(window, cx));
         window.dispatch_action(Box::new(Search), cx);
-        self.vim_search_active = true;
-        self.vim.reset_command();
+        self.vim_state.search_active = true;
+        self.vim_state.state.reset_command();
         cx.notify();
     }
 }
@@ -3514,13 +3530,13 @@ mod tests {
 
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
-            view.read_with(&cx, |editor, _| !editor.is_loading),
+            view.read_with(&cx, |editor, _| !editor.persistence.is_loading),
             "Vim test editor should finish loading"
         );
         cx.update(|window, cx| {
@@ -3690,7 +3706,7 @@ mod tests {
 
             assert_eq!(vim_test_value(&view, cx), "abc");
             assert_eq!(
-                view.read_with(cx, |editor, _| editor.vim.command_text()),
+                view.read_with(cx, |editor, _| editor.vim_state.state.command_text()),
                 ""
             );
             cx.simulate_keystrokes("x");
@@ -4055,7 +4071,7 @@ mod tests {
 
         for _ in 0..100 {
             cx.run_until_parked();
-            if view.read_with(&cx, |editor, _| !editor.is_loading) {
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -4155,7 +4171,7 @@ mod tests {
             (
                 editor.focus_handle.is_focused(window),
                 editor.editor.focus_handle(cx).is_focused(window),
-                editor.vim_search_active,
+                editor.vim_state.search_active,
             )
         });
         assert!(
@@ -4250,6 +4266,7 @@ mod tests {
             assert_eq!(range, 0.."Further".len());
             let input = editor.editor.read(cx);
             let source_bounds = editor
+                .analysis
                 .source_bounds
                 .expect("source bounds should be available after drawing");
             let selection = super::super::render::vim_selection_bounds(input, range, source_bounds);
