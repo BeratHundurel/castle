@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 
-use entity::{project, project::Entity as Project};
 use gpui::{Context, PathPromptOptions, SharedString, Window};
 use gpui_component::{WindowExt as _, notification::Notification};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, PaginatorTrait};
 
-use crate::DB;
+use crate::AppServices;
 use crate::document_editor::DocumentKind;
 use std::path::Path;
 
@@ -98,23 +96,14 @@ impl SidebarView {
     }
 
     pub(super) fn add_project(&mut self, cx: &mut Context<Self>, name: String) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::create_project(store.connection().as_ref(), name).await
+            });
 
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    let position = Project::find().count(&*db).await? as i32;
-                    project::ActiveModel {
-                        name: Set(name),
-                        archived: Set(false),
-                        position: Set(position),
-                        ..Default::default()
-                    }
-                    .insert(&*db)
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(project)) => {
@@ -145,8 +134,8 @@ impl SidebarView {
             prompt: Some("Add folder as project".into()),
         });
         let background_executor = cx.background_executor().clone();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {

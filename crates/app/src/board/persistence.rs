@@ -2,7 +2,7 @@ use gpui::{Context, SharedString};
 use sea_orm::{DatabaseConnection, DbErr};
 use std::{future::Future, sync::Arc};
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{BoardView, BoardViewEvent, dto::*};
 
@@ -32,7 +32,7 @@ impl BoardView {
         let Some(board_id) = self.board_id else {
             return;
         };
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime.spawn(mutation).await;
             this.update(cx, |this, cx| {
@@ -92,10 +92,10 @@ impl BoardView {
         self.loaded_generation = None;
         let generation = self.load_generation;
         let local_mutation_generation = self.local_mutation_generation;
-        let app_db = cx.global::<DB>();
-        let db = app_db.conn.clone();
-        let board_layout_persistence = app_db.board_layout_persistence.clone();
-        let runtime = app_db.runtime.clone();
+        let app_db = cx.global::<AppServices>();
+        let db = app_db.store().connection();
+        let board_layout_persistence = app_db.board_layout_persistence();
+        let runtime = app_db.runtime();
 
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -435,7 +435,7 @@ mod tests {
             })
             .expect("board restore setup should succeed");
 
-        let db = crate::DB::new(Arc::new(db), PathBuf::new());
+        let db = crate::AppServices::new(Arc::new(db), PathBuf::new());
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
@@ -515,8 +515,8 @@ mod tests {
             })
             .expect("board move race setup should succeed");
 
-        let app_db = crate::DB::new(db.clone(), PathBuf::new());
-        let position_persistence = app_db.board_layout_persistence.clone();
+        let app_db = crate::AppServices::new(db.clone(), PathBuf::new());
+        let position_persistence = app_db.board_layout_persistence();
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
@@ -845,7 +845,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::DB::new(db, PathBuf::new()));
+            cx.set_global(crate::AppServices::new(db, PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
                 view.update(cx, |board, cx| board.load_board(board_id, cx));

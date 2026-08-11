@@ -31,10 +31,10 @@ impl BoardView {
         self.entry_dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let title = trimmed_title.to_string();
         let description = description.to_string();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -113,7 +113,7 @@ impl BoardView {
         self.next_due_date_update_revision = self.next_due_date_update_revision.saturating_add(1);
         let revision = self.next_due_date_update_revision;
         let persisted_revisions = self.persisted_due_date_revisions.clone();
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not save due date", false, async move {
             let mut persisted_revisions = persisted_revisions.lock().await;
             if persisted_revisions
@@ -159,7 +159,7 @@ impl BoardView {
         entry.reminder_enabled = enabled;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not save reminder", false, async move {
             entry::ActiveModel {
                 id: Set(entry_id as i64),

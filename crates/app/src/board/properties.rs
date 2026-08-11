@@ -9,7 +9,7 @@ use storage::board_properties::{
     SortDirection, ViewFilter, ViewSort,
 };
 
-use crate::DB;
+use crate::AppServices;
 
 use super::BoardView;
 
@@ -236,8 +236,8 @@ impl BoardView {
             return;
         }
         let kind = self.new_property_kind;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -297,8 +297,8 @@ impl BoardView {
         let Some(property_id) = self.renaming_property_id else {
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -364,8 +364,8 @@ impl BoardView {
         let Some(board_id) = self.board_id else {
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -445,8 +445,8 @@ impl BoardView {
     }
 
     fn delete_property(&mut self, property_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -497,8 +497,8 @@ impl BoardView {
             .find(|property| property.id == property_id)
             .map(|property| OPTION_COLORS[property.options.len() % OPTION_COLORS.len()].to_string())
             .unwrap_or_else(|| "blue".to_string());
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -566,8 +566,8 @@ impl BoardView {
         let Some(option_id) = self.renaming_property_option_id else {
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -618,8 +618,8 @@ impl BoardView {
             .position(|color| *color == current)
             .unwrap_or(0);
         let color = OPTION_COLORS[(index + 1) % OPTION_COLORS.len()].to_string();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -685,8 +685,8 @@ impl BoardView {
             .iter()
             .map(|option| option.id)
             .collect::<Vec<_>>();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -774,8 +774,8 @@ impl BoardView {
     }
 
     fn delete_property_option(&mut self, option_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -831,8 +831,8 @@ impl BoardView {
         let revision = self.next_property_update_revision;
         self.property_update_revisions.insert(key, revision);
         let persisted_revisions = self.persisted_property_revisions.clone();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -1018,8 +1018,8 @@ impl BoardView {
             cx.notify();
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1069,8 +1069,8 @@ impl BoardView {
         let Some(view_id) = self.renaming_view_id else {
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1116,8 +1116,8 @@ impl BoardView {
         }
         self.filters.sync_config(&mut self.active_view_config);
         let config = self.active_view_config.clone();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1167,8 +1167,8 @@ impl BoardView {
         };
         self.filters.sync_config(&mut self.active_view_config);
         let config = self.active_view_config.clone();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1203,8 +1203,8 @@ impl BoardView {
     }
 
     pub(super) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -1225,8 +1225,8 @@ impl BoardView {
     }
 
     pub(super) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {

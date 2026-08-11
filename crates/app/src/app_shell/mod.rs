@@ -30,7 +30,7 @@ use gpui_component::{
 use std::{collections::HashMap, sync::Arc};
 use storage::workspace::WorkspaceTitleTarget;
 
-use crate::DB;
+use crate::AppServices;
 use crate::app_settings::{AppSettings, StoredTab};
 use crate::board::{BoardView, BoardViewEvent};
 use crate::command_palette::{CommandPalette, CommandPaletteMode};

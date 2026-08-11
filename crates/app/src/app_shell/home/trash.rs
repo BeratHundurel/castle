@@ -200,8 +200,8 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = RestoreTrashItem(MoveToTrash {
                 kind: item.kind,
@@ -291,11 +291,11 @@ impl AppShell {
         item: crate::trash::TrashItem,
         cx: &mut Context<Self>,
     ) {
-        let app_db = cx.global::<DB>();
-        let db = app_db.conn.clone();
-        let attachments_dir = app_db.data_dir.join("attachments");
+        let app_db = cx.global::<AppServices>();
+        let db = app_db.store().connection();
+        let attachments_dir = app_db.data_dir().join("attachments");
         let background = cx.background_executor().clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let request = PurgeTrashItem(MoveToTrash {
                 kind: item.kind,
@@ -366,11 +366,11 @@ impl AppShell {
     }
 
     pub(in crate::app_shell) fn empty_trash(&mut self, cx: &mut Context<Self>) {
-        let app_db = cx.global::<DB>();
-        let db = app_db.conn.clone();
-        let attachments_dir = app_db.data_dir.join("attachments");
+        let app_db = cx.global::<AppServices>();
+        let db = app_db.store().connection();
+        let attachments_dir = app_db.data_dir().join("attachments");
         let background = cx.background_executor().clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = match runtime
                 .spawn(async move { crate::trash::purge_all(db.as_ref()).await })

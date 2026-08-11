@@ -460,8 +460,8 @@ impl AppShell {
                 title: title.clone(),
             })
             .generation;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let save_lock = self.workspace_title_save_lock.clone();
 
         cx.spawn(async move |this, cx| {
@@ -538,8 +538,8 @@ impl AppShell {
             .into_iter()
             .map(|(target, pending)| (target, pending.title))
             .collect::<Vec<_>>();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let save_lock = self.workspace_title_save_lock.clone();
 
         async move {

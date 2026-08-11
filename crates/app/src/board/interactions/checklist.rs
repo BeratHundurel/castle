@@ -30,8 +30,8 @@ impl BoardView {
         let position = std::cmp::max(self.next_checklist_item_position, next_position);
         self.next_checklist_item_position = position.saturating_add(1);
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -99,7 +99,7 @@ impl BoardView {
         item.checked = checked;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not update checklist item", false, async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),
@@ -122,7 +122,7 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete checklist item", false, async move {
             EntryChecklistItem::delete_by_id(item_id as i64)
                 .exec(&*db)
@@ -170,7 +170,7 @@ impl BoardView {
             .collect::<Vec<_>>();
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not reorder checklist", false, async move {
             for (item_id, position) in positions {
                 entry_checklist_item::ActiveModel {
@@ -205,7 +205,7 @@ impl BoardView {
         item.title = SharedString::from(title.as_str());
         self.renaming_checklist_item_id = None;
         cx.notify();
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {
             entry_checklist_item::ActiveModel {
                 id: Set(item_id as i64),

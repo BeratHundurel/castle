@@ -590,17 +590,17 @@ mod tests {
     use std::collections::HashSet;
 
     use anyhow::Result;
-    use migration::{Migrator, MigratorTrait};
     use rmcp::ServiceExt;
-    use sea_orm::Database;
+    use storage::StoreOptions;
 
     use super::*;
 
     #[tokio::test]
     async fn protocol_client_discovers_castle_tools() -> Result<()> {
-        let db = Database::connect("sqlite::memory:").await?;
-        Migrator::up(&db, None).await?;
-        let server = CastleServer::new(CastleStore::new(db));
+        let store =
+            CastleStore::connect(StoreOptions::new("sqlite::memory:").connection_pool(1, 1))
+                .await?;
+        let server = CastleServer::new(store);
         let (client_transport, server_transport) = tokio::io::duplex(64 * 1024);
 
         let server_task = tokio::spawn(async move {

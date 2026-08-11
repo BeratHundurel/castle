@@ -7,8 +7,8 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self.home_refreshing = true;
         cx.spawn(async move |this, cx| {
             let result = match runtime
@@ -46,8 +46,8 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self.trash_refreshing = true;
         cx.spawn(async move |this, cx| {
             let result = match runtime
@@ -114,8 +114,8 @@ impl AppShell {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self.record_opened_task = Some(cx.spawn(async move |_, _| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let update = runtime.spawn(async move {

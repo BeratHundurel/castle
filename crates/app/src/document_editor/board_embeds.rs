@@ -17,7 +17,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::DB;
+use crate::AppServices;
 
 use super::DocumentEditorView;
 
@@ -434,8 +434,8 @@ impl DocumentEditorView {
         self.board_embed_loading_keys = keys.clone();
         self.board_embed_generation = self.board_embed_generation.saturating_add(1);
         let generation = self.board_embed_generation;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self._board_embed_task = Some(cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {

@@ -1,3 +1,5 @@
+mod agent_store;
+pub mod agent_types;
 pub mod board;
 pub mod board_positions;
 pub mod board_projection;
@@ -12,6 +14,8 @@ pub mod search;
 pub mod trash;
 pub mod workspace;
 pub mod workspace_links;
+
+pub use agent_store::{ChangeDomain, Store, StoreOptions};
 
 #[cfg(test)]
 mod test_alloc;

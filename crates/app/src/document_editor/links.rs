@@ -13,7 +13,7 @@ use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, TextEdit,
 };
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{DocumentEditorView, DocumentInspectorTab};
 
@@ -368,7 +368,7 @@ impl DocumentEditorView {
         generation: u64,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         Self::load_note_links_with_runtime(note_id, generation, runtime, cx)
     }
 
@@ -378,7 +378,7 @@ impl DocumentEditorView {
         runtime: tokio::runtime::Handle,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {
@@ -445,7 +445,7 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         self.refresh_note_links_with_runtime(runtime, cx);
     }
 
@@ -908,7 +908,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(crate::DB::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(crate::AppServices::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(source_id, window, cx);
                 editor_view = Some(view.clone());

@@ -9,7 +9,7 @@ use gpui::{Context, ImageFormat, PathPromptOptions, Window};
 use gpui_component::{WindowExt as _, notification::Notification};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, TransactionTrait};
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{
     BoardView,
@@ -40,12 +40,12 @@ impl BoardView {
             multiple: true,
             prompt: Some("Attach images".into()),
         });
-        let app_db = cx.global::<DB>();
-        let db = app_db.conn.clone();
-        let data_dir = app_db.data_dir.clone();
-        let destination = attachment_directory(&app_db.data_dir, entry_id);
+        let app_db = cx.global::<AppServices>();
+        let db = app_db.store().connection();
+        let data_dir = app_db.data_dir();
+        let destination = attachment_directory(&app_db.data_dir(), entry_id);
         let background = cx.background_executor().clone();
-        let runtime = app_db.runtime.clone();
+        let runtime = app_db.runtime();
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -181,19 +181,19 @@ impl BoardView {
             return;
         };
 
-        let app_db = cx.global::<DB>();
-        let db = app_db.conn.clone();
+        let app_db = cx.global::<AppServices>();
+        let db = app_db.store().connection();
         let path = attachment_path(
-            &app_db.data_dir,
+            &app_db.data_dir(),
             attachment.entry_id,
             attachment.file_name.as_ref(),
         );
         let thumbnail = attachment_thumbnail_path(
-            &attachment_directory(&app_db.data_dir, attachment.entry_id),
+            &attachment_directory(&app_db.data_dir(), attachment.entry_id),
             attachment.file_name.as_ref(),
         );
         let background = cx.background_executor().clone();
-        let runtime = app_db.runtime.clone();
+        let runtime = app_db.runtime();
 
         cx.spawn_in(window, async move |this, cx| {
             let result = runtime
@@ -253,7 +253,7 @@ impl BoardView {
 
 impl BoardView {
     pub(super) fn prepare_attachment_previews(&mut self, entry_id: u32, cx: &mut Context<Self>) {
-        let data_dir = cx.global::<DB>().data_dir.clone();
+        let data_dir = cx.global::<AppServices>().data_dir();
         let generation = self.load_generation;
         let board_id = self.board_id;
         let attachments = attachment_preview_specs(&self.cards, &data_dir, entry_id);

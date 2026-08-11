@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{DB, app_settings::AppSettings};
+use crate::{AppServices, app_settings::AppSettings};
 
 use super::formatting::{format_document_text, map_range_after_format};
 use super::outline::DocumentOutline;
@@ -25,8 +25,8 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |this, window| {
@@ -282,7 +282,7 @@ impl DocumentEditorView {
     pub(super) fn schedule_auto_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         let epoch = self.auto_save_epoch;
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
 
         self._auto_save_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
@@ -379,7 +379,7 @@ impl DocumentEditorView {
             };
 
             let db = this
-                .read_with(cx, |_, cx| cx.global::<DB>().conn.clone())
+                .read_with(cx, |_, cx| cx.global::<AppServices>().store().connection())
                 .ok();
 
             let Some(db) = db else {
@@ -503,7 +503,7 @@ impl DocumentEditorView {
             .unwrap_or_else(|| {
                 (
                     unique_note_path(
-                        cx.global::<DB>().data_dir.join("notes"),
+                        cx.global::<AppServices>().data_dir().join("notes"),
                         self.title.as_ref(),
                     ),
                     true,
@@ -560,7 +560,7 @@ impl DocumentEditorView {
             .current_path
             .as_ref()
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-            .unwrap_or_else(|| cx.global::<DB>().data_dir.join("notes"));
+            .unwrap_or_else(|| cx.global::<AppServices>().data_dir().join("notes"));
 
         let receiver = cx.prompt_for_new_path(&start_dir, Some(&file_name));
         let view = cx.entity();
@@ -601,9 +601,9 @@ impl DocumentEditorView {
 
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         let saved_path = path.clone();
         let path_string = path.display().to_string();
 

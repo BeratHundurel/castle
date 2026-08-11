@@ -127,12 +127,12 @@ impl BoardView {
         let Some(board_id) = self.board_id else {
             return;
         };
-        let db = cx.global::<DB>();
-        let persistence = db.board_layout_persistence.clone();
-        let runtime = db.runtime.clone();
+        let db = cx.global::<AppServices>();
+        let persistence = db.board_layout_persistence();
+        let runtime = db.runtime();
         let revision = match persistence.submit(
             board_id,
-            db.conn.clone(),
+            db.store().connection(),
             storage::board_positions::BoardLayoutSnapshot { lists, entries },
         ) {
             Ok(revision) => revision,

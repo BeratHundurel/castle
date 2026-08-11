@@ -1246,12 +1246,8 @@ name = "castle-mcp"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "chrono",
- "entity",
- "migration",
  "rmcp",
  "schemars",
- "sea-orm",
  "serde",
  "storage",
  "tokio",
@@ -8180,6 +8176,7 @@ dependencies = [
  "chrono",
  "entity",
  "migration",
+ "schemars",
  "sea-orm",
  "serde",
  "serde_json",

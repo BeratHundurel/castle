@@ -7,8 +7,8 @@ impl BoardView {
         };
 
         let color = self.selected_label_color.to_string();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -78,7 +78,7 @@ impl BoardView {
             });
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not rename label", false, async move {
             board_label::ActiveModel {
                 id: Set(label_id as i64),
@@ -131,7 +131,7 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not update card label", false, async move {
             if assigned {
                 entry_label::ActiveModel {
@@ -163,7 +163,7 @@ impl BoardView {
         self.renaming_label_id = None;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete label", false, async move {
             BoardLabel::delete_by_id(label_id as i64).exec(&*db).await?;
             Ok::<(), anyhow::Error>(())

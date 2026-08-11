@@ -18,8 +18,8 @@ const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::
 
 impl AppShell {
     pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -45,8 +45,8 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let (revision_sender, mut revision_receiver) = tokio::sync::watch::channel(None);
 
         let poller = runtime.spawn(watch_change_revisions(
@@ -139,8 +139,8 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self.workspace_refreshing = true;
 
         cx.spawn(async move |this, cx| {
@@ -288,12 +288,12 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let view = cx.entity().downgrade();
-        let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
+        let path = unique_note_path(cx.global::<AppServices>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
         let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |_, window| {
             let write_path = path.clone();
@@ -431,12 +431,12 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let view = cx.entity().downgrade();
-        let path = unique_note_path(cx.global::<DB>().data_dir.join("notes"), &title);
+        let path = unique_note_path(cx.global::<AppServices>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
         let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         let display_title = title.replace(['\r', '\n', '|'], " ");
         let source_link = storage::workspace_links::stable_workspace_link(item, &source_title);
         let content = format!(
@@ -571,9 +571,9 @@ impl AppShell {
         });
 
         let background_executor = cx.background_executor().clone();
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let view = cx.entity().downgrade();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |_, window| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -678,9 +678,9 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let view = cx.entity().downgrade();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn_in(window, async move |_, window| {
             let inserted = runtime
@@ -859,7 +859,7 @@ mod tests {
             "castle-workspace-load-count-{}",
             std::process::id()
         ));
-        let app_db = crate::DB::new(Arc::new(db), PathBuf::new());
+        let app_db = crate::AppServices::new(Arc::new(db), PathBuf::new());
 
         crate::workspace_data::reset_workspace_load_count();
         let mut shell = None;
@@ -934,7 +934,7 @@ mod tests {
             .expect("title-save database should initialize");
         let settings_dir =
             std::env::temp_dir().join(format!("castle-title-save-{}", std::process::id()));
-        let app_db = crate::DB::new(Arc::new(db.clone()), PathBuf::new());
+        let app_db = crate::AppServices::new(Arc::new(db.clone()), PathBuf::new());
 
         let mut shell = None;
         let window = cx.update(|cx| {

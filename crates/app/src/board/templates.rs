@@ -11,7 +11,7 @@ use gpui_component::{
 };
 
 use super::BoardView;
-use crate::DB;
+use crate::AppServices;
 
 impl BoardView {
     pub(super) fn show_save_template_dialog(
@@ -47,8 +47,8 @@ impl BoardView {
                             return false;
                         }
 
-                        let db = cx.global::<DB>().conn.clone();
-                        let runtime = cx.global::<DB>().runtime.clone();
+                        let db = cx.global::<AppServices>().store().connection();
+                        let runtime = cx.global::<AppServices>().runtime();
                         board_view.update(cx, |_, cx| {
                             cx.spawn_in(window, async move |_, window| {
                                 let result = runtime

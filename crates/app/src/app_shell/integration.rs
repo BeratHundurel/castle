@@ -16,7 +16,7 @@ use gpui_component::{
 };
 
 use super::AppShell;
-use crate::DB;
+use crate::AppServices;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DestinationOption {
@@ -51,8 +51,8 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
             let result = runtime
@@ -177,8 +177,8 @@ impl AppShell {
                             );
                             return false;
                         }
-                        let db = cx.global::<DB>().conn.clone();
-                        let runtime = cx.global::<DB>().runtime.clone();
+                        let db = cx.global::<AppServices>().store().connection();
+                        let runtime = cx.global::<AppServices>().runtime();
                         let app_for_result = app.clone();
                         app.update(cx, |this, cx| {
                             this.last_card_destination = Some(list_id);
@@ -291,8 +291,8 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
             let result = runtime

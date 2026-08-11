@@ -16,7 +16,7 @@ impl BoardView {
         self.entry_dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete card", true, async move {
             crate::trash::move_to_trash(
                 db.as_ref(),
@@ -91,7 +91,7 @@ impl BoardView {
         self.cards.retain(|card| card.id != card_id);
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         self.commit_board_mutation(cx, "Could not delete list", true, async move {
             crate::trash::move_to_trash(
                 db.as_ref(),

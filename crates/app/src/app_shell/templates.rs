@@ -14,7 +14,7 @@ use gpui_component::{
 use storage::board_templates::{BoardTemplate, BoardTemplateId};
 
 use super::AppShell;
-use crate::DB;
+use crate::AppServices;
 
 const TEMPLATE_DIALOG_WIDTH: f32 = 760.;
 const TEMPLATE_DIALOG_HEIGHT: f32 = 620.;
@@ -120,8 +120,8 @@ impl AppShell {
     }
 
     fn load_custom_board_templates(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result =
                 runtime
@@ -498,8 +498,8 @@ impl AppShell {
         picker.creating = true;
         picker.error = None;
         let project_id = picker.project_id;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity().downgrade();
         cx.notify();
 
@@ -576,8 +576,8 @@ impl AppShell {
         }
         picker.deleting_template_id = Some(template_id);
         picker.error = None;
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.notify();
 
         cx.spawn(async move |this, cx| {

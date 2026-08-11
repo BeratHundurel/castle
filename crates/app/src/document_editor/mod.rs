@@ -786,7 +786,7 @@ mod tests {
         OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document,
         row_is_in_visible_layout, source_row_centers_at_document_start,
     };
-    use crate::{DB, app_settings::AppSettings, test_alloc};
+    use crate::{AppServices, app_settings::AppSettings, test_alloc};
     use entity::note;
     use gpui::AppContext as _;
     use migration::{Migrator, MigratorTrait};
@@ -835,7 +835,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(AppSettings::load(directory.path()));
-            cx.set_global(DB::new(db.clone(), directory.path().to_path_buf()));
+            cx.set_global(AppServices::new(db.clone(), directory.path().to_path_buf()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -943,7 +943,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -1107,7 +1107,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(DB::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use gpui::{AppContext as _, Context, Entity, FocusHandle, SharedString, Window};
 use gpui_component::input::InputState;
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{BoardView, BoardViewEvent};
 
@@ -236,14 +236,14 @@ impl BoardView {
         self.related_note_error = None;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let board_id = self
             .workspace_link_catalog
             .iter()
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -303,14 +303,14 @@ impl BoardView {
         self.related_note_error = None;
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let board_id = self
             .workspace_link_catalog
             .iter()
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {

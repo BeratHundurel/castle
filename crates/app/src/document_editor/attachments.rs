@@ -13,7 +13,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{DocumentEditorView, DocumentKind};
 
@@ -161,8 +161,8 @@ impl DocumentEditorView {
         cx.stop_propagation();
 
         let attachment_dir = cx
-            .global::<DB>()
-            .data_dir
+            .global::<AppServices>()
+            .data_dir()
             .join("attachments")
             .join(self.note_id.to_string());
         let background_executor = cx.background_executor().clone();

@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{Context, SharedString, Window};
 use gpui_component::{ActiveTheme as _, WindowExt as _, notification::Notification};
 
-use crate::DB;
+use crate::AppServices;
 use crate::app_settings::AppSettings;
 use crate::app_shell::AppShell;
 use crate::command_palette::{CommandPaletteMode, PaletteCommand, PaletteCommandKind};
@@ -265,8 +265,8 @@ impl AppShell {
         self.command_palette.search_loading = true;
         self.command_palette.search_error = None;
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         self.command_palette.search_debounce_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(WORKSPACE_SEARCH_DEBOUNCE)
@@ -313,8 +313,8 @@ impl AppShell {
     }
 
     fn rebuild_workspace_search_index(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
 
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -476,7 +476,7 @@ mod tests {
                 Ok::<_, anyhow::Error>(db)
             })
             .expect("search test database should initialize");
-        let app_db = crate::DB::new(Arc::new(db), PathBuf::new());
+        let app_db = crate::AppServices::new(Arc::new(db), PathBuf::new());
         let settings_dir = std::env::temp_dir().join(format!(
             "castle-workspace-search-test-{}",
             std::process::id()

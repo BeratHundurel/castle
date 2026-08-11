@@ -1,9 +1,7 @@
 use anyhow::Result;
-use entity::{board, note, project};
 use gpui::{Context, SharedString, Window};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
-use crate::DB;
+use crate::AppServices;
 
 use super::{SidebarView, action::*, dto::*, event::SidebarEvent};
 
@@ -14,8 +12,8 @@ impl SidebarView {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
@@ -48,8 +46,8 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -88,8 +86,8 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -154,8 +152,8 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
                 kind: crate::trash::TrashItemKind::Board,
@@ -221,20 +219,18 @@ impl SidebarView {
             title: SharedString::from(title.as_str()),
         });
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::persist_workspace_title(
+                    store.connection().as_ref(),
+                    storage::workspace::WorkspaceTitleTarget::Board(board_id),
+                    title,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    board::ActiveModel {
-                        id: Set(board_id as i64),
-                        title: Set(title),
-                        ..Default::default()
-                    }
-                    .update(&*db)
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(_)) => {}
@@ -259,8 +255,8 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn_in(window, async move |this, cx| {
             let request = crate::trash::MoveToTrash {
                 kind: crate::trash::TrashItemKind::Note,
@@ -326,8 +322,8 @@ impl SidebarView {
             title: shared_title,
         });
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -431,20 +427,18 @@ impl SidebarView {
         }
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::move_board_to_project(
+                    store.connection().as_ref(),
+                    board_id,
+                    project_id,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    board::ActiveModel {
-                        id: Set(board_id as i64),
-                        project_id: Set(project_id.map(|id| id as i64)),
-                        ..Default::default()
-                    }
-                    .update(&*db)
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(_)) => cx.emit(SidebarEvent::WorkspaceChanged),
@@ -495,20 +489,18 @@ impl SidebarView {
         }
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::move_note_to_project(
+                    store.connection().as_ref(),
+                    note_id,
+                    project_id,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    note::ActiveModel {
-                        id: Set(note_id as i64),
-                        project_id: Set(project_id.map(|id| id as i64)),
-                        ..Default::default()
-                    }
-                    .update(&*db)
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(_)) => cx.emit(SidebarEvent::WorkspaceChanged),
@@ -600,20 +592,14 @@ impl SidebarView {
             name: shared_name,
         });
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
-        cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    project::ActiveModel {
-                        id: Set(project_id as i64),
-                        name: Set(name),
-                        ..Default::default()
-                    }
-                    .update(&*db)
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::rename_project(store.connection().as_ref(), project_id, name)
                     .await
-                })
-                .await;
+            });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(_)) => {}
@@ -632,8 +618,8 @@ impl SidebarView {
     }
 
     pub(super) fn delete_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| -> Result<()> {
             runtime
                 .spawn(async move {
@@ -752,24 +738,13 @@ impl SidebarView {
 
         cx.notify();
 
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace::reorder_projects(store.connection().as_ref(), positions).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    for (project_id, position) in positions {
-                        project::ActiveModel {
-                            id: Set(project_id as i64),
-                            position: Set(position),
-                            ..Default::default()
-                        }
-                        .update(&*db)
-                        .await?;
-                    }
-
-                    Ok::<(), sea_orm::DbErr>(())
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(())) => cx.emit(SidebarEvent::ProjectsReordered),

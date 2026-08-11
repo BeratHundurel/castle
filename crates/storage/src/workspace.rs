@@ -6,7 +6,7 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
     sea_query::{Query, SelectStatement},
 };
 
@@ -74,6 +74,86 @@ pub struct ChangeRevision {
     pub board_revision: i64,
     pub note_revision: i64,
     pub link_revision: i64,
+}
+
+pub async fn create_project(db: &DatabaseConnection, name: String) -> Result<ProjectRow, DbErr> {
+    let position = Project::find().count(db).await? as i32;
+    let project = project::ActiveModel {
+        name: Set(name),
+        archived: Set(false),
+        position: Set(position),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    Ok(ProjectRow {
+        id: project.id as u32,
+        name: project.name,
+        position: project.position,
+    })
+}
+
+pub async fn rename_project(
+    db: &DatabaseConnection,
+    project_id: u32,
+    name: String,
+) -> Result<(), DbErr> {
+    project::ActiveModel {
+        id: Set(i64::from(project_id)),
+        name: Set(name),
+        ..Default::default()
+    }
+    .update(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn move_board_to_project(
+    db: &DatabaseConnection,
+    board_id: u32,
+    project_id: Option<u32>,
+) -> Result<(), DbErr> {
+    board::ActiveModel {
+        id: Set(i64::from(board_id)),
+        project_id: Set(project_id.map(i64::from)),
+        ..Default::default()
+    }
+    .update(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn move_note_to_project(
+    db: &DatabaseConnection,
+    note_id: u32,
+    project_id: Option<u32>,
+) -> Result<(), DbErr> {
+    note::ActiveModel {
+        id: Set(i64::from(note_id)),
+        project_id: Set(project_id.map(i64::from)),
+        ..Default::default()
+    }
+    .update(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn reorder_projects(
+    db: &DatabaseConnection,
+    positions: Vec<(u32, i32)>,
+) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    for (project_id, position) in positions {
+        project::ActiveModel {
+            id: Set(i64::from(project_id)),
+            position: Set(position),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+    }
+    txn.commit().await
 }
 
 fn visible_project_ids_query() -> SelectStatement {

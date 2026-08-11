@@ -18,9 +18,9 @@ impl BoardView {
     }
 
     pub(in crate::board) fn duplicate_entry(&mut self, source: EntryDTO, cx: &mut Context<Self>) {
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let board_id = self.board_id;
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -110,9 +110,9 @@ impl BoardView {
         let Some(source) = self.cards.iter().find(|card| card.id == card_id).cloned() else {
             return;
         };
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
         let board_id = self.board_id;
-        let runtime = cx.global::<DB>().runtime.clone();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
@@ -244,8 +244,8 @@ impl BoardView {
         entry: EntryDTO,
         temp_id: u32,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let card_id = entry.card_id;
 
         if let Some(card) = self.cards.iter_mut().find(|card| card.id == entry.card_id) {
@@ -327,8 +327,8 @@ impl BoardView {
         card: CardDTO,
         temp_id: u32,
     ) {
-        let db = cx.global::<DB>().conn.clone();
-        let runtime = cx.global::<DB>().runtime.clone();
+        let db = cx.global::<AppServices>().store().connection();
+        let runtime = cx.global::<AppServices>().runtime();
         let board_id = card.board_id;
 
         self.cards.push(card.clone());
@@ -383,7 +383,7 @@ impl BoardView {
         };
 
         let title = new_title.to_string();
-        let db = cx.global::<DB>().conn.clone();
+        let db = cx.global::<AppServices>().store().connection();
 
         let Some(card) = self.cards.iter_mut().find(|card| card.id == card_id) else {
             return;

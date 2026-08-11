@@ -17,7 +17,7 @@ use std::{collections::HashSet, ops::Range};
 use super::types::*;
 use super::vim::VimMode;
 use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
-use crate::DB;
+use crate::AppServices;
 use crate::app_settings::AppSettings;
 
 #[derive(Clone)]
@@ -241,7 +241,7 @@ impl DocumentEditorView {
 
         let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
-            cx.global::<DB>().data_dir.clone(),
+            cx.global::<AppServices>().data_dir(),
             self.current_path.as_deref(),
         );
         let wikilink_plugin = super::links::WikiLinkPreviewPlugin::new(

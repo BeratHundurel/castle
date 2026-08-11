@@ -1,7 +1,7 @@
 use std::{sync::Arc, sync::OnceLock, time::Duration};
 
 use chrono::Local;
-use sea_orm::DatabaseConnection;
+use storage::Store;
 use storage::reminders::DueReminder;
 use tokio::sync::Notify;
 
@@ -23,7 +23,7 @@ impl NotificationAvailability {
     }
 }
 
-pub fn start(db: Arc<DatabaseConnection>) {
+pub fn start(store: Store) {
     let wake = REMINDER_WAKE
         .get_or_init(|| Arc::new(Notify::new()))
         .clone();
@@ -36,7 +36,7 @@ pub fn start(db: Arc<DatabaseConnection>) {
                 _ = interval.tick() => {}
                 _ = wake.notified() => {}
             }
-            if let Err(error) = deliver_due_reminders(db.as_ref()).await {
+            if let Err(error) = deliver_due_reminders(&store).await {
                 eprintln!("Failed to deliver card reminders: {error}");
             }
         }
@@ -92,11 +92,13 @@ pub(crate) fn show_test_notification() -> anyhow::Result<()> {
     )
 }
 
-async fn deliver_due_reminders(db: &DatabaseConnection) -> anyhow::Result<()> {
+async fn deliver_due_reminders(store: &Store) -> anyhow::Result<()> {
+    let db = store.connection();
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    for reminder in storage::reminders::load_due_reminders(db, &today).await? {
+    for reminder in storage::reminders::load_due_reminders(db.as_ref(), &today).await? {
         show_system_notification(&reminder)?;
-        storage::reminders::mark_reminder_notified(db, reminder.entry_id, reminder.due_on).await?;
+        storage::reminders::mark_reminder_notified(db.as_ref(), reminder.entry_id, reminder.due_on)
+            .await?;
     }
 
     Ok(())

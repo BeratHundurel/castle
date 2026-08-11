@@ -5,14 +5,13 @@ use anyhow::Result;
 use dotenvy::dotenv;
 use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
-use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectOptions, Database};
 use std::borrow::Cow;
 use std::fs;
 use std::sync::Arc;
+use storage::{Store, StoreOptions};
 
 use app::{
-    DB, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap,
+    AppServices, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap,
     system_notifications, tray,
 };
 
@@ -41,20 +40,18 @@ async fn main() -> Result<()> {
         fs::File::create(&db_path)?;
     }
 
-    let mut options = ConnectOptions::new(paths.database_url);
-    options.max_connections(4).min_connections(1);
-    let connection = Database::connect(options).await?;
-    Migrator::up(&connection, None).await?;
+    let store = Store::connect(StoreOptions::new(paths.database_url)).await?;
 
     let first_run_workspace = if is_fresh_database {
-        storage::onboarding::seed_fresh_workspace(&connection, &paths.data_dir).await?
+        storage::onboarding::seed_fresh_workspace(store.connection().as_ref(), &paths.data_dir)
+            .await?
     } else {
         None
     };
 
-    let db = DB::new(Arc::new(connection), paths.data_dir);
+    let mut app_settings = AppSettings::load(&paths.data_dir);
+    let services = AppServices::new(store.clone(), paths.data_dir);
 
-    let mut app_settings = AppSettings::load(&db.data_dir);
     if let Some(first_run_workspace) = first_run_workspace {
         app_settings.set_first_run_note(
             first_run_workspace.docs_note.id,
@@ -62,7 +59,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    system_notifications::start(db.conn.clone());
+    system_notifications::start(store.clone());
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -74,7 +71,7 @@ async fn main() -> Result<()> {
 
         app_settings.apply_to_theme(cx);
         cx.set_global(app_settings.clone());
-        cx.set_global(db);
+        cx.set_global(services);
 
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
         let window = cx

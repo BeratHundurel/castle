@@ -220,7 +220,7 @@ mod tests {
         let held_connection = runtime
             .block_on(db.get_sqlite_connection_pool().acquire())
             .expect("test should reserve the SQLite connection");
-        let app_db = crate::DB::new(db.clone(), PathBuf::new());
+        let app_db = crate::AppServices::new(db.clone(), PathBuf::new());
         let mut shell = None;
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
