@@ -5,8 +5,8 @@ use entity::{
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
-    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    ColumnTrait, Condition, ConnectionTrait, DbBackend, DbErr, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionSession, TransactionTrait,
     sea_query::{Query, SelectStatement},
 };
 
@@ -76,7 +76,10 @@ pub struct ChangeRevision {
     pub link_revision: i64,
 }
 
-pub async fn create_project(db: &DatabaseConnection, name: String) -> Result<ProjectRow, DbErr> {
+pub async fn create_project(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    name: String,
+) -> Result<ProjectRow, DbErr> {
     let position = Project::find().count(db).await? as i32;
     let project = project::ActiveModel {
         name: Set(name),
@@ -95,7 +98,7 @@ pub async fn create_project(db: &DatabaseConnection, name: String) -> Result<Pro
 }
 
 pub async fn rename_project(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     project_id: u32,
     name: String,
 ) -> Result<(), DbErr> {
@@ -110,7 +113,7 @@ pub async fn rename_project(
 }
 
 pub async fn move_board_to_project(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: u32,
     project_id: Option<u32>,
 ) -> Result<(), DbErr> {
@@ -125,7 +128,7 @@ pub async fn move_board_to_project(
 }
 
 pub async fn move_note_to_project(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: u32,
     project_id: Option<u32>,
 ) -> Result<(), DbErr> {
@@ -140,7 +143,7 @@ pub async fn move_note_to_project(
 }
 
 pub async fn reorder_projects(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     positions: Vec<(u32, i32)>,
 ) -> Result<(), DbErr> {
     let txn = db.begin().await?;
@@ -165,7 +168,9 @@ fn visible_project_ids_query() -> SelectStatement {
         .to_owned()
 }
 
-pub async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRows> {
+pub async fn load_workspace_rows(
+    db: &(impl ConnectionTrait + TransactionTrait),
+) -> Result<WorkspaceRows> {
     WORKSPACE_LOAD_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let projects: Vec<ProjectRow> = Project::find()
@@ -256,7 +261,7 @@ pub async fn load_workspace_rows(db: &DatabaseConnection) -> Result<WorkspaceRow
 }
 
 pub async fn create_managed_note(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     project_id: Option<u32>,
     title: String,
     file_path: String,
@@ -276,7 +281,7 @@ pub async fn create_managed_note(
 }
 
 pub async fn create_managed_linked_note(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     project_id: Option<u32>,
     title: String,
     file_path: String,
@@ -329,7 +334,7 @@ async fn insert_managed_note(
 }
 
 pub async fn import_external_note(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     title: String,
     file_path: String,
     content: String,
@@ -378,7 +383,7 @@ pub async fn import_external_note(
 }
 
 pub async fn create_board(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     project_id: Option<u32>,
     title: String,
 ) -> Result<WorkspaceItem, DbErr> {
@@ -397,7 +402,7 @@ pub async fn create_board(
 }
 
 pub async fn persist_workspace_title(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     target: WorkspaceTitleTarget,
     title: String,
 ) -> Result<WorkspaceTitleUpdate> {
@@ -564,7 +569,9 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-pub async fn load_change_revision(db: &DatabaseConnection) -> Result<ChangeRevision, DbErr> {
+pub async fn load_change_revision(
+    db: &(impl ConnectionTrait + TransactionTrait),
+) -> Result<ChangeRevision, DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(
             DbBackend::Sqlite,

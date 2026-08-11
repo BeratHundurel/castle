@@ -1,1 +1,1 @@
-pub(crate) use storage::{ChangeDomain, Store as CastleStore};
+pub(crate) use storage::{MutationOrigin, Store as CastleStore};

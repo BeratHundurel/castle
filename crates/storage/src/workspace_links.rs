@@ -9,9 +9,9 @@ use entity::{
     workspace_link_index_state::Entity as WorkspaceLinkIndexState,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
-    DatabaseConnection, DbBackend, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait, DbBackend,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
+    TransactionSession, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
@@ -485,7 +485,7 @@ pub async fn load_workspace_link_catalog(
 }
 
 pub async fn link_note_to_item(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     item: WorkspaceItemRef,
     created_at: i64,
@@ -495,7 +495,7 @@ pub async fn link_note_to_item(
 }
 
 pub async fn set_manual_note_link(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     item: WorkspaceItemRef,
     linked: bool,
@@ -556,7 +556,7 @@ pub(crate) async fn set_manual_note_link_in_connection(
 }
 
 pub async fn create_card_from_note_selection(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     list_id: i64,
     title: String,
@@ -609,7 +609,7 @@ pub async fn create_card_from_note_selection(
 }
 
 pub async fn unlink_note_from_item(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     item: WorkspaceItemRef,
 ) -> Result<bool> {
@@ -619,7 +619,7 @@ pub async fn unlink_note_from_item(
 }
 
 pub async fn index_note_workspace_links(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     content: &str,
     indexed_at: i64,
@@ -739,7 +739,7 @@ pub(crate) async fn index_note_workspace_links_with_catalog(
 }
 
 pub async fn index_entry_workspace_links(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     entry_id: i64,
     description: &str,
     indexed_at: i64,
@@ -821,7 +821,7 @@ pub(crate) async fn index_entry_workspace_links_with_catalog(
 }
 
 pub async fn load_related_notes(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     item: WorkspaceItemRef,
 ) -> Result<Vec<RelatedNote>> {
     if item.kind == WorkspaceItemKind::Note {
@@ -834,7 +834,7 @@ pub async fn load_related_notes(
 }
 
 pub async fn load_related_notes_for_entries(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     entry_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<RelatedNote>>> {
     let items = entry_ids
@@ -853,7 +853,7 @@ pub async fn load_related_notes_for_entries(
 }
 
 pub async fn load_related_notes_for_items(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     items: &[WorkspaceItemRef],
 ) -> Result<HashMap<WorkspaceItemRef, Vec<RelatedNote>>> {
     let requested = items
@@ -980,7 +980,7 @@ pub async fn load_related_notes_for_items(
 }
 
 pub async fn load_note_workspace_links(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
 ) -> Result<NoteWorkspaceLinks> {
     let catalog = load_workspace_link_catalog(db).await?;
@@ -1029,7 +1029,7 @@ pub async fn load_note_workspace_links(
 }
 
 pub async fn reindex_stale_note_workspace_links(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     limit: u64,
 ) -> Result<usize> {
     let rows = db
@@ -1060,7 +1060,10 @@ pub async fn reindex_stale_note_workspace_links(
     Ok(count)
 }
 
-pub async fn reindex_stale_entry_links(db: &DatabaseConnection, limit: u64) -> Result<usize> {
+pub async fn reindex_stale_entry_links(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    limit: u64,
+) -> Result<usize> {
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1091,7 +1094,7 @@ pub async fn reindex_stale_entry_links(db: &DatabaseConnection, limit: u64) -> R
 }
 
 pub async fn repair_workspace_link_index_batch(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     limit: u64,
 ) -> Result<WorkspaceLinkRepairBatch> {
     let limit = limit.max(1);

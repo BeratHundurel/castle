@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     path::PathBuf,
+    pin::Pin,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -17,8 +19,9 @@ use entity::{
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectOptions, ConnectionTrait,
-    Database, DatabaseConnection, DbBackend, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Statement, TransactionTrait, sea_query::Expr,
+    Database, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait, ExprTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionSession,
+    TransactionTrait, sea_query::Expr,
 };
 
 use migration::{Migrator, MigratorTrait};
@@ -38,8 +41,8 @@ use crate::agent_types::{
 };
 
 #[derive(Clone)]
-pub struct Store {
-    db: Arc<DatabaseConnection>,
+pub struct Store<C = DatabaseConnection> {
+    db: Arc<C>,
 }
 
 impl From<DatabaseConnection> for Store {
@@ -77,12 +80,38 @@ impl StoreOptions {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum ChangeDomain {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MutationOrigin {
+    LocalApp,
+    ExternalAgent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChangeDomain {
     Workspace,
     Board,
     Note,
     Link,
+}
+
+async fn record_change_in_connection(
+    db: &impl ConnectionTrait,
+    domain: ChangeDomain,
+) -> Result<()> {
+    let assignments = match domain {
+        ChangeDomain::Workspace => "revision = revision + 1",
+        ChangeDomain::Board => "revision = revision + 1, board_revision = board_revision + 1",
+        ChangeDomain::Note => "revision = revision + 1, note_revision = note_revision + 1",
+        ChangeDomain::Link => {
+            "revision = revision + 1, board_revision = board_revision + 1, note_revision = note_revision + 1, link_revision = link_revision + 1"
+        }
+    };
+    db.execute_raw(Statement::from_string(
+        DbBackend::Sqlite,
+        format!("UPDATE castle_change_revision SET {assignments} WHERE id = 1"),
+    ))
+    .await?;
+    Ok(())
 }
 
 impl Store {
@@ -113,6 +142,230 @@ impl Store {
         self.db.clone()
     }
 
+    pub fn mutations(&self, origin: MutationOrigin) -> Mutations {
+        Mutations {
+            store: self.clone(),
+            origin,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Mutations {
+    store: Store,
+    origin: MutationOrigin,
+}
+
+type MutationFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+impl Mutations {
+    async fn execute<T, F>(&self, domain: ChangeDomain, operation: F) -> Result<T>
+    where
+        T: Send,
+        F: for<'a> FnOnce(&'a Store<DatabaseTransaction>) -> MutationFuture<'a, T>,
+    {
+        let transaction = Arc::new(self.store.db.as_ref().begin().await?);
+        let transactional_store = Store {
+            db: transaction.clone(),
+        };
+        let result = operation(&transactional_store).await?;
+        if self.origin == MutationOrigin::ExternalAgent {
+            record_change_in_connection(transactional_store.db.as_ref(), domain).await?;
+        }
+        drop(transactional_store);
+        let transaction = Arc::try_unwrap(transaction)
+            .map_err(|_| anyhow::anyhow!("storage transaction remained shared after mutation"))?;
+        transaction.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn create_board_property(
+        &self,
+        input: CreateBoardPropertyInput,
+    ) -> Result<BoardPropertyDefinitionDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.create_board_property(input))
+        })
+        .await
+    }
+
+    pub async fn create_board_property_option(
+        &self,
+        input: CreateBoardPropertyOptionInput,
+    ) -> Result<BoardPropertyOptionDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.create_board_property_option(input))
+        })
+        .await
+    }
+
+    pub async fn set_entry_property(
+        &self,
+        input: SetEntryPropertyInput,
+    ) -> Result<EntryPropertyValueDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.set_entry_property(input))
+        })
+        .await
+    }
+
+    pub async fn clear_entry_property(&self, input: ClearEntryPropertyInput) -> Result<()> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.clear_entry_property(input))
+        })
+        .await
+    }
+
+    pub async fn link_note_to_workspace_item(
+        &self,
+        input: NoteWorkspaceRelationInput,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.link_note_to_workspace_item(input))
+        })
+        .await
+    }
+
+    pub async fn unlink_note_from_workspace_item(
+        &self,
+        input: NoteWorkspaceRelationInput,
+    ) -> Result<Vec<RelatedItemDetail>> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.unlink_note_from_workspace_item(input))
+        })
+        .await
+    }
+
+    pub async fn create_note(&self, input: CreateNoteInput) -> Result<NoteDetail> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.create_note(input))
+        })
+        .await
+    }
+
+    pub async fn update_note(&self, input: UpdateNoteInput) -> Result<NoteDetail> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.update_note(input))
+        })
+        .await
+    }
+
+    pub async fn move_note(&self, input: MoveNoteInput) -> Result<NoteDetail> {
+        self.execute(ChangeDomain::Note, move |store| {
+            Box::pin(store.move_note(input))
+        })
+        .await
+    }
+
+    pub async fn create_project(&self, input: CreateProjectInput) -> Result<ProjectSummary> {
+        self.execute(ChangeDomain::Workspace, move |store| {
+            Box::pin(store.create_project(input))
+        })
+        .await
+    }
+
+    pub async fn rename_project(&self, input: RenameProjectInput) -> Result<ProjectSummary> {
+        self.execute(ChangeDomain::Workspace, move |store| {
+            Box::pin(store.rename_project(input))
+        })
+        .await
+    }
+
+    pub async fn create_board(&self, input: CreateBoardInput) -> Result<BoardSummary> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.create_board(input))
+        })
+        .await
+    }
+
+    pub async fn rename_board(&self, input: RenameBoardInput) -> Result<BoardSummary> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.rename_board(input))
+        })
+        .await
+    }
+
+    pub async fn create_list(&self, input: CreateListInput) -> Result<ListDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.create_list(input))
+        })
+        .await
+    }
+
+    pub async fn rename_list(&self, input: RenameListInput) -> Result<ListDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.rename_list(input))
+        })
+        .await
+    }
+
+    pub async fn create_entry(&self, input: CreateEntryInput) -> Result<EntryDetail> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.create_entry(input))
+        })
+        .await
+    }
+
+    pub async fn update_entry(&self, input: UpdateEntryInput) -> Result<EntryDetail> {
+        self.execute(ChangeDomain::Link, move |store| {
+            Box::pin(store.update_entry(input))
+        })
+        .await
+    }
+
+    pub async fn move_entry(&self, input: MoveEntryInput) -> Result<EntryDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.move_entry(input))
+        })
+        .await
+    }
+
+    pub async fn set_entry_reminder(&self, input: SetEntryReminderInput) -> Result<EntryDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.set_entry_reminder(input))
+        })
+        .await
+    }
+
+    pub async fn add_checklist_item(
+        &self,
+        input: AddChecklistItemInput,
+    ) -> Result<ChecklistItemDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.add_checklist_item(input))
+        })
+        .await
+    }
+
+    pub async fn update_checklist_item(
+        &self,
+        input: UpdateChecklistItemInput,
+    ) -> Result<ChecklistItemDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.update_checklist_item(input))
+        })
+        .await
+    }
+
+    pub async fn create_board_label(&self, input: CreateBoardLabelInput) -> Result<LabelDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.create_board_label(input))
+        })
+        .await
+    }
+
+    pub async fn set_entry_label(&self, input: SetEntryLabelInput) -> Result<EntryDetail> {
+        self.execute(ChangeDomain::Board, move |store| {
+            Box::pin(store.set_entry_label(input))
+        })
+        .await
+    }
+}
+
+impl<C> Store<C>
+where
+    C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
+{
     pub async fn board_properties(&self, board_id: i64) -> Result<BoardPropertiesDetail> {
         let properties =
             crate::board_properties::load_board_properties(self.db.as_ref(), board_id).await?;
@@ -191,24 +444,6 @@ impl Store {
             input.property_id,
         )
         .await
-    }
-
-    pub async fn record_external_change(&self, domain: ChangeDomain) -> Result<()> {
-        let assignments = match domain {
-            ChangeDomain::Workspace => "revision = revision + 1",
-            ChangeDomain::Board => "revision = revision + 1, board_revision = board_revision + 1",
-            ChangeDomain::Note => "revision = revision + 1, note_revision = note_revision + 1",
-            ChangeDomain::Link => {
-                "revision = revision + 1, board_revision = board_revision + 1, note_revision = note_revision + 1, link_revision = link_revision + 1"
-            }
-        };
-        self.db
-            .execute_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                format!("UPDATE castle_change_revision SET {assignments} WHERE id = 1"),
-            ))
-            .await?;
-        Ok(())
     }
 
     pub async fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
@@ -436,7 +671,7 @@ impl Store {
             None => None,
         };
         let now = now_ts();
-        let txn = self.db.begin().await?;
+        let txn = self.db.as_ref().begin().await?;
         let note = note::ActiveModel {
             title: Set(title),
             project_id: Set(input.project_id),
@@ -527,7 +762,7 @@ impl Store {
             active.is_pinned = Set(is_pinned);
         }
         active.updated_at = Set(next_updated_at(current_updated_at));
-        let txn = self.db.begin().await?;
+        let txn = self.db.as_ref().begin().await?;
         let note = active.update(&txn).await?;
         if let Some(content) = content_for_index {
             crate::note_links::index_note_links_in_connection(
@@ -834,7 +1069,7 @@ impl Store {
             .count(self.db.as_ref())
             .await? as i32;
         let description = input.description;
-        let txn = self.db.begin().await?;
+        let txn = self.db.as_ref().begin().await?;
         let entry = entry::ActiveModel {
             title: Set(title),
             description: Set(description.clone()),
@@ -878,7 +1113,7 @@ impl Store {
         } else if let Some(due_on) = input.due_on {
             active.due_on = Set(Some(due_on));
         }
-        let txn = self.db.begin().await?;
+        let txn = self.db.as_ref().begin().await?;
         let entry = active.update(&txn).await?;
         crate::workspace_links::index_entry_workspace_links_in_connection(
             &txn,
@@ -1030,7 +1265,7 @@ impl Store {
             return self.entry_detail(entry).await;
         }
 
-        let transaction = self.db.begin().await?;
+        let transaction = self.db.as_ref().begin().await?;
         Entry::update_many()
             .col_expr(
                 entry::Column::Position,
@@ -1888,14 +2123,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_explicit_external_writes_increment_the_change_revision() -> Result<()> {
+    async fn local_mutations_do_not_bump_and_external_mutations_bump_the_owned_domain() -> Result<()>
+    {
         let store = store().await?;
         let project = store
+            .mutations(MutationOrigin::LocalApp)
             .create_project(CreateProjectInput {
                 name: "Revision".to_string(),
             })
             .await?;
         let note = store
+            .mutations(MutationOrigin::LocalApp)
             .create_note(CreateNoteInput {
                 title: "Watcher regression".to_string(),
                 content: String::new(),
@@ -1916,11 +2154,81 @@ mod tests {
         assert_eq!(row.try_get::<i64>("", "board_revision")?, 0);
         assert_eq!(row.try_get::<i64>("", "note_revision")?, 0);
 
-        store.record_external_change(ChangeDomain::Note).await?;
+        store
+            .mutations(MutationOrigin::ExternalAgent)
+            .move_note(MoveNoteInput {
+                note_id: note.id,
+                project_id: None,
+            })
+            .await?;
         let row = change_revision_row(&store).await?;
         assert_eq!(row.try_get::<i64>("", "revision")?, 1);
         assert_eq!(row.try_get::<i64>("", "board_revision")?, 0);
         assert_eq!(row.try_get::<i64>("", "note_revision")?, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn external_commands_encode_their_revision_domains_once() -> Result<()> {
+        let store = store().await?;
+        let mutations = store.mutations(MutationOrigin::ExternalAgent);
+        let project = mutations
+            .create_project(CreateProjectInput {
+                name: "Domains".to_string(),
+            })
+            .await?;
+        assert_revisions(&store, (1, 0, 0, 0)).await?;
+
+        let board = mutations
+            .create_board(CreateBoardInput {
+                title: "Board".to_string(),
+                project_id: Some(project.id),
+            })
+            .await?;
+        assert_revisions(&store, (2, 1, 0, 0)).await?;
+
+        let list = mutations
+            .create_list(CreateListInput {
+                board_id: board.id,
+                title: "List".to_string(),
+            })
+            .await?;
+        assert_revisions(&store, (3, 2, 0, 0)).await?;
+
+        mutations
+            .create_entry(CreateEntryInput {
+                list_id: list.id,
+                title: "Linked domain".to_string(),
+                description: String::new(),
+                due_on: None,
+            })
+            .await?;
+        assert_revisions(&store, (4, 3, 1, 1)).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_revision_bump_rolls_back_the_data_mutation() -> Result<()> {
+        let store = store().await?;
+        store
+            .db
+            .execute_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "CREATE TRIGGER fail_revision_bump BEFORE UPDATE ON castle_change_revision BEGIN SELECT RAISE(ABORT, 'forced revision failure'); END",
+            ))
+            .await?;
+
+        let result = store
+            .mutations(MutationOrigin::ExternalAgent)
+            .create_project(CreateProjectInput {
+                name: "Must roll back".to_string(),
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(Project::find().count(store.db.as_ref()).await?, 0);
+        let row = change_revision_row(&store).await?;
+        assert_eq!(row.try_get::<i64>("", "revision")?, 0);
         Ok(())
     }
 
@@ -1934,5 +2242,14 @@ mod tests {
             .await?
             .context("revision row was not found")?;
         Ok(row)
+    }
+
+    async fn assert_revisions(store: &Store, expected: (i64, i64, i64, i64)) -> Result<()> {
+        let row = change_revision_row(store).await?;
+        assert_eq!(row.try_get::<i64>("", "revision")?, expected.0);
+        assert_eq!(row.try_get::<i64>("", "board_revision")?, expected.1);
+        assert_eq!(row.try_get::<i64>("", "note_revision")?, expected.2);
+        assert_eq!(row.try_get::<i64>("", "link_revision")?, expected.3);
+        Ok(())
     }
 }

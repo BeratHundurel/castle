@@ -4,7 +4,7 @@ use rmcp::{
 };
 
 use crate::{
-    store::{CastleStore, ChangeDomain},
+    store::{CastleStore, MutationOrigin},
     types::*,
 };
 
@@ -73,12 +73,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateBoardPropertyInput>,
     ) -> Json<ToolResponse<BoardPropertyDefinitionDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_board_property(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_board_property(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -89,12 +89,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateBoardPropertyOptionInput>,
     ) -> Json<ToolResponse<BoardPropertyOptionDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_board_property_option(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_board_property_option(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -109,12 +109,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<SetEntryPropertyInput>,
     ) -> Json<ToolResponse<EntryPropertyValueDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.set_entry_property(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_entry_property(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -129,12 +129,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<ClearEntryPropertyInput>,
     ) -> Json<ToolResponse<()>> {
-        mutation_response(
-            &self.store,
-            self.store.clear_entry_property(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .clear_entry_property(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -167,12 +167,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateProjectInput>,
     ) -> Json<ToolResponse<ProjectSummary>> {
-        mutation_response(
-            &self.store,
-            self.store.create_project(input).await,
-            ChangeDomain::Workspace,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_project(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -183,12 +183,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateBoardInput>,
     ) -> Json<ToolResponse<BoardSummary>> {
-        mutation_response(
-            &self.store,
-            self.store.create_board(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_board(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -199,12 +199,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateListInput>,
     ) -> Json<ToolResponse<ListDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_list(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_list(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -215,12 +215,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateEntryInput>,
     ) -> Json<ToolResponse<EntryDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_entry(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_entry(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -235,12 +235,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<UpdateEntryInput>,
     ) -> Json<ToolResponse<EntryDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.update_entry(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .update_entry(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -255,12 +255,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<MoveEntryInput>,
     ) -> Json<ToolResponse<EntryDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.move_entry(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .move_entry(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -319,12 +319,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<NoteWorkspaceRelationInput>,
     ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
-        mutation_response(
-            &self.store,
-            self.store.link_note_to_workspace_item(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .link_note_to_workspace_item(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -339,12 +339,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<NoteWorkspaceRelationInput>,
     ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
-        mutation_response(
-            &self.store,
-            self.store.unlink_note_from_workspace_item(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .unlink_note_from_workspace_item(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -366,12 +366,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateNoteInput>,
     ) -> Json<ToolResponse<NoteDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_note(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_note(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -386,12 +386,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<UpdateNoteInput>,
     ) -> Json<ToolResponse<NoteDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.update_note(input).await,
-            ChangeDomain::Link,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .update_note(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -406,12 +406,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<MoveNoteInput>,
     ) -> Json<ToolResponse<NoteDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.move_note(input).await,
-            ChangeDomain::Note,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .move_note(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -426,12 +426,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<RenameProjectInput>,
     ) -> Json<ToolResponse<ProjectSummary>> {
-        mutation_response(
-            &self.store,
-            self.store.rename_project(input).await,
-            ChangeDomain::Workspace,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .rename_project(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -446,12 +446,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<RenameBoardInput>,
     ) -> Json<ToolResponse<BoardSummary>> {
-        mutation_response(
-            &self.store,
-            self.store.rename_board(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .rename_board(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -466,12 +466,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<RenameListInput>,
     ) -> Json<ToolResponse<ListDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.rename_list(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .rename_list(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -486,12 +486,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<SetEntryReminderInput>,
     ) -> Json<ToolResponse<EntryDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.set_entry_reminder(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_entry_reminder(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -502,12 +502,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<AddChecklistItemInput>,
     ) -> Json<ToolResponse<ChecklistItemDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.add_checklist_item(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .add_checklist_item(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -522,12 +522,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<UpdateChecklistItemInput>,
     ) -> Json<ToolResponse<ChecklistItemDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.update_checklist_item(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .update_checklist_item(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -538,12 +538,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<CreateBoardLabelInput>,
     ) -> Json<ToolResponse<LabelDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.create_board_label(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_board_label(input)
+                .await,
         )
-        .await
     }
 
     #[tool(
@@ -558,12 +558,12 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<SetEntryLabelInput>,
     ) -> Json<ToolResponse<EntryDetail>> {
-        mutation_response(
-            &self.store,
-            self.store.set_entry_label(input).await,
-            ChangeDomain::Board,
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_entry_label(input)
+                .await,
         )
-        .await
     }
 }
 
@@ -572,17 +572,6 @@ fn response<T>(result: anyhow::Result<T>) -> Json<ToolResponse<T>> {
         Ok(data) => ToolResponse::success(data),
         Err(error) => ToolResponse::error(error),
     })
-}
-
-async fn mutation_response<T>(
-    store: &CastleStore,
-    result: anyhow::Result<T>,
-    domain: ChangeDomain,
-) -> Json<ToolResponse<T>> {
-    match result {
-        Ok(data) => response(store.record_external_change(domain).await.map(|()| data)),
-        Err(error) => response(Err(error)),
-    }
 }
 
 #[cfg(test)]

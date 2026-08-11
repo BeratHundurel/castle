@@ -6,7 +6,9 @@ use entity::{
     entry_checklist_item, entry_checklist_item::Entity as EntryChecklistItem, entry_label,
     entry_label::Entity as EntryLabel,
 };
-use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoardSnapshot {
@@ -63,7 +65,7 @@ pub struct LabelRecord {
 }
 
 pub async fn load_board_snapshot(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: u32,
 ) -> Result<BoardSnapshot, DbErr> {
     let mut cards = Card::load()

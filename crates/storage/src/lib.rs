@@ -15,7 +15,7 @@ pub mod trash;
 pub mod workspace;
 pub mod workspace_links;
 
-pub use agent_store::{ChangeDomain, Store, StoreOptions};
+pub use agent_store::{MutationOrigin, Mutations, Store, StoreOptions};
 
 #[cfg(test)]
 mod test_alloc;

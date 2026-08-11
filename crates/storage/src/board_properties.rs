@@ -11,8 +11,8 @@ use entity::{
     saved_board_view::Entity as SavedBoardView,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel,
+    QueryFilter, QueryOrder, TransactionSession, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
@@ -201,7 +201,7 @@ pub struct DeletionImpact {
 }
 
 pub async fn load_board_properties(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
 ) -> Result<BoardProperties> {
     active_board(db, board_id).await?;
@@ -296,7 +296,7 @@ pub async fn load_board_properties(
 }
 
 pub async fn create_property(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     name: String,
     kind: PropertyKind,
@@ -338,7 +338,7 @@ pub async fn create_property(
 }
 
 pub async fn create_property_option(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
     name: String,
     color: String,
@@ -377,7 +377,7 @@ pub async fn create_property_option(
 }
 
 pub async fn rename_property(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
     name: String,
 ) -> Result<PropertyDefinition> {
@@ -406,7 +406,7 @@ pub async fn rename_property(
 }
 
 pub async fn reorder_properties(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     ordered_ids: &[i64],
 ) -> Result<()> {
@@ -440,7 +440,7 @@ pub async fn reorder_properties(
 }
 
 pub async fn property_deletion_impact(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
 ) -> Result<DeletionImpact> {
     let property = active_property(db, property_id).await?;
@@ -461,7 +461,10 @@ pub async fn property_deletion_impact(
     })
 }
 
-pub async fn delete_property(db: &DatabaseConnection, property_id: i64) -> Result<()> {
+pub async fn delete_property(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    property_id: i64,
+) -> Result<()> {
     let property = active_property(db, property_id).await?;
     let transaction = db.begin().await?;
     let mut active = property.clone().into_active_model();
@@ -473,7 +476,7 @@ pub async fn delete_property(db: &DatabaseConnection, property_id: i64) -> Resul
 }
 
 pub async fn rename_property_option(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     option_id: i64,
     name: String,
 ) -> Result<PropertyOption> {
@@ -496,7 +499,7 @@ pub async fn rename_property_option(
 }
 
 pub async fn update_property_option_color(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     option_id: i64,
     color: String,
 ) -> Result<PropertyOption> {
@@ -508,7 +511,7 @@ pub async fn update_property_option_color(
 }
 
 pub async fn reorder_property_options(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
     ordered_ids: &[i64],
 ) -> Result<()> {
@@ -544,7 +547,10 @@ pub async fn reorder_property_options(
     Ok(())
 }
 
-pub async fn delete_property_option(db: &DatabaseConnection, option_id: i64) -> Result<()> {
+pub async fn delete_property_option(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    option_id: i64,
+) -> Result<()> {
     let option = active_property_option(db, option_id).await?;
     let property = active_property(db, option.property_id).await?;
     let transaction = db.begin().await?;
@@ -562,7 +568,7 @@ pub async fn delete_property_option(db: &DatabaseConnection, option_id: i64) -> 
 }
 
 pub async fn set_entry_property(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     entry_id: i64,
     property_id: i64,
     value: PropertyValue,
@@ -612,7 +618,7 @@ pub async fn set_entry_property(
 }
 
 pub async fn clear_entry_property(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     entry_id: i64,
     property_id: i64,
 ) -> Result<()> {
@@ -626,7 +632,10 @@ pub async fn clear_entry_property(
     Ok(())
 }
 
-pub async fn load_board_views(db: &DatabaseConnection, board_id: i64) -> Result<BoardViews> {
+pub async fn load_board_views(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    board_id: i64,
+) -> Result<BoardViews> {
     let board = active_board(db, board_id).await?;
     let models = SavedBoardView::find()
         .filter(saved_board_view::Column::BoardId.eq(board_id))
@@ -661,7 +670,7 @@ pub async fn load_board_views(db: &DatabaseConnection, board_id: i64) -> Result<
 }
 
 pub async fn set_selected_board_view(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     view_id: Option<i64>,
 ) -> Result<()> {
@@ -679,7 +688,7 @@ pub async fn set_selected_board_view(
 }
 
 pub async fn create_board_view(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     name: String,
     config: BoardViewConfig,
@@ -714,7 +723,7 @@ pub async fn create_board_view(
 }
 
 pub async fn rename_board_view(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     view_id: i64,
     name: String,
 ) -> Result<BoardView> {
@@ -727,7 +736,7 @@ pub async fn rename_board_view(
 }
 
 pub async fn update_board_view(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     view_id: i64,
     config: BoardViewConfig,
 ) -> Result<BoardView> {
@@ -739,7 +748,10 @@ pub async fn update_board_view(
     decode_board_view(active.update(db).await?)
 }
 
-pub async fn delete_board_view(db: &DatabaseConnection, view_id: i64) -> Result<()> {
+pub async fn delete_board_view(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    view_id: i64,
+) -> Result<()> {
     let view = active_board_view(db, view_id).await?;
     let was_default = view.is_default;
     let board_id = view.board_id;
@@ -766,7 +778,7 @@ pub async fn delete_board_view(db: &DatabaseConnection, view_id: i64) -> Result<
 }
 
 pub async fn reorder_board_views(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     ordered_ids: &[i64],
 ) -> Result<()> {
@@ -795,7 +807,10 @@ pub async fn reorder_board_views(
     Ok(())
 }
 
-pub async fn set_default_board_view(db: &DatabaseConnection, view_id: i64) -> Result<BoardView> {
+pub async fn set_default_board_view(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    view_id: i64,
+) -> Result<BoardView> {
     let view = active_board_view(db, view_id).await?;
     let transaction = db.begin().await?;
     let views = SavedBoardView::find()
@@ -817,7 +832,7 @@ pub async fn set_default_board_view(db: &DatabaseConnection, view_id: i64) -> Re
 }
 
 async fn validate_value(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
     kind: PropertyKind,
     value: &PropertyValue,
@@ -850,7 +865,7 @@ async fn validate_value(
 }
 
 async fn validate_view_config(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     config: &BoardViewConfig,
 ) -> Result<()> {
@@ -1004,7 +1019,10 @@ fn validate_view_filter(
     }
 }
 
-async fn active_board(db: &DatabaseConnection, board_id: i64) -> Result<board::Model> {
+async fn active_board(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    board_id: i64,
+) -> Result<board::Model> {
     Board::find_by_id(board_id)
         .filter(board::Column::DeletedAt.is_null())
         .one(db)
@@ -1013,7 +1031,7 @@ async fn active_board(db: &DatabaseConnection, board_id: i64) -> Result<board::M
 }
 
 async fn active_property(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     property_id: i64,
 ) -> Result<board_property::Model> {
     BoardProperty::find_by_id(property_id)
@@ -1024,7 +1042,7 @@ async fn active_property(
 }
 
 async fn active_property_option(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     option_id: i64,
 ) -> Result<board_property_option::Model> {
     BoardPropertyOption::find_by_id(option_id)
@@ -1035,7 +1053,7 @@ async fn active_property_option(
 }
 
 async fn active_board_view(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     view_id: i64,
 ) -> Result<saved_board_view::Model> {
     SavedBoardView::find_by_id(view_id)
@@ -1046,7 +1064,7 @@ async fn active_board_view(
 }
 
 async fn ensure_unique_view_name(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     except_id: Option<i64>,
     name: &str,
@@ -1088,7 +1106,7 @@ fn view_references_property(config: &BoardViewConfig, property_id: i64) -> bool 
 }
 
 async fn clean_property_from_views(
-    transaction: &sea_orm::DatabaseTransaction,
+    transaction: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     property_id: i64,
 ) -> Result<()> {
@@ -1123,7 +1141,7 @@ async fn clean_property_from_views(
 }
 
 async fn clean_option_from_views(
-    transaction: &sea_orm::DatabaseTransaction,
+    transaction: &(impl ConnectionTrait + TransactionTrait),
     board_id: i64,
     option_id: i64,
 ) -> Result<()> {
@@ -1155,7 +1173,10 @@ async fn clean_option_from_views(
     Ok(())
 }
 
-async fn entry_board_id(db: &DatabaseConnection, entry_id: i64) -> Result<i64> {
+async fn entry_board_id(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    entry_id: i64,
+) -> Result<i64> {
     let entry = Entry::find_by_id(entry_id)
         .filter(entry::Column::DeletedAt.is_null())
         .one(db)
@@ -1170,7 +1191,10 @@ async fn entry_board_id(db: &DatabaseConnection, entry_id: i64) -> Result<i64> {
     Ok(list.board_id)
 }
 
-async fn active_entry_ids(db: &DatabaseConnection, board_id: i64) -> Result<Vec<i64>> {
+async fn active_entry_ids(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    board_id: i64,
+) -> Result<Vec<i64>> {
     let list_ids = Card::find()
         .filter(card::Column::BoardId.eq(board_id))
         .filter(card::Column::DeletedAt.is_null())
@@ -1539,7 +1563,7 @@ mod tests {
     }
 
     async fn board_with_entry(
-        db: &DatabaseConnection,
+        db: &(impl ConnectionTrait + TransactionTrait),
         title: &str,
     ) -> Result<(board::Model, entry::Model)> {
         let board = board::ActiveModel {

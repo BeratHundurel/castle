@@ -7,8 +7,8 @@ use entity::{
     note_link_index_state::Entity as NoteLinkIndexState, project, project::Entity as Project,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    DbBackend, EntityTrait, QueryFilter, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait,
+    QueryFilter, Statement, TransactionSession, TransactionTrait,
 };
 
 const MAX_LINK_TARGET_BYTES: usize = 512;
@@ -236,7 +236,10 @@ pub async fn load_note_link_catalog(
         .collect())
 }
 
-pub async fn load_note_links(db: &DatabaseConnection, note_id: i64) -> Result<NoteLinkSet> {
+pub async fn load_note_links(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    note_id: i64,
+) -> Result<NoteLinkSet> {
     let catalog = load_note_link_catalog(db).await?;
     let by_id = catalog
         .iter()
@@ -337,7 +340,7 @@ pub async fn load_note_links(db: &DatabaseConnection, note_id: i64) -> Result<No
 }
 
 pub async fn index_note_links(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     note_id: i64,
     content: &str,
     indexed_updated_at: i64,
@@ -503,7 +506,10 @@ pub async fn record_note_alias(
     Ok(())
 }
 
-pub async fn reindex_stale_notes(db: &DatabaseConnection, limit: u64) -> Result<usize> {
+pub async fn reindex_stale_notes(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    limit: u64,
+) -> Result<usize> {
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -740,7 +746,10 @@ mod tests {
         Ok(())
     }
 
-    async fn create_project(db: &DatabaseConnection, name: &str) -> Result<project::Model> {
+    async fn create_project(
+        db: &(impl ConnectionTrait + TransactionTrait),
+        name: &str,
+    ) -> Result<project::Model> {
         Ok(project::ActiveModel {
             name: Set(name.to_string()),
             archived: Set(false),
@@ -752,7 +761,7 @@ mod tests {
     }
 
     async fn create_note(
-        db: &DatabaseConnection,
+        db: &(impl ConnectionTrait + TransactionTrait),
         title: &str,
         project_id: Option<i64>,
     ) -> Result<note::Model> {
