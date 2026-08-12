@@ -2,6 +2,50 @@ use super::*;
 use crate::app_settings::{StoredTab, TabSession};
 
 impl AppShell {
+    fn active_board_view(&self) -> Option<Entity<BoardView>> {
+        self.tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
+            .and_then(|tab| match &tab.kind {
+                OpenTabKind::Board { view, .. } => Some(view.clone()),
+                _ => None,
+            })
+    }
+
+    pub(super) fn move_active_related_note_candidate(
+        &mut self,
+        direction: isize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(view) = self.active_board_view() else {
+            return false;
+        };
+        if !view.read(cx).related_note_picker_open() {
+            return false;
+        }
+        view.update(cx, |board, cx| {
+            board.move_related_note_candidate(direction, cx);
+        });
+        true
+    }
+
+    pub(super) fn close_active_related_note_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(view) = self.active_board_view() else {
+            return false;
+        };
+        if !view.read(cx).related_note_picker_open() {
+            return false;
+        }
+        view.update(cx, |board, cx| {
+            board.close_related_note_picker(window, cx);
+        });
+        true
+    }
+
     pub(crate) fn active_note_view(&self) -> Option<Entity<DocumentEditorView>> {
         self.tabs
             .open_tabs

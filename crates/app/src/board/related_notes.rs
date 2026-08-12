@@ -1,17 +1,43 @@
 use std::collections::HashSet;
 
-use gpui::{AppContext as _, Context, Entity, FocusHandle, SharedString, Window};
+use gpui::{
+    AppContext as _, Context, Entity, FocusHandle, ScrollHandle, SharedString, Window, point, px,
+};
 use gpui_component::input::InputState;
 
 use crate::AppServices;
 
 use super::{BoardView, BoardViewEvent};
 
+fn moved_candidate_row(
+    active_row: usize,
+    selection_visible: bool,
+    direction: isize,
+    count: usize,
+) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    if !selection_visible {
+        return if direction.is_negative() {
+            count - 1
+        } else {
+            0
+        };
+    }
+    active_row
+        .min(count - 1)
+        .saturating_add_signed(direction)
+        .min(count - 1)
+}
+
 pub(super) struct RelatedNotePickerState {
     pub(super) search_input: Entity<InputState>,
     pub(super) open: bool,
     pub(super) target: Option<storage::workspace_links::WorkspaceItemRef>,
     pub(super) active_row: usize,
+    pub(super) keyboard_selection_visible: bool,
+    pub(super) scroll_handle: ScrollHandle,
     pub(super) pending: HashSet<(storage::workspace_links::WorkspaceItemRef, i64)>,
     return_focus: Option<FocusHandle>,
 }
@@ -23,6 +49,8 @@ impl RelatedNotePickerState {
             open: false,
             target: None,
             active_row: 0,
+            keyboard_selection_visible: false,
+            scroll_handle: ScrollHandle::new(),
             pending: HashSet::new(),
             return_focus: None,
         }
@@ -38,7 +66,9 @@ impl RelatedNotePickerState {
         self.open = open;
         self.target = open.then_some(target).flatten();
         self.active_row = 0;
+        self.keyboard_selection_visible = false;
         if open {
+            self.scroll_handle.set_offset(point(px(0.), px(0.)));
             self.return_focus = window.focused(cx);
             self.search_input.update(cx, |input, cx| {
                 input.set_value("", window, cx);
@@ -56,6 +86,11 @@ impl BoardView {
         item: storage::workspace_links::WorkspaceItemRef,
         cx: &mut Context<Self>,
     ) -> Vec<storage::workspace_links::WorkspaceCatalogEntry> {
+        let linked_note_ids = self
+            .related_notes_for_item(item)
+            .into_iter()
+            .map(|note| note.note_id)
+            .collect::<HashSet<_>>();
         let source_project_id = self
             .related_notes
             .catalog
@@ -75,6 +110,7 @@ impl BoardView {
             .catalog
             .iter()
             .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
+            .filter(|entry| !linked_note_ids.contains(&entry.item.id))
             .filter(|entry| {
                 query.is_empty()
                     || entry.title.to_lowercase().contains(&query)
@@ -122,25 +158,35 @@ impl BoardView {
         self.link_note_to_item(item, note_id, cx);
     }
 
-    pub(in crate::board) fn move_related_note_candidate(
-        &mut self,
-        direction: isize,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn move_related_note_candidate(&mut self, direction: isize, cx: &mut Context<Self>) {
         let Some(item) = self.related_notes.picker.target else {
             return;
         };
         let count = self.related_note_candidates(item, cx).len();
-        if count == 0 {
-            self.related_notes.picker.active_row = 0;
-        } else {
-            self.related_notes.picker.active_row = self
-                .related_notes
-                .picker
-                .active_row
-                .saturating_add_signed(direction)
-                .min(count - 1);
-        }
+        self.related_notes.picker.active_row = moved_candidate_row(
+            self.related_notes.picker.active_row,
+            self.related_notes.picker.keyboard_selection_visible,
+            direction,
+            count,
+        );
+        self.related_notes.picker.keyboard_selection_visible = count > 0;
+        self.related_notes
+            .picker
+            .scroll_handle
+            .scroll_to_item(self.related_notes.picker.active_row);
+        cx.notify();
+    }
+
+    pub(crate) fn related_note_picker_open(&self) -> bool {
+        self.related_notes.picker.open
+    }
+
+    pub(crate) fn close_related_note_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.related_notes.picker.set_open(false, None, window, cx);
         cx.notify();
     }
 
@@ -411,5 +457,19 @@ impl BoardView {
             project_id: source.project_id.and_then(|id| u32::try_from(id).ok()),
             title: source.title.clone(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::moved_candidate_row;
+
+    #[test]
+    fn keyboard_navigation_enters_the_list_from_the_nearest_edge() {
+        assert_eq!(moved_candidate_row(0, false, 1, 4), 0);
+        assert_eq!(moved_candidate_row(0, false, -1, 4), 3);
+        assert_eq!(moved_candidate_row(0, true, 1, 4), 1);
+        assert_eq!(moved_candidate_row(3, true, -1, 4), 2);
+        assert_eq!(moved_candidate_row(0, false, 1, 0), 0);
     }
 }

@@ -309,7 +309,11 @@ impl Render for AppShell {
                 }),
             )
             .on_action(cx.listener(|this, _: &InputEscape, window, cx| {
-                this.on_close_command_palette_action(window, cx);
+                if this.close_active_related_note_picker(window, cx) {
+                    cx.stop_propagation();
+                } else {
+                    this.on_close_command_palette_action(window, cx);
+                }
             }))
             .on_action(
                 cx.listener(|this, _: &SelectPrevCommandPaletteItem, _, cx| {
@@ -322,10 +326,18 @@ impl Render for AppShell {
                 }),
             )
             .on_action(cx.listener(|this, _: &InputMoveUp, _, cx| {
-                this.select_prev_command_palette_item(cx);
+                if this.move_active_related_note_candidate(-1, cx) {
+                    cx.stop_propagation();
+                } else {
+                    this.select_prev_command_palette_item(cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &InputMoveDown, _, cx| {
-                this.select_next_command_palette_item(cx);
+                if this.move_active_related_note_candidate(1, cx) {
+                    cx.stop_propagation();
+                } else {
+                    this.select_next_command_palette_item(cx);
+                }
             }))
             .child(self.render_title_bar(cx))
             .child(

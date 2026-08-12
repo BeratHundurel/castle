@@ -226,6 +226,11 @@ impl BoardView {
             |this: &mut Self, _, event: &InputEvent, cx| match event {
                 InputEvent::Change => {
                     this.related_notes.picker.active_row = 0;
+                    this.related_notes.picker.keyboard_selection_visible = false;
+                    this.related_notes
+                        .picker
+                        .scroll_handle
+                        .set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.activate_related_note_candidate(cx),
