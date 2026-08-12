@@ -2,7 +2,7 @@ use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, ImageSource, InteractiveElement as _,
     IntoElement, ParentElement as _, ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, Window, div, img, px,
+    Task, Window, div, img, point, px,
 };
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
@@ -27,6 +27,8 @@ const ZOOM_STEP: f32 = 0.1;
 const MIN_ZOOM: f32 = 0.5;
 const MAX_ZOOM: f32 = 2.0;
 const ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+const SCROLL_EPSILON: f32 = 0.01;
+const DIAGRAM_HORIZONTAL_PADDING: f32 = 32.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct MermaidDescriptor {
@@ -738,8 +740,21 @@ fn render_image_body(
         .track_scroll(&presentation.scroll_handle)
         .on_scroll_wheel({
             let editor = editor.clone();
-            move |event: &ScrollWheelEvent, _, cx| {
+            let scroll_handle = presentation.scroll_handle.clone();
+            move |event: &ScrollWheelEvent, window, cx| {
                 if !(event.modifiers.control || event.modifiers.platform) {
+                    let delta = event.delta.pixel_delta(window.line_height());
+                    let shifted_delta = shifted_horizontal_delta(
+                        f32::from(delta.x),
+                        f32::from(delta.y),
+                        event.modifiers.shift,
+                    );
+                    if shifted_delta
+                        .is_some_and(|delta| scroll_mermaid_horizontally(&scroll_handle, delta))
+                    {
+                        editor.update(cx, |_, cx| cx.notify());
+                        cx.stop_propagation();
+                    }
                     return;
                 }
                 let ticks = match event.delta {
@@ -757,7 +772,9 @@ fn render_image_body(
         })
         .child(
             div()
+                .w(px(display_width + DIAGRAM_HORIZONTAL_PADDING))
                 .min_w_full()
+                .flex_shrink_0()
                 .p_4()
                 .bg(cx.theme().background.opacity(0.72))
                 .child(image),
@@ -766,8 +783,38 @@ fn render_image_body(
 
     v_flex()
         .relative()
-        .child(scroll.horizontal_scrollbar(&presentation.scroll_handle))
+        .child(scroll)
+        .horizontal_scrollbar(&presentation.scroll_handle)
         .into_any_element()
+}
+
+fn shifted_horizontal_delta(x: f32, y: f32, shift: bool) -> Option<f32> {
+    if !shift {
+        return None;
+    }
+    let delta = if y.abs() > SCROLL_EPSILON { y } else { x };
+    (delta.abs() > SCROLL_EPSILON).then_some(delta)
+}
+
+fn scroll_mermaid_horizontally(scroll_handle: &ScrollHandle, delta: f32) -> bool {
+    let offset = scroll_handle.offset();
+    let Some(next_x) = next_horizontal_scroll_offset(
+        f32::from(offset.x),
+        f32::from(scroll_handle.max_offset().x),
+        delta,
+    ) else {
+        return false;
+    };
+    scroll_handle.set_offset(point(px(next_x), offset.y));
+    true
+}
+
+fn next_horizontal_scroll_offset(current: f32, max: f32, delta: f32) -> Option<f32> {
+    if max <= SCROLL_EPSILON || delta.abs() <= SCROLL_EPSILON {
+        return None;
+    }
+    let next = (current + delta).clamp(-max, 0.0);
+    ((next - current).abs() > SCROLL_EPSILON).then_some(next)
 }
 
 impl DocumentEditorView {
@@ -1324,6 +1371,28 @@ mod tests {
         assert!((next - 1.0).abs() <= 0.05);
         assert_eq!((2.0 + ZOOM_STEP).clamp(MIN_ZOOM, MAX_ZOOM), MAX_ZOOM);
         assert_eq!((MIN_ZOOM - ZOOM_STEP).clamp(MIN_ZOOM, MAX_ZOOM), MIN_ZOOM);
+    }
+
+    #[test]
+    fn horizontal_scroll_moves_and_releases_wheel_at_edges() {
+        assert_eq!(
+            next_horizontal_scroll_offset(0.0, 500.0, -40.0),
+            Some(-40.0)
+        );
+        assert_eq!(
+            next_horizontal_scroll_offset(-480.0, 500.0, -40.0),
+            Some(-500.0)
+        );
+        assert_eq!(next_horizontal_scroll_offset(-500.0, 500.0, -40.0), None);
+        assert_eq!(next_horizontal_scroll_offset(0.0, 500.0, 40.0), None);
+        assert_eq!(next_horizontal_scroll_offset(-200.0, 0.0, -40.0), None);
+    }
+
+    #[test]
+    fn only_shift_converts_vertical_wheel_input_to_diagram_scroll() {
+        assert_eq!(shifted_horizontal_delta(0.0, -40.0, false), None);
+        assert_eq!(shifted_horizontal_delta(0.0, -40.0, true), Some(-40.0));
+        assert_eq!(shifted_horizontal_delta(-12.0, 0.0, true), Some(-12.0));
     }
 
     #[test]
