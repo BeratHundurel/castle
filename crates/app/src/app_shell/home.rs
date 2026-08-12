@@ -485,7 +485,7 @@ mod tests {
                 .block_on(note::Entity::find_by_id(note_id as i64).one(db.as_ref()))
                 .ok()
                 .flatten()
-                .is_some_and(|note| note.cached_content == "# Saved after close\n");
+                .is_some_and(|note| note.cached_content == "# Saved after close");
             if persisted && closed_dirty_note.upgrade().is_none() {
                 break;
             }
@@ -497,7 +497,7 @@ mod tests {
             .expect("saved note query should succeed")
             .expect("saved note should still exist")
             .cached_content;
-        assert_eq!(saved_content, "# Saved after close\n");
+        assert_eq!(saved_content, "# Saved after close");
         assert!(
             closed_dirty_note.upgrade().is_none(),
             "a closed editor must be released after autosave succeeds"

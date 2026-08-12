@@ -432,15 +432,6 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                 .description(
                     "Use opt-in Normal, Insert, and Visual modes in document source editors.",
                 ),
-                SettingItem::new(
-                    "Format on Autosave",
-                    SettingField::switch(
-                        AppSettings::format_on_auto_save,
-                        AppSettings::set_format_on_auto_save,
-                    )
-                    .default_value(true),
-                )
-                .description("Automatically format Markdown and JSON documents before autosaving."),
             ]))
             .group(SettingGroup::new().title("Markdown").items(vec![
                 SettingItem::new(

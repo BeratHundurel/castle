@@ -93,7 +93,6 @@ struct PersistenceState {
     load_error: Option<SharedString>,
     is_loading: bool,
     suppress_editor_events: bool,
-    auto_save_format_change: Option<SharedString>,
     auto_save_epoch: u64,
     load_task: Option<Task<()>>,
     auto_save_task: Option<Task<()>>,
@@ -211,10 +210,8 @@ impl DocumentEditorView {
             window,
             |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
-                    if !this.persistence.suppress_editor_events
-                        && !this.consume_auto_save_format_change(cx)
-                    {
-                        this.update_from_editor(window, cx);
+                    if !this.persistence.suppress_editor_events {
+                        this.update_from_editor(cx);
                     }
                 }
                 InputEvent::PressEnter { .. }
@@ -249,7 +246,6 @@ impl DocumentEditorView {
                 load_error: None,
                 is_loading: true,
                 suppress_editor_events: false,
-                auto_save_format_change: None,
                 auto_save_epoch: 0,
                 load_task: Some(load_task),
                 auto_save_task: None,
@@ -393,7 +389,7 @@ impl DocumentEditorView {
         self.editor
             .update(cx, |editor, cx| editor.set_value(content, window, cx));
         self.persistence.suppress_editor_events = false;
-        self.update_from_editor(window, cx);
+        self.update_from_editor(cx);
     }
 
     pub(crate) fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
@@ -473,7 +469,10 @@ impl DocumentEditorView {
     }
 
     fn apply_document_kind(&mut self, path: Option<&Path>, cx: &mut Context<Self>) -> DocumentKind {
-        let kind = DocumentKind::from_path(path);
+        let Some(kind) = changed_document_kind(self.kind, path) else {
+            return self.kind;
+        };
+
         self.kind = kind;
         self.mode = if kind == DocumentKind::Markdown {
             EditorMode::from_str(AppSettings::markdown_editor_mode(cx).as_ref())
@@ -795,6 +794,11 @@ impl DocumentEditorView {
     }
 }
 
+fn changed_document_kind(current: DocumentKind, path: Option<&Path>) -> Option<DocumentKind> {
+    let kind = DocumentKind::from_path(path);
+    (kind != current).then_some(kind)
+}
+
 fn analyze_document(
     kind: DocumentKind,
     content: String,
@@ -839,7 +843,7 @@ fn source_row_centers_at_document_start(
 mod tests {
     use super::{
         DocumentEditorView, DocumentKind, DocumentOutline, JsonOutline,
-        OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document,
+        OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document, changed_document_kind,
         row_is_in_visible_layout, source_row_centers_at_document_start,
     };
     use crate::{AppServices, app_settings::AppSettings, test_alloc};
@@ -850,7 +854,7 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     #[gpui::test]
-    fn json_autosave_formats_by_default_and_respects_the_setting(cx: &mut gpui::TestAppContext) {
+    fn json_autosave_preserves_unformatted_content(cx: &mut gpui::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -916,35 +920,10 @@ mod tests {
             });
         });
         cx.executor().advance_clock(Duration::from_millis(1_300));
-        let formatted = "{\n  \"alpha\": 1\n}\n";
-        for _ in 0..100 {
-            cx.run_until_parked();
-            if std::fs::read_to_string(&document_path).is_ok_and(|content| content == formatted) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        assert_eq!(
-            view.read_with(&cx, |editor, cx| editor.loaded_content(cx)),
-            Some(formatted.to_string())
-        );
-        assert_eq!(
-            std::fs::read_to_string(&document_path).expect("formatted document should be readable"),
-            formatted
-        );
-
-        cx.update(|window, cx| {
-            AppSettings::set_format_on_auto_save(false, cx);
-            view.update(cx, |editor, cx| {
-                editor.replace_content_for_test(r#"{"beta":2}"#, window, cx);
-            });
-        });
-        cx.executor().advance_clock(Duration::from_millis(1_300));
         for _ in 0..100 {
             cx.run_until_parked();
             if std::fs::read_to_string(&document_path)
-                .is_ok_and(|content| content == r#"{"beta":2}"#)
+                .is_ok_and(|content| content == r#"{"alpha":1}"#)
             {
                 break;
             }
@@ -952,9 +931,12 @@ mod tests {
         }
 
         assert_eq!(
-            std::fs::read_to_string(&document_path)
-                .expect("unformatted document should be readable"),
-            r#"{"beta":2}"#
+            view.read_with(&cx, |editor, cx| editor.loaded_content(cx)),
+            Some(r#"{"alpha":1}"#.to_string())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&document_path).expect("autosaved document should be readable"),
+            r#"{"alpha":1}"#
         );
     }
 
@@ -1126,6 +1108,24 @@ mod tests {
             gpui::px(400.),
             0
         ));
+    }
+
+    #[test]
+    fn markdown_path_rename_preserves_the_active_highlighter() {
+        assert_eq!(
+            changed_document_kind(
+                DocumentKind::Markdown,
+                Some(std::path::Path::new("renamed-note.md"))
+            ),
+            None
+        );
+        assert_eq!(
+            changed_document_kind(
+                DocumentKind::Markdown,
+                Some(std::path::Path::new("renamed-note.json"))
+            ),
+            Some(DocumentKind::Json)
+        );
     }
 
     #[gpui::test]

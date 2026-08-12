@@ -1,4 +1,4 @@
-use gpui::{Context, EntityInputHandler, SharedString, Task, Window};
+use gpui::{Context, SharedString, Task, Window};
 use gpui_component::{WindowExt as _, input::RopeExt as _, notification::Notification};
 use std::{
     fs::read_to_string,
@@ -6,9 +6,8 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{AppServices, app_settings::AppSettings};
+use crate::AppServices;
 
-use super::formatting::{format_document_text, map_range_after_format};
 use super::outline::DocumentOutline;
 use super::types::{DocumentKind, DocumentStats, SaveState};
 use super::util::{
@@ -179,7 +178,6 @@ impl DocumentEditorView {
             self.inspector_links.workspace_catalog.clone(),
         );
         self.persistence.file_managed_by_app = model.file_managed_by_app;
-        self.persistence.auto_save_format_change = None;
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         self.persistence.is_loading = is_loading;
         self.persistence.load_error = None;
@@ -229,7 +227,7 @@ impl DocumentEditorView {
         cx.notify();
     }
 
-    pub(super) fn update_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn update_from_editor(&mut self, cx: &mut Context<Self>) {
         if self.persistence.is_loading {
             return;
         }
@@ -247,27 +245,19 @@ impl DocumentEditorView {
 
         self.schedule_document_analysis(true, cx);
         self.refresh_board_embeds(cx);
-        self.schedule_auto_save(window, cx);
+        self.schedule_auto_save(cx);
     }
 
-    pub(super) fn consume_auto_save_format_change(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(expected) = self.persistence.auto_save_format_change.take() else {
-            return false;
-        };
-
-        self.editor.read(cx).value() == expected
-    }
-
-    pub(super) fn schedule_auto_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         let epoch = self.persistence.auto_save_epoch;
         let runtime = cx.global::<AppServices>().runtime();
 
-        self.persistence.auto_save_task = Some(cx.spawn_in(window, async move |this, cx| {
+        self.persistence.auto_save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
 
             let save_request = this
-                .update_in(cx, |this, _window, cx| {
+                .update(cx, |this, cx| {
                     if this.persistence.auto_save_epoch != epoch {
                         return None;
                     }
@@ -276,84 +266,18 @@ impl DocumentEditorView {
                     let path = this.persistence.current_path.clone();
                     let is_missing = matches!(this.persistence.save_state, SaveState::Missing);
                     let content = this.editor.read(cx).value();
-                    let selection = this.editor.read(cx).selected_range();
-                    let format_on_auto_save = AppSettings::format_on_auto_save(cx)
-                        && matches!(this.kind, DocumentKind::Markdown | DocumentKind::Json);
-
-                    Some((
-                        note_id,
-                        path,
-                        is_missing,
-                        this.kind,
-                        content,
-                        selection,
-                        format_on_auto_save,
-                    ))
-                })
-                .ok()
-                .flatten();
-
-            let Some((note_id, path, is_missing, kind, content, selection, format_on_auto_save)) =
-                save_request
-            else {
-                return;
-            };
-
-            let source = content.to_string();
-            let formatted = if format_on_auto_save {
-                cx.background_executor()
-                    .spawn({
-                        let source = source.clone();
-                        async move { format_document_text(kind, &source).ok().flatten() }
-                    })
-                    .await
-            } else {
-                None
-            };
-
-            let content = this
-                .update_in(cx, |this, window, cx| {
-                    if this.persistence.auto_save_epoch != epoch
-                        || this.kind != kind
-                        || *this.editor.read(cx).text() != source
-                    {
-                        return None;
-                    }
-
-                    let content = if let Some(formatted) = formatted {
-                        let mapped_selection =
-                            map_range_after_format(&source, &formatted, selection);
-                        this.persistence.auto_save_format_change = Some(formatted.clone().into());
-                        this.editor.update(cx, |editor, cx| {
-                            let document_end =
-                                editor.text().offset_to_offset_utf16(editor.text().len());
-                            EntityInputHandler::replace_text_in_range(
-                                editor,
-                                Some(0..document_end),
-                                &formatted,
-                                window,
-                                cx,
-                            );
-                            editor.set_selected_range(mapped_selection, cx);
-                        });
-                        this.reset_vim_command();
-                        this.schedule_document_analysis(false, cx);
-                        formatted.into()
-                    } else {
-                        content.clone()
-                    };
 
                     if path.is_some() && !is_missing {
                         this.persistence.save_state = SaveState::Saving;
                         cx.notify();
                     }
 
-                    Some(content)
+                    Some((note_id, path, is_missing, content))
                 })
                 .ok()
                 .flatten();
 
-            let Some(content) = content else {
+            let Some((note_id, path, is_missing, content)) = save_request else {
                 return;
             };
 

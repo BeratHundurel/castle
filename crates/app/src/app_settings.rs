@@ -30,7 +30,6 @@ const DEFAULT_EDITOR_STATUS_LINE_VISIBLE: bool = true;
 const DEFAULT_EDITOR_LINE_NUMBERS: bool = false;
 const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
 const DEFAULT_EDITOR_VIM_MODE: bool = false;
-const DEFAULT_FORMAT_ON_AUTO_SAVE: bool = true;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
@@ -88,7 +87,6 @@ pub(super) struct StoredSettings {
     #[serde(alias = "markdown_soft_wrap")]
     editor_soft_wrap: bool,
     editor_vim_mode: bool,
-    format_on_auto_save: bool,
     #[serde(alias = "markdown_outline_visible")]
     document_outline_visible: bool,
     close_to_tray: bool,
@@ -114,7 +112,6 @@ impl Default for StoredSettings {
             editor_line_numbers: DEFAULT_EDITOR_LINE_NUMBERS,
             editor_soft_wrap: DEFAULT_EDITOR_SOFT_WRAP,
             editor_vim_mode: DEFAULT_EDITOR_VIM_MODE,
-            format_on_auto_save: DEFAULT_FORMAT_ON_AUTO_SAVE,
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
@@ -341,16 +338,6 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn format_on_auto_save(cx: &App) -> bool {
-        cx.global::<Self>().values.format_on_auto_save
-    }
-
-    pub(crate) fn set_format_on_auto_save(enabled: bool, cx: &mut App) {
-        Self::update(cx, |settings| {
-            settings.values.format_on_auto_save = enabled;
-        });
-    }
-
     pub(crate) fn document_outline_visible(cx: &App) -> bool {
         cx.global::<Self>().values.document_outline_visible
     }
@@ -547,17 +534,17 @@ mod tests {
         assert_eq!(settings.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
         assert!(settings.editor_status_line_visible);
         assert!(!settings.editor_vim_mode);
-        assert!(settings.format_on_auto_save);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
     }
 
     #[test]
-    fn format_on_auto_save_can_be_disabled() {
-        let settings: StoredSettings = serde_json::from_str(r#"{"format_on_auto_save":false}"#)
-            .expect("format-on-autosave setting should deserialize");
+    fn removed_format_on_auto_save_setting_is_ignored() {
+        let settings: StoredSettings = serde_json::from_str(r#"{"format_on_auto_save":true}"#)
+            .expect("legacy settings should still deserialize");
+        let serialized = serde_json::to_value(settings).expect("settings should serialize");
 
-        assert!(!settings.format_on_auto_save);
+        assert!(serialized.get("format_on_auto_save").is_none());
     }
 
     #[test]
