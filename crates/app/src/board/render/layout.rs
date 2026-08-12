@@ -242,16 +242,6 @@ impl BoardView {
             .child(self.render_sort_picker(cx))
             .child(self.render_fields_picker(cx))
             .child(
-                Button::new("copy-board-internal-link")
-                    .icon(IconName::Copy)
-                    .ghost()
-                    .small()
-                    .tooltip("Copy board internal link")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(CopyBoardInternalLinkAction), cx);
-                    }),
-            )
-            .child(
                 Button::new("save-board-template")
                     .icon(IconName::Copy)
                     .label("Template")

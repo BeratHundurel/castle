@@ -67,6 +67,8 @@ impl AppShell {
                 )
                 .child(
                     div()
+                        .debug_selector(|| "title-bar-tabs-viewport".to_string())
+                        .w_0()
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
@@ -80,6 +82,7 @@ impl AppShell {
     fn render_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .id("title-bar-settings")
+            .debug_selector(|| "title-bar-settings".to_string())
             .h_full()
             .items_center()
             .px_3()
@@ -222,6 +225,7 @@ impl AppShell {
 
         if let Some(tab_id) = active_tab_id {
             div()
+                .debug_selector(|| "title-bar-tabs-content".to_string())
                 .child(tab_bar)
                 .context_menu(move |menu, _, _cx| {
                     menu.menu("Close", Box::new(CloseTabAction(tab_id)))
@@ -445,5 +449,95 @@ fn settings_shortcut() -> &'static str {
         "Cmd+,"
     } else {
         "Ctrl+,"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait as _};
+    use sea_orm::Database;
+    use std::{path::PathBuf, sync::Arc};
+
+    #[gpui::test]
+    fn tab_strip_stays_before_title_bar_actions(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("tab layout database should initialize");
+        let settings_dir = std::env::temp_dir().join(format!(
+            "castle-tab-layout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos()
+        ));
+        let app_db = crate::AppServices::new(Arc::new(db), PathBuf::new());
+
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("tab layout test window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui::size(px(1_200.), px(800.)));
+
+        cx.update(|_, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.tabs.open_tabs = (0..12)
+                    .map(|index| OpenTab {
+                        id: index + 1,
+                        title: format!("Workspace/Very long document title {index}").into(),
+                        kind: OpenTabKind::Chooser,
+                    })
+                    .collect();
+                shell.tabs.active_tab_index = 0;
+                shell.tabs.next_tab_id = 13;
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+
+        let viewport = cx
+            .debug_bounds("title-bar-tabs-viewport")
+            .expect("tabs viewport should render");
+        let content = cx
+            .debug_bounds("title-bar-tabs-content")
+            .expect("tabs content should render");
+        let settings = cx
+            .debug_bounds("title-bar-settings")
+            .expect("settings action should render");
+
+        let window_bounds = cx.update(|window, _| window.bounds());
+
+        assert!(
+            content.right() <= viewport.right(),
+            "tab content must be constrained by its viewport: {content:?} vs {viewport:?}"
+        );
+        assert!(
+            viewport.right() <= settings.left(),
+            "tab viewport must end before fixed title-bar actions: {viewport:?} vs {settings:?}"
+        );
+        assert!(
+            settings.right() <= window_bounds.right(),
+            "fixed title-bar actions must remain inside the window: {settings:?} vs {window_bounds:?}"
+        );
     }
 }

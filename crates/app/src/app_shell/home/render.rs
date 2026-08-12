@@ -45,9 +45,12 @@ impl AppShell {
                             )
                             .child(
                                 h_flex()
+                                    .w(px(320.))
+                                    .flex_shrink_0()
                                     .gap_2()
                                     .child(
                                         Button::new("home-new-note")
+                                            .flex_1()
                                             .icon(IconName::Plus)
                                             .label(match active_project {
                                                 Some(project) => format!("Note in {}", project.name),
@@ -60,6 +63,7 @@ impl AppShell {
                                     )
                                     .child(
                                         Button::new("home-new-board")
+                                            .flex_1()
                                             .icon(IconName::LayoutDashboard)
                                             .label("New board")
                                             .outline()
