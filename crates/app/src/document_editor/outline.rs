@@ -21,6 +21,7 @@ pub(crate) struct OutlineRow {
 pub(crate) struct MarkdownOutline {
     items: Vec<OutlineRow>,
     pub(crate) sections: Vec<SharedString>,
+    pub(crate) section_offsets: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +62,13 @@ impl DocumentOutline {
     pub(crate) fn markdown_sections(&self) -> &[SharedString] {
         match self {
             Self::Markdown(outline) => &outline.sections,
+            Self::None | Self::Json(_) => &[],
+        }
+    }
+
+    pub(crate) fn markdown_section_offsets(&self) -> &[usize] {
+        match self {
+            Self::Markdown(outline) => &outline.section_offsets,
             Self::None | Self::Json(_) => &[],
         }
     }
@@ -215,12 +223,15 @@ impl MarkdownOutline {
         headings.dedup_by_key(|heading| heading.2);
 
         let mut sections = Vec::with_capacity(headings.len().saturating_add(1));
+        let mut section_offsets = Vec::with_capacity(headings.len().saturating_add(1));
         if let Some(first) = headings.first() {
             if first.2 > 0 {
                 sections.push(SharedString::from(lines[..first.2].join("\n")));
+                section_offsets.push(0);
             }
         } else if !source.is_empty() {
             sections.push(SharedString::from(source.to_string()));
+            section_offsets.push(0);
         }
 
         let section_offset = usize::from(!sections.is_empty());
@@ -233,6 +244,7 @@ impl MarkdownOutline {
                     .map(|heading| heading.2)
                     .unwrap_or(lines.len());
                 sections.push(SharedString::from(lines[*source_line..end].join("\n")));
+                section_offsets.push(line_offsets.get(*source_line).copied().unwrap_or_default());
                 OutlineRow {
                     node_index: Some(index),
                     title: title.clone(),
@@ -251,7 +263,11 @@ impl MarkdownOutline {
             })
             .collect();
 
-        Self { items, sections }
+        Self {
+            items,
+            sections,
+            section_offsets,
+        }
     }
 
     fn active_index_for_line(&self, line: usize) -> Option<usize> {
@@ -634,6 +650,7 @@ mod tests {
         let outline = MarkdownOutline::parse("Intro\n\n# One\nBody\n## Two\nMore");
         assert_eq!(outline.items.len(), 2);
         assert_eq!(outline.sections.len(), 3);
+        assert_eq!(outline.section_offsets, vec![0, 7, 18]);
         assert_eq!(outline.items[1].preview_section_index, Some(2));
         assert_eq!(outline.items[1].depth, 1);
     }

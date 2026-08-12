@@ -244,7 +244,13 @@ impl DocumentEditorView {
         } else {
             self.analysis.outline.markdown_sections().to_vec()
         };
+        let section_offsets = if self.analysis.outline.markdown_section_offsets().is_empty() {
+            vec![0]
+        } else {
+            self.analysis.outline.markdown_section_offsets().to_vec()
+        };
         let section_count = sections.len();
+        let editor_entity = cx.entity();
 
         let virtualization = markdown_preview_virtualization(self.analysis.outline_rows.is_empty());
         let outline_in_layout = self.analysis.outline_rendered && self.view_width >= px(760.);
@@ -256,6 +262,8 @@ impl DocumentEditorView {
             };
 
         let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
+        let mermaid_width =
+            (preview_width.as_f32() - horizontal_padding.as_f32() * 2. - 32.).max(1.);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
             cx.global::<AppServices>().data_dir(),
             self.persistence.current_path.as_deref(),
@@ -291,6 +299,11 @@ impl DocumentEditorView {
             .plugin(local_image_plugin)
             .plugin(board_embed_plugin)
             .plugin(wikilink_plugin)
+            .plugin(super::mermaid::MermaidPlugin::new(
+                editor_entity.clone(),
+                0,
+                mermaid_width,
+            ))
             .style(preview_style)
             .code_block_actions(|code_block, _window, _cx| {
                 Clipboard::new("copy-code").value(code_block.code().clone())
@@ -319,6 +332,11 @@ impl DocumentEditorView {
                                 .plugin(local_image_plugin.clone())
                                 .plugin(board_embed_plugin.clone())
                                 .plugin(wikilink_plugin.clone())
+                                .plugin(super::mermaid::MermaidPlugin::new(
+                                    editor_entity.clone(),
+                                    section_offsets.get(index).copied().unwrap_or_default(),
+                                    mermaid_width,
+                                ))
                                 .style(preview_style.clone())
                                 .code_block_actions(|code_block, _window, _cx| {
                                     Clipboard::new("copy-code").value(code_block.code().clone())

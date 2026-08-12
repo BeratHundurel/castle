@@ -5,6 +5,7 @@ mod emmet;
 mod formatting;
 mod handlers;
 pub(crate) mod links;
+mod mermaid;
 mod outline;
 mod persistence;
 mod render;
@@ -14,9 +15,10 @@ mod vim;
 
 use gpui::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString,
-    Task, UniformListScrollHandle, Window, point, px,
+    Subscription, Task, UniformListScrollHandle, Window, point, px,
 };
 use gpui_component::{
+    Theme,
     highlighter::Language,
     input::{InputEvent, InputState, RopeExt as _, TabSize},
 };
@@ -52,6 +54,7 @@ const OUTLINE_INDENT_STEP: Pixels = px(8.);
 struct DocumentAnalysis {
     stats: DocumentStats,
     outline: DocumentOutline,
+    mermaids: Vec<mermaid::MermaidDescriptor>,
 }
 
 #[derive(Clone, Copy)]
@@ -158,6 +161,8 @@ pub(crate) struct DocumentEditorView {
     emmet_replacement_range: Option<Range<usize>>,
     inspector_links: InspectorLinksState,
     embeds: EmbedStateGroup,
+    mermaid: mermaid::MermaidState,
+    _theme_subscription: Subscription,
     pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
@@ -205,6 +210,12 @@ impl DocumentEditorView {
 
         let focus_handle = cx.focus_handle();
         let outline_focus_handle = cx.focus_handle();
+        let theme_subscription = cx.observe_global::<Theme>(|this, cx| {
+            if this.kind == DocumentKind::Markdown && this.mode == EditorMode::Preview {
+                this.activate_mermaids(cx);
+            }
+        });
+        cx.on_release(|this, cx| this.mermaid.clear(cx)).detach();
         cx.subscribe_in(
             &editor,
             window,
@@ -295,6 +306,8 @@ impl DocumentEditorView {
                 request: crate::request_tracker::RequestTracker::default(),
                 loading_keys: std::collections::HashSet::new(),
             },
+            mermaid: mermaid::MermaidState::default(),
+            _theme_subscription: theme_subscription,
             pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
@@ -439,6 +452,9 @@ impl DocumentEditorView {
         self.mode = mode;
         if mode == EditorMode::Preview {
             self.reset_vim_command();
+            self.activate_mermaids(cx);
+        } else {
+            self.deactivate_mermaids(cx);
         }
         self.focus_active_mode(window, cx);
         cx.notify();
@@ -454,6 +470,9 @@ impl DocumentEditorView {
         };
         if self.mode == EditorMode::Preview {
             self.reset_vim_command();
+            self.activate_mermaids(cx);
+        } else {
+            self.deactivate_mermaids(cx);
         }
         self.focus_active_mode(window, cx);
         cx.notify();
@@ -717,6 +736,7 @@ impl DocumentEditorView {
                 outline.preserve_json_expansion_from(&this.analysis.outline);
                 this.analysis.stats = analysis.stats;
                 this.analysis.outline = outline;
+                this.mermaid.set_analyzed(analysis.mermaids);
                 this.rebuild_outline_rows();
                 this.analysis.preview_list_state.remeasure();
                 let cursor_line = this.editor.read(cx).cursor_position().line as usize;
@@ -725,6 +745,9 @@ impl DocumentEditorView {
                         .analysis
                         .outline
                         .active_markdown_index_for_line(cursor_line);
+                    if this.mode == EditorMode::Preview {
+                        this.activate_mermaids(cx);
+                    }
                 }
                 cx.notify();
             })
@@ -812,8 +835,17 @@ fn analyze_document(
         }
         DocumentKind::Json | DocumentKind::PlainText => DocumentOutline::None,
     };
+    let mermaids = if kind == DocumentKind::Markdown {
+        mermaid::parse_mermaid_blocks(&content)
+    } else {
+        Vec::new()
+    };
 
-    DocumentAnalysis { stats, outline }
+    DocumentAnalysis {
+        stats,
+        outline,
+        mermaids,
+    }
 }
 
 fn analysis_is_current(

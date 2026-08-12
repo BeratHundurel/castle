@@ -25,6 +25,7 @@ chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
 storage = { path = "../storage" }
+mermaid_renderer = { path = "../mermaid_renderer" }
 dotenvy = "0.15"
 dprint-plugin-json = "0.22.1"
 dprint-plugin-markdown = "0.22.1"

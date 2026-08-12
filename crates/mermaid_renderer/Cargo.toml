@@ -1,0 +1,10 @@
+[package]
+name = "mermaid_renderer"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+lol_html = "2.9"
+merman.workspace = true
