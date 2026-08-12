@@ -23,6 +23,9 @@ struct CopiedImage {
     path: PathBuf,
 }
 
+type AttachmentPreviewSpec = (u32, PathBuf, PathBuf);
+type AttachmentPreview = (u32, PathBuf);
+
 impl BoardView {
     pub(super) fn add_image_attachments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
@@ -264,31 +267,61 @@ impl BoardView {
 
         let background = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let previews = background
-                .spawn(async move {
-                    attachments
-                        .into_iter()
-                        .map(|(attachment_id, original, thumbnail)| {
-                            let preview = ensure_attachment_thumbnail(&original, &thumbnail)
-                                .unwrap_or(original);
-                            (attachment_id, preview)
-                        })
-                        .collect::<Vec<_>>()
-                })
+            let (cached, pending) = background
+                .spawn(async move { partition_cached_attachment_previews(attachments) })
                 .await;
 
-            this.update(cx, |this, cx| {
-                if this.data.board_id != board_id
-                    || this.mutation.load_request.generation() != generation
-                {
-                    return;
+            let still_open = this
+                .update(cx, |this, cx| {
+                    if !this.accepts_attachment_previews(entry_id, board_id, generation) {
+                        return false;
+                    }
+                    this.entry_editing.attachment_preview_paths.extend(cached);
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !still_open {
+                return;
+            }
+
+            for (attachment_id, original, thumbnail) in pending {
+                let preview = background
+                    .spawn(async move {
+                        ensure_attachment_thumbnail(&original, &thumbnail).unwrap_or(original)
+                    })
+                    .await;
+                let still_open = this
+                    .update(cx, |this, cx| {
+                        if !this.accepts_attachment_previews(entry_id, board_id, generation) {
+                            return false;
+                        }
+                        this.entry_editing
+                            .attachment_preview_paths
+                            .insert(attachment_id, preview);
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !still_open {
+                    break;
                 }
-                this.entry_editing.attachment_preview_paths.extend(previews);
-                cx.notify();
-            })
-            .ok();
+            }
         })
         .detach();
+    }
+
+    fn accepts_attachment_previews(
+        &self,
+        entry_id: u32,
+        board_id: Option<u32>,
+        generation: u64,
+    ) -> bool {
+        self.data.board_id == board_id
+            && self.mutation.load_request.generation() == generation
+            && self.entry_editing.open
+            && self.entry_editing.dialog.open
+            && self.entry_editing.dialog.entry_id == Some(entry_id)
     }
 }
 
@@ -296,7 +329,7 @@ fn attachment_preview_specs(
     cards: &[BoardListDTO],
     data_dir: &Path,
     entry_id: u32,
-) -> Vec<(u32, PathBuf, PathBuf)> {
+) -> Vec<AttachmentPreviewSpec> {
     cards
         .iter()
         .flat_map(|list| list.entries.iter())
@@ -314,6 +347,21 @@ fn attachment_preview_specs(
             )
         })
         .collect()
+}
+
+fn partition_cached_attachment_previews(
+    previews: Vec<AttachmentPreviewSpec>,
+) -> (Vec<AttachmentPreview>, Vec<AttachmentPreviewSpec>) {
+    let mut cached = Vec::new();
+    let mut pending = Vec::new();
+    for (attachment_id, original, thumbnail) in previews {
+        if thumbnail.is_file() {
+            cached.push((attachment_id, thumbnail));
+        } else {
+            pending.push((attachment_id, original, thumbnail));
+        }
+    }
+    (cached, pending)
 }
 
 pub(super) fn attachment_directory(data_dir: &Path, entry_id: u32) -> PathBuf {
@@ -510,7 +558,7 @@ mod tests {
     use super::{
         ATTACHMENT_THUMBNAIL_HEIGHT, ATTACHMENT_THUMBNAIL_WIDTH, attachment_preview_specs,
         attachment_thumbnail_path, ensure_attachment_thumbnail, normalized_image_extension,
-        sanitize_file_stem,
+        partition_cached_attachment_previews, sanitize_file_stem,
     };
     use crate::board::dto::{BoardCardDTO, BoardListDTO, EntryAttachmentDTO};
 
@@ -587,5 +635,33 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].0, 100);
         assert!(specs[0].1.ends_with("open.png"));
+    }
+
+    #[test]
+    fn cached_attachment_previews_do_not_wait_for_missing_thumbnails() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let cached_thumbnail = directory.path().join("cached.png");
+        std::fs::write(&cached_thumbnail, b"cached")?;
+        let missing_thumbnail = directory.path().join("missing.png");
+        let specs = vec![
+            (
+                1,
+                directory.path().join("first.jpg"),
+                cached_thumbnail.clone(),
+            ),
+            (
+                2,
+                directory.path().join("second.jpg"),
+                missing_thumbnail.clone(),
+            ),
+        ];
+
+        let (cached, pending) = partition_cached_attachment_previews(specs);
+
+        assert_eq!(cached, vec![(1, cached_thumbnail)]);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].0, 2);
+        assert_eq!(pending[0].2, missing_thumbnail);
+        Ok(())
     }
 }

@@ -11,6 +11,7 @@ use gpui_component::{
     notification::Notification,
     popover::Popover,
     scroll::ScrollableElement as _,
+    spinner::Spinner,
     text::{TextView, TextViewStyle},
     v_flex,
 };

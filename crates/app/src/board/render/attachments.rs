@@ -77,6 +77,9 @@ impl BoardView {
                                     .attachment_preview_paths
                                     .get(&attachment_id)
                                     .cloned();
+                                let preview_is_pending = preview_path.is_none();
+                                let preview_background = cx.theme().muted.opacity(0.18);
+                                let preview_foreground = cx.theme().muted_foreground;
                                 v_flex()
                                     .w(px(252.))
                                     .overflow_hidden()
@@ -90,12 +93,32 @@ impl BoardView {
                                             .w_full()
                                             .h(px(150.))
                                             .overflow_hidden()
+                                            .bg(preview_background)
                                             .when_some(preview_path, |this, path| {
                                                 this.child(
                                                     img(path)
+                                                        .id((
+                                                            "card-attachment-preview",
+                                                            attachment_id as usize,
+                                                        ))
                                                         .size_full()
-                                                        .object_fit(ObjectFit::Cover),
+                                                        .object_fit(ObjectFit::Cover)
+                                                        .with_loading(move || {
+                                                            attachment_preview_loading(
+                                                                preview_foreground,
+                                                            )
+                                                        })
+                                                        .with_fallback(move || {
+                                                            attachment_preview_unavailable(
+                                                                preview_foreground,
+                                                            )
+                                                        }),
                                                 )
+                                            })
+                                            .when(preview_is_pending, |this| {
+                                                this.child(attachment_preview_loading(
+                                                    preview_foreground,
+                                                ))
                                             })
                                             .child(
                                                 Button::new((
@@ -136,4 +159,30 @@ impl BoardView {
                 },
             )
     }
+}
+
+fn attachment_preview_loading(color: Hsla) -> AnyElement {
+    v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .text_xs()
+        .text_color(color)
+        .child(Spinner::new().small().color(color))
+        .child("Loading preview")
+        .into_any_element()
+}
+
+fn attachment_preview_unavailable(color: Hsla) -> AnyElement {
+    v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .text_xs()
+        .text_color(color)
+        .child(Icon::new(IconName::TriangleAlert).small())
+        .child("Preview unavailable")
+        .into_any_element()
 }
