@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/app",
+    "crates/mermaid_renderer",
     "crates/storage",
     "crates/migration",
     "crates/entity",
@@ -33,6 +34,7 @@ schemars = "1.2"
 toml_edit = "0.25"
 image = "0.25.10"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
+merman = { git = "https://github.com/zed-industries/merman", tag = "v0.7.0-with-patches", default-features = false, features = ["render"] }
 
 [profile.dev]
 lto = false
