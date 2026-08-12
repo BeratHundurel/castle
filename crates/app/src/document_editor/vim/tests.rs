@@ -616,6 +616,18 @@ fn with_vim_editor(
     test(view, &mut cx);
 }
 
+#[gpui::test]
+#[should_panic(expected = "Test Windows are not backed by a real platform window")]
+fn source_context_menu_does_not_reenter_input_state(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "Right click this text", |_view, cx| {
+        cx.simulate_mouse_down(
+            gpui::point(gpui::px(100.), gpui::px(100.)),
+            gpui::MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+    });
+}
+
 fn set_vim_test_content(
     view: &gpui::Entity<DocumentEditorView>,
     content: &str,

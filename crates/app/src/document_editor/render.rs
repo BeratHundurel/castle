@@ -7,13 +7,15 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
-    input::{Input, InputState, RopeExt as _},
+    input::{self, Input, InputState, RopeExt as _},
     scroll::ScrollableElement,
     text::{TextView, TextViewStyle},
+    tooltip::Tooltip,
     v_flex,
 };
-use std::{collections::HashSet, ops::Range};
+use std::{collections::HashSet, ops::Range, path::Path};
 
+use super::action::FormatDocument;
 use super::types::*;
 use super::vim::VimMode;
 use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
@@ -62,6 +64,9 @@ impl DocumentEditorView {
         } else {
             "DocumentSource"
         };
+        // The menu builder runs while InputState is mutably leased by its mouse handler.
+        let has_selection = !self.editor.read(cx).selected_range().is_empty();
+        let can_format = matches!(self.kind, DocumentKind::Markdown | DocumentKind::Json);
         let input = Input::new(&self.editor)
             .h_full()
             .w_full()
@@ -69,7 +74,18 @@ impl DocumentEditorView {
             .border_0()
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(cx.theme().mono_font_size)
-            .focus_bordered(false);
+            .focus_bordered(false)
+            .context_menu(move |menu, _, cx| {
+                let has_paste = cx.read_from_clipboard().is_some();
+
+                menu.menu_with_disabled("Cut", !has_selection, Box::new(input::Cut))
+                    .menu_with_disabled("Copy", !has_selection, Box::new(input::Copy))
+                    .menu_with_disabled("Paste", !has_paste, Box::new(input::Paste))
+                    .separator()
+                    .menu("Select All", Box::new(input::SelectAll))
+                    .separator()
+                    .menu_with_disabled("Format Document", !can_format, Box::new(FormatDocument))
+            });
 
         let input = if outline_in_layout && self.analysis.outline_transition_epoch > 0 {
             let (from_width, to_width) = if self.analysis.outline_visible {
@@ -650,12 +666,8 @@ impl DocumentEditorView {
     }
 
     pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let path = self
-            .persistence
-            .current_path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "Not saved to a file yet".to_string());
+        let path = status_path(self.persistence.current_path.as_deref(), self.kind);
+        let path_tooltip = SharedString::from(path.tooltip.clone());
 
         h_flex()
             .id("document-status-bar")
@@ -682,11 +694,29 @@ impl DocumentEditorView {
                             .then(|| self.render_vim_mode_indicator(cx)),
                     )
                     .child(
-                        div()
+                        h_flex()
+                            .id("document-file-location")
                             .min_w_0()
                             .overflow_hidden()
-                            .text_ellipsis()
-                            .child(SharedString::from(path)),
+                            .gap_1()
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(path_tooltip.clone()).build(window, cx)
+                            })
+                            .children(path.directory.map(|directory| {
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .text_color(cx.theme().muted_foreground.opacity(0.72))
+                                    .child(div().max_w(px(160.)).truncate().child(directory))
+                                    .child(Icon::new(IconName::ChevronRight).xsmall())
+                            }))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(cx.theme().foreground.opacity(0.78))
+                                    .child(path.file_name),
+                            ),
                     )
                     .child(self.render_save_state(cx)),
             )
@@ -938,24 +968,23 @@ impl DocumentEditorView {
                 Some(
                     h_flex()
                         .id(("workspace-link-reference", item_id as u64))
-                        .min_h_10()
+                        .min_h_9()
                         .px_3()
                         .py_1()
-                        .gap_2()
                         .cursor_pointer()
                         .hover(|this| this.bg(cx.theme().accent.opacity(0.38)))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target));
                         }))
-                        .child(Icon::new(IconName::LayoutDashboard).xsmall())
                         .child(
                             v_flex()
                                 .min_w_0()
+                                .flex_1()
                                 .child(div().text_sm().truncate().child(label))
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
+                                        .text_color(cx.theme().muted_foreground.opacity(0.72))
                                         .child(origin),
                                 ),
                         )
@@ -1352,6 +1381,65 @@ fn save_state_status(
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct StatusPath {
+    directory: Option<String>,
+    file_name: String,
+    tooltip: String,
+}
+
+fn status_path(path: Option<&Path>, kind: DocumentKind) -> StatusPath {
+    let Some(path) = path else {
+        return StatusPath {
+            directory: None,
+            file_name: "Not saved yet".to_string(),
+            tooltip: "This note has not been saved to a file".to_string(),
+        };
+    };
+
+    let tooltip = readable_full_path(path);
+    let trimmed = tooltip.trim_end_matches(['/', '\\']);
+    let (parent, file_name) = trimmed
+        .rfind(['/', '\\'])
+        .map(|separator| (&trimmed[..separator], &trimmed[separator + 1..]))
+        .unwrap_or(("", trimmed));
+    let directory = parent
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|directory| !directory.is_empty() && !directory.ends_with(':'))
+        .map(str::to_string);
+    let file_name = status_file_name(file_name, kind);
+
+    StatusPath {
+        directory,
+        file_name,
+        tooltip,
+    }
+}
+
+fn readable_full_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else {
+        path.strip_prefix(r"\\?\")
+            .unwrap_or(path.as_ref())
+            .to_string()
+    }
+}
+
+fn status_file_name(file_name: &str, kind: DocumentKind) -> String {
+    if kind == DocumentKind::Markdown
+        && let Some((stem, extension)) = file_name.rsplit_once('.')
+        && matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
+    {
+        return stem.to_string();
+    }
+
+    file_name.to_string()
+}
+
 fn status_metric(icon: IconName, label: String) -> impl IntoElement {
     h_flex()
         .items_center()
@@ -1454,8 +1542,9 @@ mod tests {
         DocumentKind, MarkdownPreviewVirtualization, markdown_preview_block_gap,
         markdown_preview_horizontal_padding, markdown_preview_section_top_padding,
         markdown_preview_virtualization, normalize_vim_cursor_bounds, outline_row_left_padding,
-        outline_width_for_view, reserves_disclosure_space, vim_selection_tail_width,
+        outline_width_for_view, reserves_disclosure_space, status_path, vim_selection_tail_width,
     };
+    use std::path::Path;
 
     #[test]
     fn markdown_rows_do_not_reserve_json_disclosure_space() {
@@ -1502,6 +1591,44 @@ mod tests {
             markdown_preview_section_top_padding(1),
             markdown_preview_block_gap()
         );
+    }
+
+    #[test]
+    fn status_path_replaces_storage_prefix_with_a_compact_breadcrumb() {
+        let path = status_path(
+            Some(Path::new(
+                r"\\?\C:\Users\Berat\Documents\Obsidian Vault\Cover Letter\Cover Letter Variant.md",
+            )),
+            DocumentKind::Markdown,
+        );
+
+        assert_eq!(path.directory.as_deref(), Some("Cover Letter"));
+        assert_eq!(path.file_name, "Cover Letter Variant");
+        assert_eq!(
+            path.tooltip,
+            r"C:\Users\Berat\Documents\Obsidian Vault\Cover Letter\Cover Letter Variant.md"
+        );
+    }
+
+    #[test]
+    fn status_path_preserves_meaningful_non_markdown_extensions() {
+        let path = status_path(
+            Some(Path::new("workspace/settings.json")),
+            DocumentKind::Json,
+        );
+
+        assert_eq!(path.directory.as_deref(), Some("workspace"));
+        assert_eq!(path.file_name, "settings.json");
+        assert_eq!(path.tooltip, "workspace/settings.json");
+    }
+
+    #[test]
+    fn status_path_has_a_clear_label_before_the_first_save() {
+        let path = status_path(None, DocumentKind::Markdown);
+
+        assert_eq!(path.directory, None);
+        assert_eq!(path.file_name, "Not saved yet");
+        assert_eq!(path.tooltip, "This note has not been saved to a file");
     }
 
     #[test]
