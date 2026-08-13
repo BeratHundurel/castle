@@ -6,10 +6,17 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use entity::{board::Entity as Board, note, note::Entity as Note, project::Entity as Project};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
+use entity::{
+    board::Entity as Board, card, card::Entity as BoardList, entry, entry::Entity as BoardCard,
+    entry_checklist_item, entry_property_value, note, note::Entity as Note,
+    project::Entity as Project,
+};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
+};
 
 use crate::{
+    board_properties::{BoardViewConfig, PropertyKey, PropertyKind},
     board_templates::{
         BoardTemplateColumn, BoardTemplateDefinition, BoardTemplateEntry,
         create_board_from_template_in_transaction,
@@ -20,42 +27,83 @@ use crate::{
 pub const DOCS_NOTE_TITLE: &str = "docs.md";
 pub const STARTER_BOARD_TITLE: &str = "Your first board";
 
-const DOCS_CONTENT: &str = r#"# Welcome to Castle
+const OPEN_CARD_TITLE: &str = "Open this card: there is more inside";
+const DRAG_CARD_TITLE: &str = "Drag me to another list";
+const PROPERTIES_CARD_TITLE: &str = "Add structure with custom properties";
+const VIEW_CARD_TITLE: &str = "Save a focused board view";
+const TEMPLATE_CARD_TITLE: &str = "Reuse a board as a template";
+const CONNECT_CARD_TITLE: &str = "Turn note text into a connected card";
+const MERMAID_CARD_TITLE: &str = "Draw an idea with Mermaid";
+const EMBED_CARD_TITLE: &str = "Embed a live board view in a note";
+const MAKE_IT_YOURS_CARD_TITLE: &str = "Make this workspace yours";
 
-Castle is a local workspace for notes and boards. This guide and the starter board are yours: edit them, move them, or delete them whenever you are ready.
+fn docs_content(starter_board_id: u32, starter_view_id: i64) -> String {
+    format!(
+        r#"# Welcome to Castle
 
-## Start here
+Castle is a local-first workspace where notes, files, and boards stay connected. This guide and [[board:{starter_board_id}|Your first board]] are ordinary workspace items: edit them, move them, or delete them whenever you are ready.
 
-1. Write in this note. Castle saves managed notes as you work.
-2. Open **Your first board** in the sidebar and drag a card between columns.
-3. Use the **+** menu to create another note or choose a board template.
-4. Press `Ctrl+P` to find actions and anything in your workspace.
+## See Castle working
 
-## Notes
+Switch this note from **Write** to **Read** in the top-right corner. Castle will render the diagram and live board below while keeping their source as portable Markdown.
 
-- Write Markdown, plain text, or JSON.
-- Link notes with `[[double brackets]]`.
-- Toggle Markdown preview from the editor or command palette.
-- Use the outline to move through longer documents.
-
-```json
-{
-  "tip": "This block is here so you can try JSON and Markdown formatting."
-}
+```mermaid
+flowchart LR
+    A["Capture in notes"] --> B["Shape ideas into cards"]
+    B --> C["Organize with fields and views"]
+    C --> D["Embed the live view in a note"]
 ```
 
-## Boards
+## A live board inside this note
 
-Boards are flexible lists, not a prescribed task system. Use them for a project, reading queue, content plan, collection, or anything else that benefits from moving cards through a space.
+The projection below is read-only so the board remains the single editable source. Change a card on [[board:{starter_board_id}|Your first board]], then return here to see the note stay in sync.
 
-- Open a card to add details.
-- Add, rename, reorder, or remove columns.
-- Save a useful board as your own reusable template.
+```castle-board-view
+board = {starter_board_id}
+view = {starter_view_id}
+title = "Your first board · Feature tour"
+```
+
+Use **Insert board view** from the command palette to embed any board or saved view without writing this block by hand.
+
+## Notes are more than text
+
+| Try this | What Castle does |
+| --- | --- |
+| Type `[[` and choose a note, board, list, or card | Creates a navigable workspace link and tracks it in the **Links** inspector |
+| Select a sentence, press `Ctrl+P`, then choose **Create card from selection** | Creates a card and keeps it related to this note |
+| Paste an image into a Markdown note | Copies it into local attachments and inserts portable Markdown |
+| Add headings, tables, code, or Mermaid fences | Renders them in **Read** mode and builds a navigable outline |
+| Open a Markdown, JSON, or text file | Edits the original file with matching syntax and outline support |
+
+Use `Ctrl+Shift+O` for the outline and links inspector, or `Ctrl+Shift+F` to search across the workspace.
+
+## Boards can model more than tasks
+
+Open [[board:{starter_board_id}|Your first board]] and try the seeded examples. A card can hold Markdown, labels, a checklist, attachments, a due date, an optional reminder, custom fields, and related notes.
+
+Boards also support:
+
+- text, number, checkbox, date, select, and URL properties;
+- temporary filters and sorting, configurable fields, and compact cards;
+- named views that preserve a useful board perspective;
+- reusable templates for workflows, collections, queues, and plans;
+- linked notes created from a card or connected later.
+
+## A five-minute tour
+
+1. Switch this note to **Read** and inspect the diagram and embedded board.
+2. Open the starter board, expand **Open this card: there is more inside**, and complete a checklist item.
+3. Drag **Drag me to another list** and change its label or custom property.
+4. Return here, select a sentence, and run **Create card from selection** from `Ctrl+P`.
+5. Create a new note and run **Insert board view** to connect your own dashboard.
 
 ## Make it yours
 
-Open Settings to choose a theme, typography, editor behavior, and optional Vim mode. Castle starts with examples, but the workspace belongs to you.
-"#;
+Press `Ctrl+P` to create or open anything quickly. Settings includes themes, typography, editor behavior, shortcuts, notification controls, and optional Vim mode. Castle starts with a tour; what replaces it is entirely yours.
+"#
+    )
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FreshWorkspace {
@@ -75,15 +123,25 @@ pub async fn seed_fresh_workspace(
         return Ok(None);
     }
 
-    let docs_path = write_docs_file(data_dir)?;
     let transaction = db.begin().await?;
+    let starter_board = create_board_from_template_in_transaction(
+        &transaction,
+        None,
+        STARTER_BOARD_TITLE.to_string(),
+        starter_board_definition(),
+    )
+    .await?;
+    let starter_view_id = seed_starter_board_details(&transaction, &starter_board).await?;
+
+    let docs_content = docs_content(starter_board.id, starter_view_id);
+    let docs_path = write_docs_file(data_dir, &docs_content)?;
     let now = now_ts();
     let note_result = note::ActiveModel {
         title: Set(DOCS_NOTE_TITLE.to_string()),
         project_id: Set(None),
         file_path: Set(Some(docs_path.to_string_lossy().into_owned())),
         file_managed_by_app: Set(true),
-        cached_content: Set(DOCS_CONTENT.to_string()),
+        cached_content: Set(docs_content.clone()),
         file_missing_since: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
@@ -101,26 +159,11 @@ pub async fn seed_fresh_workspace(
         }
     };
 
-    let starter_board = match create_board_from_template_in_transaction(
-        &transaction,
-        None,
-        STARTER_BOARD_TITLE.to_string(),
-        starter_board_definition(),
-    )
-    .await
-    {
-        Ok(board) => board,
-        Err(err) => {
-            remove_seed_file(&docs_path);
-            return Err(err);
-        }
-    };
-
     if let Err(err) = transaction.commit().await {
         remove_seed_file(&docs_path);
         return Err(err.into());
     }
-    crate::note_links::index_note_links(db, note.id, DOCS_CONTENT, note.updated_at).await?;
+    crate::note_links::index_note_links(db, note.id, &docs_content, note.updated_at).await?;
 
     Ok(Some(FreshWorkspace {
         docs_note: WorkspaceItem {
@@ -143,7 +186,7 @@ async fn workspace_has_items(
         || Note::find().one(db).await?.is_some())
 }
 
-fn write_docs_file(data_dir: &Path) -> Result<PathBuf> {
+fn write_docs_file(data_dir: &Path, content: &str) -> Result<PathBuf> {
     let notes_dir = data_dir.join("notes");
     fs::create_dir_all(&notes_dir)
         .with_context(|| format!("failed to create {}", notes_dir.display()))?;
@@ -157,7 +200,7 @@ fn write_docs_file(data_dir: &Path) -> Result<PathBuf> {
         let path = notes_dir.join(file_name);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
-                if let Err(err) = file.write_all(DOCS_CONTENT.as_bytes()) {
+                if let Err(err) = file.write_all(content.as_bytes()) {
                     drop(file);
                     remove_seed_file(&path);
                     return Err(err).with_context(|| format!("failed to write {}", path.display()));
@@ -183,34 +226,210 @@ fn remove_seed_file(path: &Path) {
     }
 }
 
+async fn seed_starter_board_details(
+    transaction: &DatabaseTransaction,
+    board: &WorkspaceItem,
+) -> Result<i64> {
+    let list_ids = BoardList::find()
+        .filter(card::Column::BoardId.eq(i64::from(board.id)))
+        .all(transaction)
+        .await?
+        .into_iter()
+        .map(|list| list.id)
+        .collect::<Vec<_>>();
+    let entries = BoardCard::find()
+        .filter(entry::Column::CardId.is_in(list_ids))
+        .all(transaction)
+        .await?;
+
+    let try_me = crate::board_commands::create_label(
+        transaction,
+        board.id,
+        "Try me".to_string(),
+        "blue".to_string(),
+    )
+    .await?;
+    let connected = crate::board_commands::create_label(
+        transaction,
+        board.id,
+        "Connected".to_string(),
+        "purple".to_string(),
+    )
+    .await?;
+
+    for title in [OPEN_CARD_TITLE, DRAG_CARD_TITLE] {
+        crate::board_commands::set_label_assignment(
+            transaction,
+            starter_entry_id(&entries, title)?,
+            try_me.id,
+            true,
+        )
+        .await?;
+    }
+    for title in [CONNECT_CARD_TITLE, EMBED_CARD_TITLE] {
+        crate::board_commands::set_label_assignment(
+            transaction,
+            starter_entry_id(&entries, title)?,
+            connected.id,
+            true,
+        )
+        .await?;
+    }
+
+    let open_card_id = i64::from(starter_entry_id(&entries, OPEN_CARD_TITLE)?);
+    for (position, title, checked) in [
+        (0, "Open the card details", true),
+        (1, "Complete or add a checklist item", false),
+        (2, "Try a due date, reminder, or attachment", false),
+    ] {
+        entry_checklist_item::ActiveModel {
+            entry_id: Set(open_card_id),
+            title: Set(title.to_string()),
+            checked: Set(checked),
+            position: Set(position),
+            ..Default::default()
+        }
+        .insert(transaction)
+        .await?;
+    }
+
+    let area = crate::board_properties::create_property(
+        transaction,
+        i64::from(board.id),
+        "Area".to_string(),
+        PropertyKind::Select,
+    )
+    .await?;
+    let notes = crate::board_properties::create_property_option(
+        transaction,
+        area.id,
+        "Notes".to_string(),
+        "blue".to_string(),
+    )
+    .await?;
+    let boards = crate::board_properties::create_property_option(
+        transaction,
+        area.id,
+        "Boards".to_string(),
+        "green".to_string(),
+    )
+    .await?;
+    let connections = crate::board_properties::create_property_option(
+        transaction,
+        area.id,
+        "Connections".to_string(),
+        "purple".to_string(),
+    )
+    .await?;
+
+    for (title, option_id) in [
+        (OPEN_CARD_TITLE, boards.id),
+        (DRAG_CARD_TITLE, boards.id),
+        (PROPERTIES_CARD_TITLE, boards.id),
+        (VIEW_CARD_TITLE, boards.id),
+        (TEMPLATE_CARD_TITLE, boards.id),
+        (CONNECT_CARD_TITLE, connections.id),
+        (MERMAID_CARD_TITLE, notes.id),
+        (EMBED_CARD_TITLE, connections.id),
+        (MAKE_IT_YOURS_CARD_TITLE, notes.id),
+    ] {
+        entry_property_value::ActiveModel {
+            entry_id: Set(i64::from(starter_entry_id(&entries, title)?)),
+            property_id: Set(area.id),
+            text_value: Set(None),
+            number_value: Set(None),
+            boolean_value: Set(None),
+            date_value: Set(None),
+            option_id: Set(Some(option_id)),
+        }
+        .insert(transaction)
+        .await?;
+    }
+
+    let view = crate::board_properties::create_board_view(
+        transaction,
+        i64::from(board.id),
+        "Feature tour".to_string(),
+        BoardViewConfig {
+            visible_properties: vec![PropertyKey::Custom(area.id)],
+            ..Default::default()
+        },
+    )
+    .await?;
+    crate::board_properties::set_selected_board_view(
+        transaction,
+        i64::from(board.id),
+        Some(view.id),
+    )
+    .await?;
+
+    Ok(view.id)
+}
+
+fn starter_entry_id(entries: &[entry::Model], title: &str) -> Result<u32> {
+    entries
+        .iter()
+        .find(|entry| entry.title == title)
+        .map(|entry| entry.id)
+        .and_then(|id| u32::try_from(id).ok())
+        .with_context(|| format!("starter card {title:?} was not created"))
+}
+
 fn starter_board_definition() -> BoardTemplateDefinition {
     BoardTemplateDefinition {
         columns: vec![
             BoardTemplateColumn {
-                title: "Ideas".to_string(),
-                entries: vec![BoardTemplateEntry {
-                    title: "Capture something you want to shape".to_string(),
-                    description: "Ideas can be projects, questions, collections, or anything else you want to make visible.".to_string(),
-                }],
-            },
-            BoardTemplateColumn {
-                title: "In progress".to_string(),
+                title: "Start here".to_string(),
                 entries: vec![
                     BoardTemplateEntry {
-                        title: "Drag this card to another column".to_string(),
-                        description: "Cards and columns can be reordered as your thinking changes.".to_string(),
+                        title: OPEN_CARD_TITLE.to_string(),
+                        description: "**Cards can carry the work, not just its name.** This one already has a label, a custom property, and a checklist. You can also add a due date, reminder, attachment, and linked note.".to_string(),
                     },
                     BoardTemplateEntry {
-                        title: "Open a card and add context".to_string(),
-                        description: "Keep the useful details with the thing they describe.".to_string(),
+                        title: DRAG_CARD_TITLE.to_string(),
+                        description: "Drag this card between lists, reorder it within a list, or open the list menu to rename and reshape the board.".to_string(),
                     },
                 ],
             },
             BoardTemplateColumn {
-                title: "Done".to_string(),
+                title: "Shape a workflow".to_string(),
+                entries: vec![
+                    BoardTemplateEntry {
+                        title: PROPERTIES_CARD_TITLE.to_string(),
+                        description: "Use **Properties** to add text, number, checkbox, date, select, or URL fields. Choose **Fields** to place the useful ones directly on cards.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: VIEW_CARD_TITLE.to_string(),
+                        description: "Filter or sort this board, choose visible fields and compact cards, then save the result as a named view. This board opens in its saved **Feature tour** view.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: TEMPLATE_CARD_TITLE.to_string(),
+                        description: "Use **Template** to save any useful board structure and reuse it for another project, collection, queue, or plan.".to_string(),
+                    },
+                ],
+            },
+            BoardTemplateColumn {
+                title: "Connect notes + boards".to_string(),
+                entries: vec![
+                    BoardTemplateEntry {
+                        title: CONNECT_CARD_TITLE.to_string(),
+                        description: "Select text in a note, press `Ctrl+P`, and run **Create card from selection**. Castle creates the card and keeps its source note related.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: MERMAID_CARD_TITLE.to_string(),
+                        description: "Markdown preview renders flowcharts and other supported Mermaid diagrams. Open **docs.md** and switch to **Read** to see the seeded example.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: EMBED_CARD_TITLE.to_string(),
+                        description: "In a Markdown note, run **Insert board view**. Castle inserts a read-only projection that stays synced with the editable source board.".to_string(),
+                    },
+                ],
+            },
+            BoardTemplateColumn {
+                title: "Make it yours".to_string(),
                 entries: vec![BoardTemplateEntry {
-                    title: "Make this board yours".to_string(),
-                    description: "Rename it, change the columns, save it as a template, or delete it and start fresh.".to_string(),
+                    title: MAKE_IT_YOURS_CARD_TITLE.to_string(),
+                    description: "Rename this board, change its lists, add your own cards, or delete the tour. Starter content is ordinary editable workspace data.".to_string(),
                 }],
             },
         ],
@@ -244,14 +463,22 @@ mod tests {
         assert_eq!(seeded.docs_note.title, DOCS_NOTE_TITLE);
         assert_eq!(seeded.starter_board.title, STARTER_BOARD_TITLE);
         assert_eq!(seeded.docs_path, directory.path().join("notes/docs.md"));
-        assert_eq!(fs::read_to_string(&seeded.docs_path)?, DOCS_CONTENT);
+        let seeded_docs = fs::read_to_string(&seeded.docs_path)?;
+        assert!(seeded_docs.contains("```mermaid\nflowchart LR"));
+        let embeds = crate::board_projection::parse_board_view_embeds(&seeded_docs);
+        assert_eq!(embeds.len(), 1);
+        assert_eq!(embeds[0].board_id, i64::from(seeded.starter_board.id));
+        assert_eq!(
+            embeds[0].fallback_title.as_deref(),
+            Some("Your first board · Feature tour")
+        );
 
         let stored_note = Note::find_by_id(i64::from(seeded.docs_note.id))
             .one(&db)
             .await?
             .context("seeded note should exist")?;
         assert!(stored_note.file_managed_by_app);
-        assert_eq!(stored_note.cached_content, DOCS_CONTENT);
+        assert_eq!(stored_note.cached_content, seeded_docs);
         assert!(stored_note.last_opened_at.is_some());
 
         let columns = card::Entity::find()
@@ -264,7 +491,12 @@ mod tests {
                 .iter()
                 .map(|column| column.title.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Ideas", "In progress", "Done"]
+            vec![
+                "Start here",
+                "Shape a workflow",
+                "Connect notes + boards",
+                "Make it yours"
+            ]
         );
         let column_ids = columns.iter().map(|column| column.id).collect::<Vec<_>>();
         assert_eq!(
@@ -273,7 +505,71 @@ mod tests {
                 .all(&db)
                 .await?
                 .len(),
-            4
+            9
+        );
+
+        let snapshot = crate::board::load_board_snapshot(&db, seeded.starter_board.id).await?;
+        assert_eq!(
+            snapshot
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Try me", "Connected"]
+        );
+        let open_card = snapshot
+            .cards
+            .iter()
+            .flat_map(|list| &list.entries)
+            .find(|card| card.title == OPEN_CARD_TITLE)
+            .context("starter checklist card should exist")?;
+        assert_eq!(open_card.checklist_items.len(), 3);
+        assert!(open_card.checklist_items[0].checked);
+        assert_eq!(open_card.labels[0].name, "Try me");
+
+        let properties =
+            crate::board_properties::load_board_properties(&db, i64::from(seeded.starter_board.id))
+                .await?;
+        assert_eq!(properties.definitions.len(), 1);
+        assert_eq!(properties.definitions[0].name, "Area");
+        assert_eq!(properties.definitions[0].kind, PropertyKind::Select);
+        assert_eq!(properties.definitions[0].options.len(), 3);
+        assert_eq!(properties.values.len(), 9);
+
+        let views =
+            crate::board_properties::load_board_views(&db, i64::from(seeded.starter_board.id))
+                .await?;
+        assert_eq!(views.views.len(), 1);
+        assert_eq!(views.views[0].name, "Feature tour");
+        assert_eq!(views.selected_view_id, Some(views.views[0].id));
+        assert_eq!(embeds[0].view_id, Some(views.views[0].id));
+        assert_eq!(
+            stored_note.cached_content,
+            docs_content(seeded.starter_board.id, views.views[0].id)
+        );
+        assert_eq!(
+            views.views[0].config.visible_properties,
+            vec![PropertyKey::Custom(properties.definitions[0].id)]
+        );
+
+        let crate::board_projection::BoardViewProjectionResult::Available(projection) =
+            crate::board_projection::load_board_view_projection(
+                &db,
+                i64::from(seeded.starter_board.id),
+                Some(views.views[0].id),
+            )
+            .await?
+        else {
+            anyhow::bail!("starter board view should produce an embedded projection");
+        };
+        assert_eq!(projection.view_name.as_deref(), Some("Feature tour"));
+        assert_eq!(projection.matching_card_count, 9);
+        assert!(
+            projection
+                .lists
+                .iter()
+                .flat_map(|list| &list.cards)
+                .all(|card| card.custom_properties.len() == 1)
         );
         Ok(())
     }
