@@ -1117,6 +1117,7 @@ impl DocumentEditorView {
 
 impl Render for DocumentEditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.mermaid.release_retired_images_after_frame(window);
         self.sync_vim_setting(window, cx);
         self.sync_vim_search_focus(window, cx);
         let theme_background = cx.theme().background;

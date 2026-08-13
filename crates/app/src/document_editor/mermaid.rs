@@ -146,6 +146,7 @@ pub(super) struct MermaidState {
     pending_rasters: HashSet<(CacheKey, u32)>,
     active_jobs: usize,
     active_tasks: HashMap<u64, Task<()>>,
+    images_pending_release: HashMap<gpui::ImageId, Arc<RenderImage>>,
     next_job_id: u64,
     generation: u64,
     theme_fingerprint: Option<u64>,
@@ -214,9 +215,43 @@ impl MermaidState {
         }
     }
 
+    fn retire_image(&mut self, image: Arc<RenderImage>) {
+        self.images_pending_release.insert(image.id, image);
+    }
+
+    fn retire_entry(&mut self, entry: CacheEntry) {
+        match entry {
+            CacheEntry::Loading { fallback, .. } | CacheEntry::Failed { fallback, .. } => {
+                if let Some(raster) = fallback {
+                    self.retire_image(raster.image);
+                }
+            }
+            CacheEntry::Ready { rasters, .. } => {
+                for raster in rasters.into_values() {
+                    self.retire_image(raster.image);
+                }
+            }
+        }
+    }
+
+    pub(super) fn release_retired_images_after_frame(&mut self, window: &mut Window) {
+        if self.images_pending_release.is_empty() {
+            return;
+        }
+        let images = std::mem::take(&mut self.images_pending_release);
+        window.on_next_frame(move |window, cx| {
+            for image in images.into_values() {
+                cx.drop_image(image, Some(window));
+            }
+        });
+    }
+
     pub(super) fn clear(&mut self, cx: &mut App) {
         for entry in std::mem::take(&mut self.cache).into_values() {
             Self::release_entry(entry, cx);
+        }
+        for image in std::mem::take(&mut self.images_pending_release).into_values() {
+            cx.drop_image(image, None);
         }
         self.queue.clear();
         self.pending_rasters.clear();
@@ -872,7 +907,7 @@ impl DocumentEditorView {
                 && old_key != &key
                 && !wanted.contains(old_key)
                 && let Some(old_entry) = self.mermaid.cache.remove(old_key)
-                && let Some(raster) = take_entry_raster(old_entry, cx)
+                && let Some(raster) = take_entry_raster(old_entry, &mut self.mermaid)
             {
                 fallbacks.insert(key, raster);
             }
@@ -923,7 +958,7 @@ impl DocumentEditorView {
             .collect::<Vec<_>>();
         for key in obsolete {
             if let Some(entry) = self.mermaid.cache.remove(&key) {
-                MermaidState::release_entry(entry, cx);
+                self.mermaid.retire_entry(entry);
             }
         }
         self.pump_mermaid_queue(cx);
@@ -995,7 +1030,7 @@ impl DocumentEditorView {
         }
     }
 
-    pub(super) fn deactivate_mermaids(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn deactivate_mermaids(&mut self, _cx: &mut Context<Self>) {
         self.mermaid.generation = self.mermaid.generation.saturating_add(1);
         self.mermaid.queue.clear();
         self.mermaid.pending_rasters.clear();
@@ -1015,7 +1050,7 @@ impl DocumentEditorView {
             .collect::<Vec<_>>();
         for key in loading {
             if let Some(entry) = self.mermaid.cache.remove(&key) {
-                MermaidState::release_entry(entry, cx);
+                self.mermaid.retire_entry(entry);
             }
         }
     }
@@ -1049,9 +1084,7 @@ impl DocumentEditorView {
                     } = entry
                         && *current == generation
                     {
-                        if let Some(old) = fallback.take() {
-                            cx.drop_image(old.image, None);
-                        }
+                        let retired_image = fallback.take().map(|old| old.image);
                         let mut rasters = HashMap::new();
                         rasters.insert(zoom_bits(raster.zoom), raster);
                         *entry = CacheEntry::Ready {
@@ -1059,6 +1092,9 @@ impl DocumentEditorView {
                             parsed,
                             rasters,
                         };
+                        if let Some(image) = retired_image {
+                            self.mermaid.retire_image(image);
+                        }
                     } else {
                         cx.drop_image(raster.image, None);
                     }
@@ -1069,8 +1105,11 @@ impl DocumentEditorView {
                 } = entry
                     && *current == generation
                 {
-                    if let Some(old) = rasters.insert(zoom_bits(raster.zoom), raster) {
-                        cx.drop_image(old.image, None);
+                    let retired_image = rasters
+                        .insert(zoom_bits(raster.zoom), raster)
+                        .map(|old| old.image);
+                    if let Some(image) = retired_image {
+                        self.mermaid.retire_image(image);
                     }
                 } else {
                     cx.drop_image(raster.image, None);
@@ -1226,7 +1265,7 @@ impl DocumentEditorView {
             .and_then(|entry| match entry {
                 CacheEntry::Failed { fallback, .. } => fallback,
                 other => {
-                    MermaidState::release_entry(other, cx);
+                    self.mermaid.retire_entry(other);
                     None
                 }
             });
@@ -1292,7 +1331,7 @@ impl DocumentEditorView {
     }
 }
 
-fn take_entry_raster(entry: CacheEntry, cx: &mut App) -> Option<Raster> {
+fn take_entry_raster(entry: CacheEntry, state: &mut MermaidState) -> Option<Raster> {
     match entry {
         CacheEntry::Ready { mut rasters, .. } => {
             let raster = rasters.remove(&zoom_bits(1.0)).or_else(|| {
@@ -1303,7 +1342,7 @@ fn take_entry_raster(entry: CacheEntry, cx: &mut App) -> Option<Raster> {
                     .and_then(|key| rasters.remove(&key))
             });
             for unused in rasters.into_values() {
-                cx.drop_image(unused.image, None);
+                state.retire_image(unused.image);
             }
             raster
         }
@@ -1406,6 +1445,19 @@ mod tests {
         assert!(state.queue.is_empty());
         assert_eq!(state.active_jobs, 0);
         assert!(state.active_tasks.is_empty());
+    }
+
+    #[test]
+    fn retired_images_stay_owned_until_the_next_frame() {
+        let mut state = MermaidState::default();
+        let image = Arc::new(RenderImage::new(Vec::<image::Frame>::new()));
+        let image_id = image.id;
+
+        state.retire_image(image.clone());
+        state.retire_image(image);
+
+        assert_eq!(state.images_pending_release.len(), 1);
+        assert!(state.images_pending_release.contains_key(&image_id));
     }
 
     #[test]
