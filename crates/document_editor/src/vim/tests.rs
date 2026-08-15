@@ -1,10 +1,12 @@
 use super::*;
-use crate::{AppServices, app_settings::AppSettings, test_alloc};
+use app_services::AppServices;
+use app_settings::AppSettings;
 use entity::note;
 use gpui_component::input::InputEvent;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
+use test_support as test_alloc;
 
 #[test]
 fn word_motions_distinguish_words_whitespace_and_punctuation() {
@@ -581,7 +583,7 @@ fn with_vim_editor(
         cx.set_global(AppSettings::load(settings_dir));
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
-        crate::keymap::init(cx);
+        cx.bind_keys(crate::action::vim_key_bindings());
         cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);
@@ -1129,7 +1131,7 @@ fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::T
         cx.set_global(AppSettings::load(settings_dir));
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
-        crate::keymap::init(cx);
+        cx.bind_keys(crate::action::vim_key_bindings());
         cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);

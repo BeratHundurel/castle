@@ -21,7 +21,7 @@ pub(crate) fn suggested_save_as_file_name_with_extension(
     file_name.to_string_lossy().into_owned()
 }
 
-pub(crate) fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
+pub fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
     let file_name = suggested_file_name(title);
     let candidate = dir.join(&file_name);
     if !candidate.exists() {

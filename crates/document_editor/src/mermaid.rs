@@ -1,3 +1,4 @@
+use self::renderer::{MermaidTheme, is_supported_diagram, render_to_svg};
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, ImageSource, InteractiveElement as _,
     IntoElement, ParentElement as _, ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta,
@@ -12,7 +13,8 @@ use gpui_component::{
     theme::Colorize as _,
     v_flex,
 };
-use mermaid_renderer::{MermaidTheme, is_supported_diagram, render_to_svg};
+
+mod renderer;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,

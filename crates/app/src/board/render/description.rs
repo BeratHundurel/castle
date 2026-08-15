@@ -30,12 +30,11 @@ impl BoardView {
             cx.entity().downgrade(),
             |_, target, cx| cx.emit(crate::board::BoardViewEvent::OpenWorkspaceTarget(target)),
         );
-        let wikilink_plugin =
-            crate::document_editor::links::WikiLinkPreviewPlugin::new_for_workspace(
-                open_target,
-                source_project_id,
-                self.related_notes.catalog.clone(),
-            );
+        let wikilink_plugin = workspace_ui::WikiLinkPreviewPlugin::new_for_workspace(
+            open_target,
+            source_project_id,
+            self.related_notes.catalog.clone(),
+        );
         let placeholder_description = description.clone();
 
         v_flex()

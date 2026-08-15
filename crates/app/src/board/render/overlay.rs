@@ -289,10 +289,11 @@ impl BoardView {
             .map(|(_, entry)| entry.reminder_enabled)
             .unwrap_or(false);
         let reminder_view = cx.entity();
-        let notification_availability = crate::system_notifications::availability();
+        let notifications = cx.global::<crate::board::BoardServices>().notifications();
+        let notification_availability = notifications.availability();
         let (notification_label, notification_help, notification_icon, notification_color) =
             match notification_availability {
-                crate::system_notifications::NotificationAvailability::Enabled => (
+                crate::board::notifications::NotificationAvailability::Enabled => (
                     "System notifications on",
                     if reminder_enabled {
                         "Castle will alert you on the due date or the next time it starts."
@@ -302,31 +303,31 @@ impl BoardView {
                     IconName::CircleCheck,
                     cx.theme().success,
                 ),
-                crate::system_notifications::NotificationAvailability::DisabledForApplication => (
+                crate::board::notifications::NotificationAvailability::DisabledForApplication => (
                     "System notifications off",
                     "Windows is blocking Castle notifications. Enable them in Settings.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::system_notifications::NotificationAvailability::DisabledForUser => (
+                crate::board::notifications::NotificationAvailability::DisabledForUser => (
                     "System notifications off",
                     "Windows notifications are turned off. Enable them in Settings.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::system_notifications::NotificationAvailability::DisabledByPolicy => (
+                crate::board::notifications::NotificationAvailability::DisabledByPolicy => (
                     "System notifications blocked",
                     "Notifications are disabled by system policy.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::system_notifications::NotificationAvailability::Unsupported => (
+                crate::board::notifications::NotificationAvailability::Unsupported => (
                     "System notifications unavailable",
                     "Castle does not support system notifications on this platform yet.",
                     IconName::Info,
                     cx.theme().muted_foreground,
                 ),
-                crate::system_notifications::NotificationAvailability::Unavailable => (
+                crate::board::notifications::NotificationAvailability::Unavailable => (
                     "Notification status unavailable",
                     "Castle could not check the system notification service.",
                     IconName::Info,
@@ -466,17 +467,17 @@ impl BoardView {
                             )
                             .when(
                                 notification_availability
-                                    == crate::system_notifications::NotificationAvailability::Enabled,
+                                    == crate::board::notifications::NotificationAvailability::Enabled,
                                 |this| {
+                                    let notifications = notifications.clone();
                                     this.child(
                                         Button::new("test-card-notification")
                                             .label("Test")
                                             .ghost()
                                             .xsmall()
                                             .tooltip("Send a test system notification now")
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                match crate::system_notifications::show_test_notification()
-                                                {
+                                            .on_click(cx.listener(move |_, _, window, cx| {
+                                                match notifications.show_test_notification() {
                                                     Ok(()) => window.push_notification(
                                                         Notification::success(
                                                             "Test sent. Check Windows notifications if it did not pop up.",
@@ -508,7 +509,7 @@ impl BoardView {
                     )
                     .when(
                         notification_availability
-                            != crate::system_notifications::NotificationAvailability::Enabled,
+                            != crate::board::notifications::NotificationAvailability::Enabled,
                         |this| {
                             this.child(
                                 div()

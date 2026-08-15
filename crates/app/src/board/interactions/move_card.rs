@@ -18,10 +18,10 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete card", true, async move {
-            crate::trash::move_to_trash(
+            storage::trash::move_to_trash(
                 &db,
-                crate::trash::MoveToTrash {
-                    kind: crate::trash::TrashItemKind::Entry,
+                storage::trash::MoveToTrash {
+                    kind: storage::trash::TrashItemKind::Entry,
                     id: entry_id,
                 },
                 crate::now_ts(),
@@ -108,10 +108,10 @@ impl BoardView {
 
         let db = cx.global::<AppServices>().store();
         self.commit_board_mutation(cx, "Could not delete list", true, async move {
-            crate::trash::move_to_trash(
+            storage::trash::move_to_trash(
                 &db,
-                crate::trash::MoveToTrash {
-                    kind: crate::trash::TrashItemKind::List,
+                storage::trash::MoveToTrash {
+                    kind: storage::trash::TrashItemKind::List,
                     id: card_id,
                 },
                 crate::now_ts(),

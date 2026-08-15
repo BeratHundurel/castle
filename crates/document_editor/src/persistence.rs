@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::outline::DocumentOutline;
 use super::types::{DocumentKind, DocumentStats, SaveState};
@@ -375,7 +375,7 @@ impl DocumentEditorView {
         }));
     }
 
-    pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
+    pub fn save(&mut self, cx: &mut Context<Self>) {
         let (path, file_managed_by_app) = self
             .persistence
             .current_path
@@ -393,7 +393,7 @@ impl DocumentEditorView {
         self.save_to_path(path, file_managed_by_app, cx);
     }
 
-    pub(crate) fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let file_name = suggested_save_as_file_name(
             self.persistence.current_path.as_deref(),
             self.title.as_ref(),
@@ -401,7 +401,7 @@ impl DocumentEditorView {
         self.prompt_save_as(file_name, window, cx);
     }
 
-    pub(crate) fn change_document_kind(
+    pub fn change_document_kind(
         &mut self,
         kind: DocumentKind,
         window: &mut Window,

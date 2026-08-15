@@ -17,7 +17,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::DocumentEditorView;
 
@@ -179,92 +179,100 @@ fn render_projection(
                             .on_click(move |_, _, cx| {
                                 editor.update(cx, |_, cx| {
                                     cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(
-                                        crate::workspace_navigation::WorkspaceNavigationTarget::board(board_id),
+                                        workspace_ui::WorkspaceNavigationTarget::board(board_id),
                                     ));
                                 });
                             }),
                     )
                 }),
         )
-        .children(projection.lists.iter().filter(|list| !list.cards.is_empty()).map(|list| {
-            v_flex()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().muted_foreground)
-                        .child(list.title.clone()),
-                )
-                .children(list.cards.iter().map(|card| {
-                    let card_id = u32::try_from(card.id).ok();
-                    let editor = editor.clone();
-                    let mut metadata = Vec::new();
-                    if projection
-                        .visible_properties
-                        .contains(&storage::board_properties::PropertyKey::DueDate)
-                        && let Some(due_on) = card.due_on.as_ref()
-                    {
-                        metadata.push(due_on.clone());
-                    }
-                    if projection
-                        .visible_properties
-                        .contains(&storage::board_properties::PropertyKey::Labels)
-                        && !card.labels.is_empty()
-                    {
-                        metadata.push(card.labels.join(", "));
-                    }
-                    if projection
-                        .visible_properties
-                        .contains(&storage::board_properties::PropertyKey::RelatedNotes)
-                        && card.related_note_count > 0
-                    {
-                        metadata.push(format!("{} note(s)", card.related_note_count));
-                    }
-                    metadata.extend(
-                        card.custom_properties
-                            .iter()
-                            .map(|(name, value)| format!("{name}: {value}")),
-                    );
+        .children(
+            projection
+                .lists
+                .iter()
+                .filter(|list| !list.cards.is_empty())
+                .map(|list| {
                     v_flex()
-                        .id(("card", card.id as u64))
-                        .gap_0p5()
-                        .px_2()
-                        .py(if projection.compact_cards {
-                            gpui::px(4.)
-                        } else {
-                            gpui::px(7.)
-                        })
-                        .rounded(cx.theme().radius)
-                        .bg(cx.theme().background)
-                        .border_1()
-                        .border_color(cx.theme().border.opacity(0.6))
-                        .when(card_id.is_some() && board_id.is_some(), |this| {
-                            this.cursor_pointer()
-                                .hover(|this| this.bg(cx.theme().accent.opacity(0.35)))
-                                .on_click(move |_, _, cx| {
-                                    if let (Some(board_id), Some(card_id)) = (board_id, card_id) {
-                                        editor.update(cx, |_, cx| {
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().muted_foreground)
+                                .child(list.title.clone()),
+                        )
+                        .children(list.cards.iter().map(|card| {
+                            let card_id = u32::try_from(card.id).ok();
+                            let editor = editor.clone();
+                            let mut metadata = Vec::new();
+                            if projection
+                                .visible_properties
+                                .contains(&storage::board_properties::PropertyKey::DueDate)
+                                && let Some(due_on) = card.due_on.as_ref()
+                            {
+                                metadata.push(due_on.clone());
+                            }
+                            if projection
+                                .visible_properties
+                                .contains(&storage::board_properties::PropertyKey::Labels)
+                                && !card.labels.is_empty()
+                            {
+                                metadata.push(card.labels.join(", "));
+                            }
+                            if projection
+                                .visible_properties
+                                .contains(&storage::board_properties::PropertyKey::RelatedNotes)
+                                && card.related_note_count > 0
+                            {
+                                metadata.push(format!("{} note(s)", card.related_note_count));
+                            }
+                            metadata.extend(
+                                card.custom_properties
+                                    .iter()
+                                    .map(|(name, value)| format!("{name}: {value}")),
+                            );
+                            v_flex()
+                                .id(("card", card.id as u64))
+                                .gap_0p5()
+                                .px_2()
+                                .py(if projection.compact_cards {
+                                    gpui::px(4.)
+                                } else {
+                                    gpui::px(7.)
+                                })
+                                .rounded(cx.theme().radius)
+                                .bg(cx.theme().background)
+                                .border_1()
+                                .border_color(cx.theme().border.opacity(0.6))
+                                .when(card_id.is_some() && board_id.is_some(), |this| {
+                                    this.cursor_pointer()
+                                        .hover(|this| this.bg(cx.theme().accent.opacity(0.35)))
+                                        .on_click(move |_, _, cx| {
+                                            if let (Some(board_id), Some(card_id)) =
+                                                (board_id, card_id)
+                                            {
+                                                editor.update(cx, |_, cx| {
                                             cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(
-                                                crate::workspace_navigation::WorkspaceNavigationTarget::card(
+                                                workspace_ui::WorkspaceNavigationTarget::card(
                                                     board_id, card_id,
                                                 ),
                                             ));
                                         });
-                                    }
+                                            }
+                                        })
                                 })
-                        })
-                        .child(div().text_sm().child(card.title.clone()))
-                        .when(!metadata.is_empty(), |this| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(metadata.join(" · ")),
-                            )
-                        })
-                }))
-        }))
+                                .child(div().text_sm().child(card.title.clone()))
+                                .when(!metadata.is_empty(), |this| {
+                                    this.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(metadata.join(" · ")),
+                                    )
+                                })
+                        }))
+                }),
+        )
         .when(projection.matching_card_count == 0, |this| {
             this.child(
                 div()
@@ -394,7 +402,7 @@ impl DocumentEditorView {
         self.start_board_embed_load(keys_to_load, cx);
     }
 
-    pub(crate) fn refresh_board_embeds_for(&mut self, board_id: i64, cx: &mut Context<Self>) {
+    pub fn refresh_board_embeds_for(&mut self, board_id: i64, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
         let keys = storage::board_projection::parse_board_view_embeds(&content)
             .into_iter()
@@ -410,7 +418,7 @@ impl DocumentEditorView {
         self.start_board_embed_load(keys, cx);
     }
 
-    pub(crate) fn reload_board_embeds(&mut self, cx: &mut Context<Self>) {
+    pub fn reload_board_embeds(&mut self, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
         let keys = storage::board_projection::parse_board_view_embeds(&content)
             .into_iter()

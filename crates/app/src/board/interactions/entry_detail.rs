@@ -111,6 +111,7 @@ impl BoardView {
         let revision = self.entry_editing.next_due_date_update_revision;
         let persisted_revisions = self.entry_editing.persisted_due_date_revisions.clone();
         let db = cx.global::<AppServices>().store();
+        let notifications = cx.global::<crate::board::BoardServices>().notifications();
         self.commit_board_mutation(cx, "Could not save due date", false, async move {
             let mut persisted_revisions = persisted_revisions.lock().await;
             if persisted_revisions
@@ -121,7 +122,7 @@ impl BoardView {
             }
             storage::board_commands::set_board_card_due_on(&db, entry_id, due_on).await?;
             persisted_revisions.insert(entry_id, revision);
-            crate::system_notifications::wake();
+            notifications.wake();
             Ok::<(), anyhow::Error>(())
         });
     }
@@ -151,9 +152,10 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<AppServices>().store();
+        let notifications = cx.global::<crate::board::BoardServices>().notifications();
         self.commit_board_mutation(cx, "Could not save reminder", false, async move {
             storage::board_commands::set_board_card_reminder(&db, entry_id, enabled).await?;
-            crate::system_notifications::wake();
+            notifications.wake();
             Ok::<(), anyhow::Error>(())
         });
     }

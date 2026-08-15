@@ -19,8 +19,8 @@ use super::action::FormatDocument;
 use super::types::*;
 use super::vim::VimMode;
 use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
-use crate::AppServices;
-use crate::app_settings::AppSettings;
+use app_services::AppServices;
+use app_settings::AppSettings;
 
 #[derive(Clone)]
 struct OutlineResizeDrag {
@@ -268,10 +268,10 @@ impl DocumentEditorView {
             cx.global::<AppServices>().data_dir(),
             self.persistence.current_path.as_deref(),
         );
-        let open_target = crate::workspace_navigation::weak_navigation_handler(
-            cx.entity().downgrade(),
-            |_, target, cx| cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target)),
-        );
+        let open_target =
+            workspace_ui::weak_navigation_handler(cx.entity().downgrade(), |_, target, cx| {
+                cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target))
+            });
         let wikilink_plugin = super::links::WikiLinkPreviewPlugin::new(
             open_target,
             self.inspector_links.project_id,

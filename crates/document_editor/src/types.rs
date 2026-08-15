@@ -3,14 +3,14 @@ use gpui_component::highlighter::Language;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DocumentKind {
+pub enum DocumentKind {
     Markdown,
     Json,
     PlainText,
 }
 
 impl DocumentKind {
-    pub(crate) fn from_path(path: Option<&Path>) -> Self {
+    pub fn from_path(path: Option<&Path>) -> Self {
         let Some(path) = path else {
             return Self::Markdown;
         };
@@ -25,7 +25,7 @@ impl DocumentKind {
         }
     }
 
-    pub(crate) fn language(self) -> Language {
+    pub fn language(self) -> Language {
         match self {
             Self::Markdown => Language::Markdown,
             Self::Json => Language::Json,
@@ -33,7 +33,7 @@ impl DocumentKind {
         }
     }
 
-    pub(crate) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Markdown => "Markdown",
             Self::Json => "JSON",
@@ -41,7 +41,7 @@ impl DocumentKind {
         }
     }
 
-    pub(crate) fn menu_label(self) -> &'static str {
+    pub fn menu_label(self) -> &'static str {
         match self {
             Self::Markdown => "Markdown (.md)",
             Self::Json => "JSON (.json)",
@@ -49,7 +49,7 @@ impl DocumentKind {
         }
     }
 
-    pub(crate) fn extension(self) -> &'static str {
+    pub fn extension(self) -> &'static str {
         match self {
             Self::Markdown => "md",
             Self::Json => "json",
@@ -57,26 +57,26 @@ impl DocumentKind {
         }
     }
 
-    pub(crate) fn supports_outline(self) -> bool {
+    pub fn supports_outline(self) -> bool {
         !matches!(self, Self::PlainText)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EditorMode {
+pub enum EditorMode {
     Source,
     Preview,
 }
 
 impl EditorMode {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Source => "source",
             Self::Preview => "preview",
         }
     }
 
-    pub(crate) fn from_str(value: &str) -> Self {
+    pub(crate) fn from_key(value: &str) -> Self {
         match value {
             "preview" => Self::Preview,
             _ => Self::Source,
@@ -85,7 +85,7 @@ impl EditorMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SaveState {
+pub enum SaveState {
     Saved,
     Dirty,
     Saving,
@@ -132,7 +132,7 @@ impl DocumentStats {
     }
 }
 
-pub(crate) const DEFAULT_NOTE: &str = r#"# Untitled note
+pub const DEFAULT_NOTE: &str = r#"# Untitled note
 
 Start writing Markdown here.
 "#;

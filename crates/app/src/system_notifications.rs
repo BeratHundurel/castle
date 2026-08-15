@@ -5,22 +5,28 @@ use storage::Store;
 use storage::reminders::DueReminder;
 use tokio::sync::Notify;
 
+use crate::board::notifications::{NotificationAvailability, NotificationGateway};
+
 static REMINDER_WAKE: OnceLock<Arc<Notify>> = OnceLock::new();
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NotificationAvailability {
-    Enabled,
-    DisabledForApplication,
-    DisabledForUser,
-    DisabledByPolicy,
-    Unsupported,
-    Unavailable,
+struct SystemNotificationGateway;
+
+impl NotificationGateway for SystemNotificationGateway {
+    fn availability(&self) -> NotificationAvailability {
+        availability()
+    }
+
+    fn wake(&self) {
+        wake();
+    }
+
+    fn show_test_notification(&self) -> anyhow::Result<()> {
+        show_test_notification()
+    }
 }
 
-impl NotificationAvailability {
-    pub(crate) fn can_open_settings(self) -> bool {
-        matches!(self, Self::DisabledForApplication | Self::DisabledForUser)
-    }
+pub fn install_board_gateway(cx: &mut gpui::App) {
+    crate::board::init_with_notification_gateway(cx, Arc::new(SystemNotificationGateway));
 }
 
 pub fn start(store: Store) {

@@ -2,12 +2,12 @@ use gpui::{Hsla, Rgba};
 
 const MINIMUM_TEXT_CONTRAST: f32 = 4.5;
 
-pub(crate) struct AccessibleTextColors {
-    pub(crate) background: Hsla,
-    pub(crate) foreground: Hsla,
+pub(super) struct AccessibleTextColors {
+    pub(super) background: Hsla,
+    pub(super) foreground: Hsla,
 }
 
-pub(crate) fn accessible_text_colors(
+pub(super) fn accessible_text_colors(
     background: Hsla,
     preferred_foreground: Hsla,
 ) -> AccessibleTextColors {

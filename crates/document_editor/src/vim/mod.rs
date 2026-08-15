@@ -12,7 +12,7 @@ use super::DocumentEditorView;
 use super::action::{VimKey, VimKeyAction};
 use super::formatting::markdown_newline_prefix;
 use super::types::EditorMode;
-use crate::app_settings::AppSettings;
+use app_settings::AppSettings;
 
 const MAX_COUNT: u32 = 999_999;
 const VIM_CLIPBOARD_CHARACTERWISE: &str = "castle-vim-characterwise";

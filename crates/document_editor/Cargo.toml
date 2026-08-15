@@ -1,21 +1,14 @@
 [package]
-name         = "app"
+name = "document_editor"
 version.workspace = true
-publish      = false
+publish = false
 edition.workspace = true
-
-[[bin]]
-name = "castle"
-path = "src/main.rs"
 
 [dependencies]
 gpui.workspace = true
-gpui_platform.workspace = true
-reqwest_client.workspace = true
 gpui-component = { workspace = true, features = ["tree-sitter-languages"] }
-gpui-component-assets.workspace = true
 anyhow.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 serde.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
@@ -24,22 +17,14 @@ lsp-types.workspace = true
 chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
+merman.workspace = true
+lol_html = "2.9"
+dprint-plugin-json = "0.22.1"
+dprint-plugin-markdown = "0.22.1"
 storage = { path = "../storage" }
 app_services = { path = "../app_services" }
 app_settings = { path = "../app_settings" }
 workspace_ui = { path = "../workspace_ui" }
-document_editor = { path = "../document_editor" }
-dotenvy = "0.15"
-dprint-plugin-json = "0.22.1"
-dprint-plugin-markdown = "0.22.1"
-global-hotkey = "0.8.0"
-raw-window-handle = "0.6.2"
-tray-icon = "0.24.1"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }
-windows = { version = "0.62.2", features = ["UI_Notifications"] }
-tauri-winrt-notification = "0.8.1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
@@ -48,6 +33,3 @@ sea-orm.workspace = true
 migration = { path = "../migration" }
 entity = { path = "../entity" }
 test_support = { path = "../test_support" }
-
-[build-dependencies]
-embed-resource = "3.0"

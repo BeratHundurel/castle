@@ -1,10 +1,10 @@
-pub(crate) mod action;
+pub mod action;
 mod attachments;
 mod board_embeds;
 mod emmet;
 mod formatting;
 mod handlers;
-pub(crate) mod links;
+pub mod links;
 mod mermaid;
 mod outline;
 mod persistence;
@@ -30,14 +30,14 @@ use std::{
     time::Duration,
 };
 
-use crate::app_settings::AppSettings;
+use app_settings::AppSettings;
 use outline::{DocumentOutline, JsonOutline, MarkdownOutline, OutlineRow};
 use types::*;
 use vim::VimState;
 
 pub use types::DocumentStats;
-pub(crate) use types::{DEFAULT_NOTE, DocumentKind, SaveState};
-pub(crate) use util::unique_note_path;
+pub use types::{DEFAULT_NOTE, DocumentKind, SaveState};
+pub use util::unique_note_path;
 
 const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);
@@ -64,7 +64,7 @@ struct OutlineSourceHighlight {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum DocumentEditorEvent {
+pub enum DocumentEditorEvent {
     PathChanged,
     Saved(u32),
     WorkspaceLinksChanged,
@@ -72,7 +72,7 @@ pub(crate) enum DocumentEditorEvent {
         note_id: u32,
         source_offset: Option<usize>,
     },
-    OpenWorkspaceTarget(crate::workspace_navigation::WorkspaceNavigationTarget),
+    OpenWorkspaceTarget(workspace_ui::WorkspaceNavigationTarget),
     CreateCardFromSelection {
         note_id: u32,
         title: String,
@@ -104,7 +104,7 @@ struct PersistenceState {
 
 struct AnalysisState {
     stats: DocumentStats,
-    request: crate::request_tracker::RequestTracker,
+    request: workspace_ui::RequestTracker,
     source_bounds: Option<Bounds<Pixels>>,
     outline: DocumentOutline,
     outline_rows: Arc<Vec<OutlineRow>>,
@@ -132,12 +132,12 @@ struct InspectorLinksState {
     completion_provider: links::WikiLinkCompletionProvider,
     loading: bool,
     error: Option<SharedString>,
-    request: crate::request_tracker::RequestTracker,
+    request: workspace_ui::RequestTracker,
 }
 
 struct EmbedStateGroup {
     states: Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
-    request: crate::request_tracker::RequestTracker,
+    request: workspace_ui::RequestTracker,
     loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
 }
 
@@ -146,7 +146,7 @@ struct VimSessionState {
     search_active: bool,
 }
 
-pub(crate) struct DocumentEditorView {
+pub struct DocumentEditorView {
     note_id: u32,
     title: SharedString,
     focus_handle: FocusHandle,
@@ -172,7 +172,7 @@ pub(crate) struct DocumentEditorView {
 impl EventEmitter<DocumentEditorEvent> for DocumentEditorView {}
 
 impl DocumentEditorView {
-    pub(crate) fn view(note_id: u32, window: &mut Window, cx: &mut App) -> Entity<Self> {
+    pub fn view(note_id: u32, window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(note_id, window, cx))
     }
 
@@ -264,7 +264,7 @@ impl DocumentEditorView {
             },
             analysis: AnalysisState {
                 stats: DocumentStats::from_text(""),
-                request: crate::request_tracker::RequestTracker::default(),
+                request: workspace_ui::RequestTracker::default(),
                 source_bounds: None,
                 outline: DocumentOutline::None,
                 outline_rows: Arc::new(Vec::new()),
@@ -299,11 +299,11 @@ impl DocumentEditorView {
                 completion_provider: wikilink_completion_provider,
                 loading: true,
                 error: None,
-                request: crate::request_tracker::RequestTracker::with_task(1, note_links_task),
+                request: workspace_ui::RequestTracker::with_task(1, note_links_task),
             },
             embeds: EmbedStateGroup {
                 states: Arc::new(std::collections::HashMap::new()),
-                request: crate::request_tracker::RequestTracker::default(),
+                request: workspace_ui::RequestTracker::default(),
                 loading_keys: std::collections::HashSet::new(),
             },
             mermaid: mermaid::MermaidState::default(),
@@ -315,15 +315,11 @@ impl DocumentEditorView {
         }
     }
 
-    pub(crate) fn save_state(&self) -> SaveState {
+    pub fn save_state(&self) -> SaveState {
         self.persistence.save_state.clone()
     }
 
-    pub(crate) fn reload_after_external_change(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn reload_after_external_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.persistence.save_state != SaveState::Saved {
             return;
         }
@@ -335,11 +331,11 @@ impl DocumentEditorView {
         cx.notify();
     }
 
-    pub(crate) fn kind(&self) -> DocumentKind {
+    pub fn kind(&self) -> DocumentKind {
         self.kind
     }
 
-    pub(crate) fn insert_text_at_selection(
+    pub fn insert_text_at_selection(
         &mut self,
         text: &str,
         window: &mut Window,
@@ -386,13 +382,13 @@ impl DocumentEditorView {
         self.insert_text_at_selection(replacement, window, cx);
     }
 
-    #[cfg(test)]
-    pub(crate) fn loaded_content(&self, cx: &App) -> Option<String> {
+    #[doc(hidden)]
+    pub fn loaded_content(&self, cx: &App) -> Option<String> {
         (!self.persistence.is_loading).then(|| self.editor.read(cx).value().to_string())
     }
 
-    #[cfg(test)]
-    pub(crate) fn replace_content_for_test(
+    #[doc(hidden)]
+    pub fn replace_content_for_test(
         &mut self,
         content: &str,
         window: &mut Window,
@@ -405,7 +401,7 @@ impl DocumentEditorView {
         self.update_from_editor(cx);
     }
 
-    pub(crate) fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
+    pub fn apply_title(&mut self, title: &str, cx: &mut Context<Self>) {
         let title = title.trim();
         if title.is_empty() || self.title.as_ref() == title {
             return;
@@ -415,7 +411,7 @@ impl DocumentEditorView {
         cx.notify();
     }
 
-    pub(crate) fn apply_file_path(&mut self, file_path: Option<String>, cx: &mut Context<Self>) {
+    pub fn apply_file_path(&mut self, file_path: Option<String>, cx: &mut Context<Self>) {
         let file_path = file_path.map(PathBuf::from);
         if self.persistence.current_path == file_path {
             return;
@@ -428,7 +424,7 @@ impl DocumentEditorView {
         cx.notify();
     }
 
-    pub(crate) fn navigate_to_offset(
+    pub fn navigate_to_offset(
         &mut self,
         offset: usize,
         window: &mut Window,
@@ -494,7 +490,7 @@ impl DocumentEditorView {
 
         self.kind = kind;
         self.mode = if kind == DocumentKind::Markdown {
-            EditorMode::from_str(AppSettings::markdown_editor_mode(cx).as_ref())
+            EditorMode::from_key(AppSettings::markdown_editor_mode(cx).as_ref())
         } else {
             EditorMode::Source
         };
@@ -878,12 +874,14 @@ mod tests {
         OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document, changed_document_kind,
         row_is_in_visible_layout, source_row_centers_at_document_start,
     };
-    use crate::{AppServices, app_settings::AppSettings, test_alloc};
+    use app_services::AppServices;
+    use app_settings::AppSettings;
     use entity::note;
     use gpui::AppContext as _;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use std::{path::PathBuf, sync::Arc, time::Duration};
+    use test_support as test_alloc;
 
     #[gpui::test]
     fn json_autosave_preserves_unformatted_content(cx: &mut gpui::TestAppContext) {
@@ -1012,7 +1010,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
@@ -1167,7 +1165,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
-        let content = include_str!("../../../../themes/sick.json");
+        let content = include_str!("../../../themes/sick.json");
         let (db, note_id) = runtime
             .block_on(async {
                 let db = Database::connect("sqlite::memory:").await?;
@@ -1194,7 +1192,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);

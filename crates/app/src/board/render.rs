@@ -30,11 +30,11 @@ mod related_notes;
 
 use super::BoardView;
 use super::action::*;
+use super::color_contrast::accessible_text_colors;
 use super::drag::*;
 use super::dto::BoardCardDTO;
 use super::due_date::{DueDateStatus, due_date_status};
 use super::filters::DueDateFilter;
-use crate::color_contrast::accessible_text_colors;
 use workspace_ui::WorkspaceDragInfo;
 
 impl Render for BoardView {

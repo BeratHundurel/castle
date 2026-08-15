@@ -623,7 +623,7 @@ mod tests {
     use super::{
         DocumentOutline, JSON_OUTLINE_NODE_LIMIT, JsonOutline, MarkdownOutline, truncate_preview,
     };
-    use crate::test_alloc;
+    use test_support as test_alloc;
 
     #[test]
     fn preview_section_snapshots_share_markdown_content() {

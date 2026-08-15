@@ -15,7 +15,7 @@ impl DocumentEditorView {
         self.create_card_from_selection(cx);
     }
 
-    pub(crate) fn create_card_from_selection(&mut self, cx: &mut Context<Self>) {
+    pub fn create_card_from_selection(&mut self, cx: &mut Context<Self>) {
         let editor = self.editor.read(cx);
         let selected = editor.selected_value().to_string();
         let source = if selected.trim().is_empty() {
@@ -42,7 +42,7 @@ impl DocumentEditorView {
         self.request_insert_board_view(cx);
     }
 
-    pub(crate) fn request_insert_board_view(&mut self, cx: &mut Context<Self>) {
+    pub fn request_insert_board_view(&mut self, cx: &mut Context<Self>) {
         if self.kind == DocumentKind::Markdown {
             cx.emit(super::DocumentEditorEvent::InsertBoardView {
                 note_id: self.note_id,

@@ -429,12 +429,13 @@ mod tests {
                 .insert(&db)
                 .await?;
 
-                let request = crate::trash::MoveToTrash {
-                    kind: crate::trash::TrashItemKind::Board,
+                let request = storage::trash::MoveToTrash {
+                    kind: storage::trash::TrashItemKind::Board,
                     id: board.id as u32,
                 };
-                crate::trash::move_to_trash(&db, request, 1).await?;
-                crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(request)).await?;
+                storage::trash::move_to_trash(&db, request, 1).await?;
+                storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(request))
+                    .await?;
                 Ok::<_, anyhow::Error>((db, request))
             })
             .expect("board restore setup should succeed");
@@ -617,12 +618,12 @@ mod tests {
         .insert(&db)
         .await?;
 
-        let board_request = crate::trash::MoveToTrash {
-            kind: crate::trash::TrashItemKind::Board,
+        let board_request = storage::trash::MoveToTrash {
+            kind: storage::trash::TrashItemKind::Board,
             id: board.id as u32,
         };
-        crate::trash::move_to_trash(&db, board_request, 10).await?;
-        crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(board_request)).await?;
+        storage::trash::move_to_trash(&db, board_request, 10).await?;
+        storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(board_request)).await?;
 
         let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);
@@ -630,12 +631,13 @@ mod tests {
         assert_eq!(cards[0].entries.len(), 1);
         assert_eq!(cards[0].entries[0].id, entry.id as u32);
 
-        let project_request = crate::trash::MoveToTrash {
-            kind: crate::trash::TrashItemKind::Project,
+        let project_request = storage::trash::MoveToTrash {
+            kind: storage::trash::TrashItemKind::Project,
             id: project.id as u32,
         };
-        crate::trash::move_to_trash(&db, project_request, 20).await?;
-        crate::trash::restore_item(&db, crate::trash::RestoreTrashItem(project_request)).await?;
+        storage::trash::move_to_trash(&db, project_request, 20).await?;
+        storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(project_request))
+            .await?;
 
         let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);

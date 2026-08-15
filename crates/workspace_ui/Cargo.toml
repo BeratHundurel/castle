@@ -7,6 +7,9 @@ edition.workspace = true
 [dependencies]
 gpui.workspace = true
 gpui-component.workspace = true
+anyhow.workspace = true
+lsp-types.workspace = true
+storage = { path = "../storage" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

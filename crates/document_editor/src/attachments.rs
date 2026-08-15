@@ -13,7 +13,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::{DocumentEditorView, DocumentKind};
 

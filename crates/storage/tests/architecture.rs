@@ -29,16 +29,25 @@ fn workspace_crates_preserve_feature_dependency_direction() {
     for (crate_name, forbidden_dependencies) in [
         (
             "app_services",
-            &["app", "app_settings", "workspace_ui", "document_editor", "board"][..],
+            &[
+                "app",
+                "app_settings",
+                "workspace_ui",
+                "document_editor",
+                "board",
+            ][..],
         ),
         (
             "app_settings",
-            &["app", "app_services", "workspace_ui", "document_editor", "board"][..],
+            &[
+                "app",
+                "app_services",
+                "workspace_ui",
+                "document_editor",
+                "board",
+            ][..],
         ),
-        (
-            "workspace_ui",
-            &["app", "document_editor", "board"][..],
-        ),
+        ("workspace_ui", &["app", "document_editor", "board"][..]),
         ("document_editor", &["app", "board"][..]),
         ("board", &["app", "document_editor"][..]),
     ] {

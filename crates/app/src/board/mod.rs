@@ -1,5 +1,6 @@
 mod action;
 mod attachments;
+mod color_contrast;
 mod drag;
 mod dto;
 mod due_date;
@@ -7,6 +8,7 @@ mod entry_dialog;
 mod filters;
 mod handlers;
 mod interactions;
+pub(crate) mod notifications;
 mod persistence;
 mod properties;
 mod related_notes;
@@ -30,17 +32,30 @@ use crate::board::entry_dialog::EntryDialog;
 #[derive(Clone)]
 struct BoardServices {
     layout_persistence: storage::board_positions::BoardLayoutPersistence,
+    notifications: notifications::BoardNotifications,
 }
 
 impl BoardServices {
     fn new(runtime: tokio::runtime::Handle) -> Self {
+        Self::with_notifications(runtime, notifications::BoardNotifications::unavailable())
+    }
+
+    fn with_notifications(
+        runtime: tokio::runtime::Handle,
+        notifications: notifications::BoardNotifications,
+    ) -> Self {
         Self {
             layout_persistence: storage::board_positions::BoardLayoutPersistence::new(runtime),
+            notifications,
         }
     }
 
     fn layout_persistence(&self) -> storage::board_positions::BoardLayoutPersistence {
         self.layout_persistence.clone()
+    }
+
+    fn notifications(&self) -> notifications::BoardNotifications {
+        self.notifications.clone()
     }
 }
 
@@ -50,6 +65,19 @@ pub(crate) fn init(cx: &mut App) {
     if !cx.has_global::<BoardServices>() {
         let runtime = cx.global::<crate::AppServices>().runtime();
         cx.set_global(BoardServices::new(runtime));
+    }
+}
+
+pub(crate) fn init_with_notification_gateway(
+    cx: &mut App,
+    gateway: Arc<dyn notifications::NotificationGateway>,
+) {
+    if !cx.has_global::<BoardServices>() {
+        let runtime = cx.global::<crate::AppServices>().runtime();
+        cx.set_global(BoardServices::with_notifications(
+            runtime,
+            notifications::BoardNotifications::new(gateway),
+        ));
     }
 }
 
@@ -66,7 +94,7 @@ struct RelatedNotesState {
         Vec<storage::workspace_links::RelatedNote>,
     >,
     catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
-    completion_provider: crate::document_editor::links::WikiLinkCompletionProvider,
+    completion_provider: workspace_ui::WikiLinkCompletionProvider,
     error: Option<SharedString>,
 }
 
@@ -186,8 +214,7 @@ impl BoardView {
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         init(cx);
-        let entry_wikilink_completion_provider =
-            crate::document_editor::links::WikiLinkCompletionProvider::new(-1);
+        let entry_wikilink_completion_provider = workspace_ui::WikiLinkCompletionProvider::new(-1);
         let entry_completion_provider =
             std::rc::Rc::new(entry_wikilink_completion_provider.clone());
         let new_list_input = cx.new(|cx| InputState::new(window, cx).placeholder("List name..."));

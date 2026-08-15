@@ -277,6 +277,7 @@ dependencies = [
  "app_services",
  "app_settings",
  "chrono",
+ "document_editor",
  "dotenvy",
  "dprint-plugin-json",
  "dprint-plugin-markdown",
@@ -289,7 +290,6 @@ dependencies = [
  "gpui_platform",
  "image",
  "lsp-types",
- "mermaid_renderer",
  "migration",
  "raw-window-handle",
  "reqwest_client",
@@ -2329,6 +2329,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
+]
+
+[[package]]
+name = "document_editor"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "app_services",
+ "app_settings",
+ "chrono",
+ "dprint-plugin-json",
+ "dprint-plugin-markdown",
+ "entity",
+ "gpui",
+ "gpui-component",
+ "image",
+ "lol_html",
+ "lsp-types",
+ "merman",
+ "migration",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "storage",
+ "tempfile",
+ "test_support",
+ "tokio",
+ "toml_edit 0.25.13+spec-1.1.0",
+ "tree-sitter",
+ "tree-sitter-json",
+ "workspace_ui",
 ]
 
 [[package]]
@@ -5451,15 +5482,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "mermaid_renderer"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "lol_html",
- "merman",
 ]
 
 [[package]]
@@ -11739,8 +11761,11 @@ checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
 name = "workspace_ui"
 version = "0.4.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "gpui-component",
+ "lsp-types",
+ "storage",
 ]
 
 [[package]]

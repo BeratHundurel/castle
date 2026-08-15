@@ -13,12 +13,10 @@ use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, TextEdit,
 };
 
-use crate::AppServices;
-
-use super::{DocumentEditorView, DocumentInspectorTab};
+use crate::{WorkspaceNavigationHandler, WorkspaceNavigationTarget};
 
 #[derive(Clone)]
-pub(crate) struct WikiLinkCompletionProvider {
+pub struct WikiLinkCompletionProvider {
     state: Rc<RefCell<WikiLinkCompletionState>>,
 }
 
@@ -31,7 +29,7 @@ struct WikiLinkCompletionState {
 }
 
 impl WikiLinkCompletionProvider {
-    pub(crate) fn new(note_id: i64) -> Self {
+    pub fn new(note_id: i64) -> Self {
         Self {
             state: Rc::new(RefCell::new(WikiLinkCompletionState {
                 note_id,
@@ -43,7 +41,7 @@ impl WikiLinkCompletionProvider {
         }
     }
 
-    pub(crate) fn update(
+    pub fn update(
         &self,
         note_id: i64,
         project_id: Option<i64>,
@@ -60,7 +58,7 @@ impl WikiLinkCompletionProvider {
         };
     }
 
-    pub(crate) fn update_for_workspace_source(
+    pub fn update_for_workspace_source(
         &self,
         project_id: Option<i64>,
         workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
@@ -142,7 +140,7 @@ impl CompletionProvider for WikiLinkCompletionProvider {
 #[derive(Clone, Debug)]
 enum PreviewLinkTarget {
     Note(u32),
-    Workspace(crate::workspace_navigation::WorkspaceNavigationTarget),
+    Workspace(WorkspaceNavigationTarget),
     External(String),
 }
 
@@ -161,8 +159,8 @@ struct WikiLinkPreviewBlock {
 }
 
 #[derive(Clone)]
-pub(crate) struct WikiLinkPreviewPlugin {
-    open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
+pub struct WikiLinkPreviewPlugin {
+    open_target: WorkspaceNavigationHandler,
     project_id: Option<i64>,
     catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
     indexed_links: Arc<storage::note_links::NoteLinkSet>,
@@ -170,8 +168,8 @@ pub(crate) struct WikiLinkPreviewPlugin {
 }
 
 impl WikiLinkPreviewPlugin {
-    pub(super) fn new(
-        open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
+    pub fn new(
+        open_target: WorkspaceNavigationHandler,
         project_id: Option<i64>,
         catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
         indexed_links: Arc<storage::note_links::NoteLinkSet>,
@@ -186,8 +184,8 @@ impl WikiLinkPreviewPlugin {
         }
     }
 
-    pub(crate) fn new_for_workspace(
-        open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
+    pub fn new_for_workspace(
+        open_target: WorkspaceNavigationHandler,
         project_id: Option<i64>,
         workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
     ) -> Self {
@@ -311,7 +309,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             match target {
                 PreviewLinkTarget::Note(note_id) => {
                     open_target(
-                        crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+                        WorkspaceNavigationTarget::Note {
                             note_id: *note_id,
                             source_offset: None,
                         },
@@ -333,121 +331,6 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             })
             .child(text)
             .into_any_element()
-    }
-}
-
-impl DocumentEditorView {
-    pub(super) fn load_note_links_async(
-        note_id: u32,
-        generation: u64,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let runtime = cx.global::<AppServices>().runtime();
-        Self::load_note_links_with_runtime(note_id, generation, runtime, cx)
-    }
-
-    fn load_note_links_with_runtime(
-        note_id: u32,
-        generation: u64,
-        runtime: tokio::runtime::Handle,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let db = cx.global::<AppServices>().store();
-        cx.spawn(async move |this, cx| {
-            let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let load = runtime.spawn(async move {
-                tokio::select! {
-                    biased;
-                    _ = cancelled => None,
-                    result = async move {
-                        let links = storage::note_links::load_note_links(
-                            &db,
-                            note_id as i64,
-                        )
-                        .await?;
-                        let note_catalog = storage::note_links::load_note_link_catalog(&db);
-                        let workspace_links = storage::workspace_links::load_note_workspace_links(
-                            &db,
-                            note_id as i64,
-                        );
-                        let workspace_catalog =
-                            storage::workspace_links::load_workspace_link_catalog(&db);
-                        let (note_catalog, workspace_links, workspace_catalog) =
-                            tokio::try_join!(note_catalog, workspace_links, workspace_catalog)?;
-                        Ok::<_, anyhow::Error>((
-                            links,
-                            note_catalog,
-                            workspace_links,
-                            workspace_catalog,
-                        ))
-                    } => Some(result),
-                }
-            });
-            let result = load.await;
-            drop(cancel_on_drop);
-
-            this.update(cx, |this, cx| {
-                if this.note_id != note_id
-                    || this.inspector_links.request.generation() != generation
-                {
-                    return;
-                }
-                this.inspector_links.loading = false;
-                match result {
-                    Ok(Some(Ok((links, note_catalog, workspace_links, workspace_catalog)))) => {
-                        this.inspector_links.note_links = std::sync::Arc::new(links);
-                        this.inspector_links.note_catalog = Arc::new(note_catalog);
-                        this.inspector_links.workspace_links = Arc::new(workspace_links);
-                        this.inspector_links.workspace_catalog = Arc::new(workspace_catalog);
-                        this.inspector_links.completion_provider.update(
-                            this.note_id as i64,
-                            this.inspector_links.project_id,
-                            this.kind == super::DocumentKind::Markdown,
-                            this.inspector_links.note_catalog.clone(),
-                            this.inspector_links.workspace_catalog.clone(),
-                        );
-                        this.inspector_links.error = None;
-                    }
-                    Ok(Some(Err(error))) => {
-                        this.inspector_links.error = Some(error.to_string().into())
-                    }
-                    Ok(None) => return,
-                    Err(error) => {
-                        this.inspector_links.error =
-                            Some(format!("Link task failed: {error}").into())
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-    }
-
-    pub(crate) fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
-        let runtime = cx.global::<AppServices>().runtime();
-        self.refresh_note_links_with_runtime(runtime, cx);
-    }
-
-    pub(super) fn refresh_note_links_with_runtime(
-        &mut self,
-        runtime: tokio::runtime::Handle,
-        cx: &mut Context<Self>,
-    ) {
-        let generation = self.inspector_links.request.begin();
-        self.inspector_links.loading = true;
-        let task = Self::load_note_links_with_runtime(self.note_id, generation, runtime, cx);
-        self.inspector_links.request.set_task(task);
-        cx.notify();
-    }
-
-    pub(super) fn show_outline_inspector(&mut self, cx: &mut Context<Self>) {
-        self.inspector_links.tab = DocumentInspectorTab::Outline;
-        cx.notify();
-    }
-
-    pub(super) fn show_links_inspector(&mut self, cx: &mut Context<Self>) {
-        self.inspector_links.tab = DocumentInspectorTab::Links;
-        self.refresh_note_links(cx);
     }
 }
 
@@ -590,32 +473,28 @@ fn unique_catalog_note<'a>(
     candidates.next().is_none().then_some(first)
 }
 
-pub(super) fn workspace_navigation_target(
+pub fn workspace_navigation_target(
     entry: &storage::workspace_links::WorkspaceCatalogEntry,
-) -> Option<crate::workspace_navigation::WorkspaceNavigationTarget> {
+) -> Option<WorkspaceNavigationTarget> {
     let item_id = u32::try_from(entry.item.id).ok()?;
     match entry.item.kind {
-        storage::workspace_links::WorkspaceItemKind::Note => Some(
-            crate::workspace_navigation::WorkspaceNavigationTarget::Note {
+        storage::workspace_links::WorkspaceItemKind::Note => {
+            Some(WorkspaceNavigationTarget::Note {
                 note_id: item_id,
                 source_offset: None,
-            },
-        ),
-        storage::workspace_links::WorkspaceItemKind::Board => {
-            Some(crate::workspace_navigation::WorkspaceNavigationTarget::board(item_id))
+            })
         }
-        storage::workspace_links::WorkspaceItemKind::List => Some(
-            crate::workspace_navigation::WorkspaceNavigationTarget::list(
-                u32::try_from(entry.board_id?).ok()?,
-                item_id,
-            ),
-        ),
-        storage::workspace_links::WorkspaceItemKind::Card => Some(
-            crate::workspace_navigation::WorkspaceNavigationTarget::card(
-                u32::try_from(entry.board_id?).ok()?,
-                item_id,
-            ),
-        ),
+        storage::workspace_links::WorkspaceItemKind::Board => {
+            Some(WorkspaceNavigationTarget::board(item_id))
+        }
+        storage::workspace_links::WorkspaceItemKind::List => Some(WorkspaceNavigationTarget::list(
+            u32::try_from(entry.board_id?).ok()?,
+            item_id,
+        )),
+        storage::workspace_links::WorkspaceItemKind::Card => Some(WorkspaceNavigationTarget::card(
+            u32::try_from(entry.board_id?).ok()?,
+            item_id,
+        )),
     }
 }
 
@@ -800,12 +679,6 @@ fn wikilink_for_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use entity::note;
-    use gpui::{AppContext as _, EntityInputHandler as _};
-    use gpui_component::input::{Enter, Position};
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
-    use std::{path::PathBuf, sync::Arc};
 
     #[test]
     fn detects_only_an_open_wikilink_at_the_cursor() {
@@ -844,93 +717,5 @@ mod tests {
             block.links[0].target,
             Some(PreviewLinkTarget::Note(7))
         ));
-    }
-
-    #[gpui::test]
-    fn editor_change_populates_wikilink_completion(cx: &mut gpui::TestAppContext) {
-        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
-        let _runtime_guard = runtime.enter();
-        cx.executor().allow_parking();
-        let (db, source_id, _target_id) = runtime
-            .block_on(async {
-                let db = Database::connect("sqlite::memory:").await?;
-                Migrator::up(&db, None).await?;
-                let source = note::ActiveModel {
-                    title: Set("Source".into()),
-                    cached_content: Set(String::new()),
-                    created_at: Set(1),
-                    updated_at: Set(1),
-                    ..Default::default()
-                }
-                .insert(&db)
-                .await?;
-                let target = note::ActiveModel {
-                    title: Set("Target note".into()),
-                    cached_content: Set(String::new()),
-                    created_at: Set(1),
-                    updated_at: Set(1),
-                    ..Default::default()
-                }
-                .insert(&db)
-                .await?;
-                Ok::<_, anyhow::Error>((db, source.id as u32, target.id))
-            })
-            .expect("completion test database should initialize");
-        let settings_dir =
-            std::env::temp_dir().join(format!("castle-wikilink-completion-{}", std::process::id()));
-        let mut editor_view = None;
-        let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
-            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
-            cx.set_global(crate::AppServices::new(Arc::new(db), PathBuf::new()));
-            cx.open_window(Default::default(), |window, cx| {
-                let view = DocumentEditorView::view(source_id, window, cx);
-                editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
-            })
-            .expect("completion test window should open")
-        });
-        let view = editor_view.expect("document editor should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
-        for _ in 0..100 {
-            cx.run_until_parked();
-            if view.read_with(&cx, |editor, _| {
-                !editor.persistence.is_loading && editor.inspector_links.note_catalog.len() == 2
-            }) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        cx.update(|window, cx| {
-            view.update(cx, |editor, cx| {
-                editor.editor.update(cx, |input, cx| {
-                    input.set_value("[[Ta]]", window, cx);
-                    input.set_cursor_position(Position::new(0, 4), window, cx);
-                    input.replace_text_in_range(None, "r", window, cx);
-                });
-            });
-        });
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            view.update(cx, |editor, cx| {
-                editor.editor.update(cx, |input, cx| {
-                    assert!(input.handle_action_for_context_menu(
-                        Box::new(Enter {
-                            secondary: false,
-                            shift: false,
-                        }),
-                        window,
-                        cx,
-                    ));
-                });
-            });
-        });
-        cx.run_until_parked();
-        view.read_with(&cx, |editor, cx| {
-            assert_eq!(editor.editor.read(cx).value(), "[[Target note]]");
-        });
     }
 }
