@@ -1,0 +1,24 @@
+[package]
+name = "board"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+serde.workspace = true
+image.workspace = true
+chrono.workspace = true
+storage = { path = "../storage" }
+app_services = { path = "../app_services" }
+workspace_ui = { path = "../workspace_ui" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile = "3.23"
+sea-orm.workspace = true
+migration = { path = "../migration" }
+entity = { path = "../entity" }

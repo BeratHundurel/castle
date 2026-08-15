@@ -9,7 +9,7 @@ use storage::board_properties::{
     SortDirection, ViewFilter, ViewSort,
 };
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::BoardView;
 

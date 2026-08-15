@@ -7,7 +7,7 @@ use std::{
 use gpui::{Context, ImageFormat, PathPromptOptions, Window};
 use gpui_component::{WindowExt as _, notification::Notification};
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::{
     BoardView,
@@ -560,7 +560,7 @@ mod tests {
         attachment_thumbnail_path, ensure_attachment_thumbnail, normalized_image_extension,
         partition_cached_attachment_previews, sanitize_file_stem,
     };
-    use crate::board::dto::{BoardCardDTO, BoardListDTO, EntryAttachmentDTO};
+    use crate::dto::{BoardCardDTO, BoardListDTO, EntryAttachmentDTO};
 
     #[test]
     fn accepts_supported_images_case_insensitively() {

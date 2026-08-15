@@ -26,10 +26,10 @@ impl BoardView {
                 })
                 .and_then(|candidate| candidate.project_id)
         });
-        let open_target = crate::workspace_navigation::weak_navigation_handler(
-            cx.entity().downgrade(),
-            |_, target, cx| cx.emit(crate::board::BoardViewEvent::OpenWorkspaceTarget(target)),
-        );
+        let open_target =
+            workspace_ui::weak_navigation_handler(cx.entity().downgrade(), |_, target, cx| {
+                cx.emit(crate::BoardViewEvent::OpenWorkspaceTarget(target))
+            });
         let wikilink_plugin = workspace_ui::WikiLinkPreviewPlugin::new_for_workspace(
             open_target,
             source_project_id,

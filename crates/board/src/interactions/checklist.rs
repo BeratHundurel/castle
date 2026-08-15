@@ -1,11 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn create_checklist_item(
-        &mut self,
-        title: String,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn create_checklist_item(&mut self, title: String, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
@@ -79,7 +75,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn set_checklist_item_checked(
+    pub(crate) fn set_checklist_item_checked(
         &mut self,
         item_id: u32,
         checked: bool,
@@ -104,7 +100,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn delete_checklist_item(&mut self, item_id: u32, cx: &mut Context<Self>) {
+    pub(crate) fn delete_checklist_item(&mut self, item_id: u32, cx: &mut Context<Self>) {
         for card in self
             .data
             .lists
@@ -121,7 +117,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn move_checklist_item(
+    pub(crate) fn move_checklist_item(
         &mut self,
         item_id: u32,
         direction: isize,
@@ -167,11 +163,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn rename_checklist_item(
-        &mut self,
-        title: String,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn rename_checklist_item(&mut self, title: String, cx: &mut Context<Self>) {
         let Some(item_id) = self.entry_editing.renaming_checklist_item_id else {
             return;
         };

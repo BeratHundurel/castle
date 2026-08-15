@@ -3,14 +3,15 @@ pub mod app_settings {
     pub use ::app_settings::*;
 }
 pub mod app_shell;
-pub(crate) mod board;
+pub(crate) mod board {
+    pub(crate) use ::board::{BoardView, BoardViewEvent};
+}
 pub(crate) mod command_palette;
 pub(crate) mod document_editor {
     pub(crate) use ::document_editor::*;
 }
 pub mod keymap;
 pub mod mcp_registration;
-pub(crate) mod request_tracker;
 pub(crate) mod sidebar;
 pub mod system_notifications;
 pub mod tray;

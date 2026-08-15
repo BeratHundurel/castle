@@ -1,7 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn duplicate_selected_entry(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn duplicate_selected_entry(&mut self, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
@@ -18,11 +18,7 @@ impl BoardView {
         self.duplicate_entry(source, cx);
     }
 
-    pub(in crate::board) fn duplicate_entry(
-        &mut self,
-        source: BoardCardDTO,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn duplicate_entry(&mut self, source: BoardCardDTO, cx: &mut Context<Self>) {
         let db = cx.global::<AppServices>().store();
         let board_id = self.data.board_id;
         let runtime = cx.global::<AppServices>().runtime();
@@ -32,7 +28,7 @@ impl BoardView {
                     storage::board_commands::duplicate_board_card(
                         &db,
                         board_card_draft(source),
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -68,7 +64,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn duplicate_card(&mut self, card_id: u32, cx: &mut Context<Self>) {
+    pub(crate) fn duplicate_card(&mut self, card_id: u32, cx: &mut Context<Self>) {
         let Some(source) = self
             .data
             .lists
@@ -87,7 +83,7 @@ impl BoardView {
                     storage::board_commands::duplicate_board_list(
                         &db,
                         board_list_draft(source),
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -122,7 +118,7 @@ impl BoardView {
         })
         .detach();
     }
-    pub(in crate::board) fn entry_values(
+    pub(crate) fn entry_values(
         &self,
         entry_id: u32,
     ) -> Option<(SharedString, SharedString, Option<SharedString>)> {
@@ -140,24 +136,19 @@ impl BoardView {
             })
     }
 
-    pub(in crate::board) fn next_card_id(&mut self) -> u32 {
+    pub(crate) fn next_card_id(&mut self) -> u32 {
         self.entry_editing.next_temporary_list_id =
             self.entry_editing.next_temporary_list_id.saturating_add(1);
         u32::MAX.saturating_sub(self.entry_editing.next_temporary_list_id)
     }
 
-    pub(in crate::board) fn next_entry_id(&mut self) -> u32 {
+    pub(crate) fn next_entry_id(&mut self) -> u32 {
         self.entry_editing.next_temporary_card_id =
             self.entry_editing.next_temporary_card_id.saturating_add(1);
         u32::MAX.saturating_sub(self.entry_editing.next_temporary_card_id)
     }
 
-    pub(in crate::board) fn add_entry(
-        &mut self,
-        cx: &mut Context<Self>,
-        entry: BoardCardDTO,
-        temp_id: u32,
-    ) {
+    pub(crate) fn add_entry(&mut self, cx: &mut Context<Self>, entry: BoardCardDTO, temp_id: u32) {
         let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let card_id = entry.card_id;
@@ -178,7 +169,7 @@ impl BoardView {
                     storage::board_commands::create_board_card(
                         &db,
                         board_card_draft(entry),
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -227,12 +218,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn add_card(
-        &mut self,
-        cx: &mut Context<Self>,
-        card: BoardListDTO,
-        temp_id: u32,
-    ) {
+    pub(crate) fn add_card(&mut self, cx: &mut Context<Self>, card: BoardListDTO, temp_id: u32) {
         let db = cx.global::<AppServices>().store();
         let runtime = cx.global::<AppServices>().runtime();
         let board_id = card.board_id;
@@ -278,7 +264,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn rename_card(&mut self, cx: &mut Context<Self>, new_title: &str) {
+    pub(crate) fn rename_card(&mut self, cx: &mut Context<Self>, new_title: &str) {
         let Some(card_id) = self.entry_editing.renaming_list_id else {
             return;
         };
@@ -299,11 +285,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn show_add_entry_dialog(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let board_view = cx.entity();
         let dialog_title_input = self.entry_editing.dialog_title_input.clone();
         let dialog_description_input = self.entry_editing.dialog_description_input.clone();

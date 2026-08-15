@@ -8,7 +8,7 @@ mod entry_dialog;
 mod filters;
 mod handlers;
 mod interactions;
-pub(crate) mod notifications;
+mod notifications;
 mod persistence;
 mod properties;
 mod related_notes;
@@ -27,7 +27,10 @@ use gpui_component::calendar::Date;
 use gpui_component::date_picker::{DatePickerEvent, DatePickerState};
 use gpui_component::input::{InputEvent, InputState};
 
-use crate::board::entry_dialog::EntryDialog;
+pub use notifications::{NotificationAvailability, NotificationGateway};
+
+use app_services::AppServices;
+use entry_dialog::EntryDialog;
 
 #[derive(Clone)]
 struct BoardServices {
@@ -61,19 +64,16 @@ impl BoardServices {
 
 impl Global for BoardServices {}
 
-pub(crate) fn init(cx: &mut App) {
+pub fn init(cx: &mut App) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<crate::AppServices>().runtime();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.set_global(BoardServices::new(runtime));
     }
 }
 
-pub(crate) fn init_with_notification_gateway(
-    cx: &mut App,
-    gateway: Arc<dyn notifications::NotificationGateway>,
-) {
+pub fn init_with_notification_gateway(cx: &mut App, gateway: Arc<dyn NotificationGateway>) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<crate::AppServices>().runtime();
+        let runtime = cx.global::<AppServices>().runtime();
         cx.set_global(BoardServices::with_notifications(
             runtime,
             notifications::BoardNotifications::new(gateway),
@@ -101,7 +101,7 @@ struct RelatedNotesState {
 struct BoardMutationState {
     load_error: Option<SharedString>,
     mutation_error: Option<SharedString>,
-    load_request: crate::request_tracker::RequestTracker,
+    load_request: workspace_ui::RequestTracker,
     layout_commit_task: Option<Task<()>>,
     loaded_generation: Option<u64>,
     local_generation: u64,
@@ -175,7 +175,7 @@ struct EntryEditingState {
     attachment_preview_paths: HashMap<u32, PathBuf>,
 }
 
-pub(crate) struct BoardView {
+pub struct BoardView {
     data: BoardDataState,
     properties: BoardPropertiesState,
     related_notes: RelatedNotesState,
@@ -184,15 +184,15 @@ pub(crate) struct BoardView {
     filters: filters::BoardFilters,
     filter_panel_open: bool,
     board_scroll_handle: ScrollHandle,
-    pending_reveal_target: Option<crate::workspace_navigation::WorkspaceNavigationTarget>,
+    pending_reveal_target: Option<workspace_ui::WorkspaceNavigationTarget>,
     revealed_list_id: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum BoardViewEvent {
+pub enum BoardViewEvent {
     LoadFinished(u32),
     OpenNote(u32),
-    OpenWorkspaceTarget(crate::workspace_navigation::WorkspaceNavigationTarget),
+    OpenWorkspaceTarget(workspace_ui::WorkspaceNavigationTarget),
     NavigationUnavailable(String),
     DataCommitted {
         board_id: u32,
@@ -208,7 +208,7 @@ pub(crate) enum BoardViewEvent {
 impl EventEmitter<BoardViewEvent> for BoardView {}
 
 impl BoardView {
-    pub(crate) fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
+    pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, cx))
     }
 
@@ -632,7 +632,7 @@ impl BoardView {
             mutation: BoardMutationState {
                 load_error: None,
                 mutation_error: None,
-                load_request: crate::request_tracker::RequestTracker::default(),
+                load_request: workspace_ui::RequestTracker::default(),
                 layout_commit_task: None,
                 loaded_generation: None,
                 local_generation: 0,
@@ -672,24 +672,20 @@ impl BoardView {
         }
     }
 
-    pub(crate) fn queue_reveal_target(
+    pub fn queue_reveal_target(
         &mut self,
-        target: crate::workspace_navigation::WorkspaceNavigationTarget,
+        target: workspace_ui::WorkspaceNavigationTarget,
         cx: &mut Context<Self>,
     ) {
         self.pending_reveal_target = Some(target);
         cx.notify();
     }
 
-    pub(crate) fn apply_pending_reveal(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub fn apply_pending_reveal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(target) = self.pending_reveal_target else {
             return true;
         };
-        let crate::workspace_navigation::WorkspaceNavigationTarget::Board {
+        let workspace_ui::WorkspaceNavigationTarget::Board {
             board_id,
             list_id,
             card_id,

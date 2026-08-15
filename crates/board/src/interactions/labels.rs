@@ -1,7 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn create_board_label(&mut self, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn create_board_label(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(board_id) = self.data.board_id else {
             return;
         };
@@ -48,7 +48,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn rename_board_label(&mut self, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn rename_board_label(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(label_id) = self.entry_editing.renaming_label_id else {
             return;
         };
@@ -80,7 +80,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn set_entry_label_assignment(
+    pub(crate) fn set_entry_label_assignment(
         &mut self,
         entry_id: u32,
         label_id: u32,
@@ -128,7 +128,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn delete_board_label(&mut self, label_id: u32, cx: &mut Context<Self>) {
+    pub(crate) fn delete_board_label(&mut self, label_id: u32, cx: &mut Context<Self>) {
         self.data.labels.retain(|label| label.id != label_id);
         self.filters.label_ids.remove(&label_id);
         self.data

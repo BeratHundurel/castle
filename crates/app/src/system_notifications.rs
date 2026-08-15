@@ -5,7 +5,7 @@ use storage::Store;
 use storage::reminders::DueReminder;
 use tokio::sync::Notify;
 
-use crate::board::notifications::{NotificationAvailability, NotificationGateway};
+use ::board::{NotificationAvailability, NotificationGateway};
 
 static REMINDER_WAKE: OnceLock<Arc<Notify>> = OnceLock::new();
 
@@ -26,7 +26,7 @@ impl NotificationGateway for SystemNotificationGateway {
 }
 
 pub fn install_board_gateway(cx: &mut gpui::App) {
-    crate::board::init_with_notification_gateway(cx, Arc::new(SystemNotificationGateway));
+    ::board::init_with_notification_gateway(cx, Arc::new(SystemNotificationGateway));
 }
 
 pub fn start(store: Store) {

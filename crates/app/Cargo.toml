@@ -27,6 +27,7 @@ tree-sitter-json.workspace = true
 storage = { path = "../storage" }
 app_services = { path = "../app_services" }
 app_settings = { path = "../app_settings" }
+board = { path = "../board" }
 workspace_ui = { path = "../workspace_ui" }
 document_editor = { path = "../document_editor" }
 dotenvy = "0.15"

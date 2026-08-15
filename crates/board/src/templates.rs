@@ -11,7 +11,7 @@ use gpui_component::{
 };
 
 use super::BoardView;
-use crate::AppServices;
+use app_services::AppServices;
 
 impl BoardView {
     pub(super) fn show_save_template_dialog(

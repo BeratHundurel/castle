@@ -106,12 +106,33 @@ fn assert_sources_exclude_feature_paths(directory: &Path, forbidden_crates: &[&s
         let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
         for forbidden in forbidden_crates {
             assert!(
-                !production.contains(&format!("{forbidden}::")),
+                !contains_crate_path(production, forbidden),
                 "{} references forbidden feature path {forbidden}::",
                 path.display()
             );
         }
     }
+}
+
+fn contains_crate_path(source: &str, crate_name: &str) -> bool {
+    let path = format!("{crate_name}::");
+    source.match_indices(&path).any(|(index, _)| {
+        source[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+    })
+}
+
+#[test]
+fn feature_path_detection_requires_an_identifier_boundary() {
+    assert!(contains_crate_path("use board::BoardView;", "board"));
+    assert!(contains_crate_path(
+        "type View = ::board::BoardView;",
+        "board"
+    ));
+    assert!(!contains_crate_path("clipboard::Clipboard", "board"));
+    assert!(!contains_crate_path("dashboard::View", "board"));
 }
 
 fn assert_manifest_has_no_production_database_dependency(manifest_path: &Path) {

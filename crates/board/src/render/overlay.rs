@@ -289,11 +289,11 @@ impl BoardView {
             .map(|(_, entry)| entry.reminder_enabled)
             .unwrap_or(false);
         let reminder_view = cx.entity();
-        let notifications = cx.global::<crate::board::BoardServices>().notifications();
+        let notifications = cx.global::<crate::BoardServices>().notifications();
         let notification_availability = notifications.availability();
         let (notification_label, notification_help, notification_icon, notification_color) =
             match notification_availability {
-                crate::board::notifications::NotificationAvailability::Enabled => (
+                crate::notifications::NotificationAvailability::Enabled => (
                     "System notifications on",
                     if reminder_enabled {
                         "Castle will alert you on the due date or the next time it starts."
@@ -303,31 +303,31 @@ impl BoardView {
                     IconName::CircleCheck,
                     cx.theme().success,
                 ),
-                crate::board::notifications::NotificationAvailability::DisabledForApplication => (
+                crate::notifications::NotificationAvailability::DisabledForApplication => (
                     "System notifications off",
                     "Windows is blocking Castle notifications. Enable them in Settings.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::board::notifications::NotificationAvailability::DisabledForUser => (
+                crate::notifications::NotificationAvailability::DisabledForUser => (
                     "System notifications off",
                     "Windows notifications are turned off. Enable them in Settings.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::board::notifications::NotificationAvailability::DisabledByPolicy => (
+                crate::notifications::NotificationAvailability::DisabledByPolicy => (
                     "System notifications blocked",
                     "Notifications are disabled by system policy.",
                     IconName::CircleX,
                     cx.theme().danger,
                 ),
-                crate::board::notifications::NotificationAvailability::Unsupported => (
+                crate::notifications::NotificationAvailability::Unsupported => (
                     "System notifications unavailable",
                     "Castle does not support system notifications on this platform yet.",
                     IconName::Info,
                     cx.theme().muted_foreground,
                 ),
-                crate::board::notifications::NotificationAvailability::Unavailable => (
+                crate::notifications::NotificationAvailability::Unavailable => (
                     "Notification status unavailable",
                     "Castle could not check the system notification service.",
                     IconName::Info,
@@ -467,7 +467,7 @@ impl BoardView {
                             )
                             .when(
                                 notification_availability
-                                    == crate::board::notifications::NotificationAvailability::Enabled,
+                                    == crate::notifications::NotificationAvailability::Enabled,
                                 |this| {
                                     let notifications = notifications.clone();
                                     this.child(
@@ -509,7 +509,7 @@ impl BoardView {
                     )
                     .when(
                         notification_availability
-                            != crate::board::notifications::NotificationAvailability::Enabled,
+                            != crate::notifications::NotificationAvailability::Enabled,
                         |this| {
                             this.child(
                                 div()

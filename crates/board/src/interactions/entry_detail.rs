@@ -1,7 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn update_selected_entry(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn update_selected_entry(&mut self, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
@@ -45,7 +45,7 @@ impl BoardView {
                         entry_id,
                         title,
                         description,
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -83,7 +83,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn update_selected_entry_due_on(
+    pub(crate) fn update_selected_entry_due_on(
         &mut self,
         due_on: Option<String>,
         cx: &mut Context<Self>,
@@ -111,7 +111,7 @@ impl BoardView {
         let revision = self.entry_editing.next_due_date_update_revision;
         let persisted_revisions = self.entry_editing.persisted_due_date_revisions.clone();
         let db = cx.global::<AppServices>().store();
-        let notifications = cx.global::<crate::board::BoardServices>().notifications();
+        let notifications = cx.global::<crate::BoardServices>().notifications();
         self.commit_board_mutation(cx, "Could not save due date", false, async move {
             let mut persisted_revisions = persisted_revisions.lock().await;
             if persisted_revisions
@@ -127,11 +127,7 @@ impl BoardView {
         });
     }
 
-    pub(in crate::board) fn set_selected_entry_reminder(
-        &mut self,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn set_selected_entry_reminder(&mut self, enabled: bool, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
@@ -152,7 +148,7 @@ impl BoardView {
         cx.notify();
 
         let db = cx.global::<AppServices>().store();
-        let notifications = cx.global::<crate::board::BoardServices>().notifications();
+        let notifications = cx.global::<crate::BoardServices>().notifications();
         self.commit_board_mutation(cx, "Could not save reminder", false, async move {
             storage::board_commands::set_board_card_reminder(&db, entry_id, enabled).await?;
             notifications.wake();

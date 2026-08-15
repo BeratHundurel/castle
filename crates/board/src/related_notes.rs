@@ -5,7 +5,7 @@ use gpui::{
 };
 use gpui_component::input::InputState;
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::{BoardView, BoardViewEvent};
 
@@ -81,7 +81,7 @@ impl RelatedNotePickerState {
 }
 
 impl BoardView {
-    pub(in crate::board) fn related_note_candidates(
+    pub(crate) fn related_note_candidates(
         &self,
         item: storage::workspace_links::WorkspaceItemRef,
         cx: &mut Context<Self>,
@@ -132,7 +132,7 @@ impl BoardView {
         candidates
     }
 
-    pub(in crate::board) fn activate_related_note_candidate(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn activate_related_note_candidate(&mut self, cx: &mut Context<Self>) {
         let Some(item) = self.related_notes.picker.target else {
             return;
         };
@@ -158,7 +158,7 @@ impl BoardView {
         self.link_note_to_item(item, note_id, cx);
     }
 
-    pub(crate) fn move_related_note_candidate(&mut self, direction: isize, cx: &mut Context<Self>) {
+    pub fn move_related_note_candidate(&mut self, direction: isize, cx: &mut Context<Self>) {
         let Some(item) = self.related_notes.picker.target else {
             return;
         };
@@ -177,20 +177,16 @@ impl BoardView {
         cx.notify();
     }
 
-    pub(crate) fn related_note_picker_open(&self) -> bool {
+    pub fn related_note_picker_open(&self) -> bool {
         self.related_notes.picker.open
     }
 
-    pub(crate) fn close_related_note_picker(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn close_related_note_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.related_notes.picker.set_open(false, None, window, cx);
         cx.notify();
     }
 
-    pub(in crate::board) fn selected_workspace_item(
+    pub(crate) fn selected_workspace_item(
         &self,
     ) -> Option<storage::workspace_links::WorkspaceItemRef> {
         Some(storage::workspace_links::WorkspaceItemRef {
@@ -199,7 +195,7 @@ impl BoardView {
         })
     }
 
-    pub(in crate::board) fn related_notes_for_item(
+    pub(crate) fn related_notes_for_item(
         &self,
         item: storage::workspace_links::WorkspaceItemRef,
     ) -> Vec<storage::workspace_links::RelatedNote> {
@@ -236,7 +232,7 @@ impl BoardView {
         Some(self.related_notes.by_item.entry(item).or_default())
     }
 
-    pub(in crate::board) fn link_note_to_item(
+    pub(crate) fn link_note_to_item(
         &mut self,
         item: storage::workspace_links::WorkspaceItemRef,
         note_id: i64,
@@ -308,7 +304,7 @@ impl BoardView {
                         note_id,
                         item,
                         true,
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -346,7 +342,7 @@ impl BoardView {
         .detach();
     }
 
-    pub(in crate::board) fn unlink_note_from_item(
+    pub(crate) fn unlink_note_from_item(
         &mut self,
         item: storage::workspace_links::WorkspaceItemRef,
         note_id: i64,
@@ -376,7 +372,7 @@ impl BoardView {
                         note_id,
                         item,
                         false,
-                        crate::now_ts(),
+                        app_services::now_ts(),
                     )
                     .await
                 })
@@ -433,13 +429,13 @@ impl BoardView {
         related_notes.retain(|related| !related.origins.is_empty());
     }
 
-    pub(in crate::board) fn open_related_note(&self, note_id: i64, cx: &mut Context<Self>) {
+    pub(crate) fn open_related_note(&self, note_id: i64, cx: &mut Context<Self>) {
         if let Ok(note_id) = u32::try_from(note_id) {
             cx.emit(BoardViewEvent::OpenNote(note_id));
         }
     }
 
-    pub(in crate::board) fn create_note_for_item(
+    pub(crate) fn create_note_for_item(
         &self,
         item: storage::workspace_links::WorkspaceItemRef,
         cx: &mut Context<Self>,

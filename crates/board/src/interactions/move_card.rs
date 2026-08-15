@@ -1,7 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
         let Some(entry_id) = self.entry_editing.dialog.entry_id else {
             return;
         };
@@ -24,18 +24,18 @@ impl BoardView {
                     kind: storage::trash::TrashItemKind::Entry,
                     id: entry_id,
                 },
-                crate::now_ts(),
+                app_services::now_ts(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())
         });
     }
 
-    pub(in crate::board) fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn persist_card_positions(&mut self, cx: &mut Context<Self>) {
         self.persist_board_layout(cx);
     }
 
-    pub(in crate::board) fn move_card(
+    pub(crate) fn move_card(
         &mut self,
         info: &CardDragInfo,
         target_card_id: u32,
@@ -71,11 +71,7 @@ impl BoardView {
         self.persist_card_positions(cx);
     }
 
-    pub(in crate::board) fn move_card_to_end(
-        &mut self,
-        info: &CardDragInfo,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn move_card_to_end(&mut self, info: &CardDragInfo, cx: &mut Context<Self>) {
         let Some(board_id) = self.data.board_id else {
             return;
         };
@@ -102,7 +98,7 @@ impl BoardView {
         self.persist_card_positions(cx);
     }
 
-    pub(in crate::board) fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
+    pub(crate) fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
         self.data.lists.retain(|card| card.id != card_id);
         cx.notify();
 
@@ -114,7 +110,7 @@ impl BoardView {
                     kind: storage::trash::TrashItemKind::List,
                     id: card_id,
                 },
-                crate::now_ts(),
+                app_services::now_ts(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())

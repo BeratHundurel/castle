@@ -2,7 +2,7 @@ use super::*;
 use std::cmp::Ordering;
 
 impl BoardView {
-    pub(in crate::board) fn selected_entry(&self) -> Option<(&str, &BoardCardDTO)> {
+    pub(crate) fn selected_entry(&self) -> Option<(&str, &BoardCardDTO)> {
         let entry_id = self.entry_editing.dialog.entry_id?;
 
         self.data.lists.iter().find_map(|card| {
@@ -56,7 +56,7 @@ impl BoardView {
 
     pub(super) fn render_label_chip(
         &self,
-        label: &crate::board::dto::BoardLabelDTO,
+        label: &crate::dto::BoardLabelDTO,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let marker = self.label_marker_color(label.color.as_ref(), cx);

@@ -268,7 +268,7 @@ impl BoardView {
         cx.notify();
     }
 
-    pub(crate) fn open_entry_dialog(
+    pub fn open_entry_dialog(
         &mut self,
         entry_id: u32,
         window: &mut Window,

@@ -276,6 +276,7 @@ dependencies = [
  "anyhow",
  "app_services",
  "app_settings",
+ "board",
  "chrono",
  "document_editor",
  "dotenvy",
@@ -1158,6 +1159,26 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "board"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "app_services",
+ "chrono",
+ "entity",
+ "gpui",
+ "gpui-component",
+ "image",
+ "migration",
+ "sea-orm",
+ "serde",
+ "storage",
+ "tempfile",
+ "tokio",
+ "workspace_ui",
 ]
 
 [[package]]

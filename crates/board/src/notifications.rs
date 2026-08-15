@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NotificationAvailability {
+pub enum NotificationAvailability {
     Enabled,
     DisabledForApplication,
     DisabledForUser,
@@ -16,7 +16,7 @@ impl NotificationAvailability {
     }
 }
 
-pub(crate) trait NotificationGateway: Send + Sync + 'static {
+pub trait NotificationGateway: Send + Sync + 'static {
     fn availability(&self) -> NotificationAvailability;
     fn wake(&self);
     fn show_test_notification(&self) -> anyhow::Result<()>;

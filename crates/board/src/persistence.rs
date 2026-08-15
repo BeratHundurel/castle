@@ -1,16 +1,12 @@
 use gpui::{Context, SharedString};
 use std::{future::Future, sync::Arc};
 
-use crate::AppServices;
+use app_services::AppServices;
 
 use super::{BoardView, BoardViewEvent, dto::*};
 
 impl BoardView {
-    pub(in crate::board) fn emit_data_committed(
-        &self,
-        cx: &mut Context<Self>,
-        links_changed: bool,
-    ) {
+    pub(crate) fn emit_data_committed(&self, cx: &mut Context<Self>, links_changed: bool) {
         if let Some(board_id) = self.data.board_id {
             cx.emit(BoardViewEvent::DataCommitted {
                 board_id,
@@ -19,7 +15,7 @@ impl BoardView {
         }
     }
 
-    pub(in crate::board) fn commit_board_mutation<F>(
+    pub(crate) fn commit_board_mutation<F>(
         &mut self,
         cx: &mut Context<Self>,
         failure_context: &'static str,
@@ -63,12 +59,11 @@ impl BoardView {
         .detach();
     }
 
-    #[cfg(test)]
-    pub(crate) fn loaded_card_count(&self) -> usize {
+    pub fn loaded_card_count(&self) -> usize {
         self.data.lists.len()
     }
 
-    pub(crate) fn load_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
+    pub fn load_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
         if self.data.board_id == Some(board_id) {
             return;
         }
@@ -76,7 +71,7 @@ impl BoardView {
         self.reload_board(board_id, cx);
     }
 
-    pub(crate) fn reload_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
+    pub fn reload_board(&mut self, board_id: u32, cx: &mut Context<Self>) {
         if self.data.board_id != Some(board_id) {
             self.mutation.mutation_error = None;
         }
@@ -272,6 +267,7 @@ pub(super) async fn load_board_data(
 mod tests {
     use super::load_board_data;
     use anyhow::Result;
+    use app_services::AppServices;
     use entity::{
         board, board::Entity as Board, board_label, board_label::Entity as BoardLabel, card,
         card::Entity as Card, entry, entry::Entity as Entry, entry_attachment,
@@ -440,7 +436,7 @@ mod tests {
             })
             .expect("board restore setup should succeed");
 
-        let db = crate::AppServices::new(Arc::new(db), PathBuf::new());
+        let db = AppServices::new(Arc::new(db), PathBuf::new());
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
@@ -520,8 +516,8 @@ mod tests {
             })
             .expect("board move race setup should succeed");
 
-        let app_db = crate::AppServices::new(db.clone(), PathBuf::new());
-        let board_services = crate::board::BoardServices::new(runtime.handle().clone());
+        let app_db = AppServices::new(db.clone(), PathBuf::new());
+        let board_services = crate::BoardServices::new(runtime.handle().clone());
         let position_persistence = board_services.layout_persistence();
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
@@ -853,7 +849,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::AppServices::new(db, PathBuf::new()));
+            cx.set_global(AppServices::new(db, PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
                 view.update(cx, |board, cx| board.load_board(board_id, cx));

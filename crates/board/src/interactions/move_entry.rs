@@ -1,7 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(in crate::board) fn move_entry(
+    pub(crate) fn move_entry(
         &mut self,
         info: &DragInfo,
         target_card_id: u32,
@@ -23,7 +23,7 @@ impl BoardView {
         self.move_entry_to_list_end(info.entry_id, target_card_id, cx);
     }
 
-    pub(in crate::board) fn move_entry_to_list_end(
+    pub(crate) fn move_entry_to_list_end(
         &mut self,
         entry_id: u32,
         target_card_id: u32,
@@ -34,7 +34,7 @@ impl BoardView {
         }
     }
 
-    pub(in crate::board) fn move_entry_before(
+    pub(crate) fn move_entry_before(
         &mut self,
         info: &DragInfo,
         target_card_id: u32,
@@ -115,7 +115,7 @@ impl BoardView {
         }
     }
 
-    pub(in crate::board) fn persist_board_layout(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn persist_board_layout(&mut self, cx: &mut Context<Self>) {
         let entries = normalize_entry_positions(&mut self.data.lists);
         let lists = self
             .data
@@ -136,9 +136,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<AppServices>();
-        let persistence = cx
-            .global::<crate::board::BoardServices>()
-            .layout_persistence();
+        let persistence = cx.global::<crate::BoardServices>().layout_persistence();
         let runtime = db.runtime();
         let revision = match persistence.submit(
             board_id,

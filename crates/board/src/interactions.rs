@@ -1,4 +1,4 @@
-use crate::AppServices;
+use app_services::AppServices;
 use gpui::{Context, ParentElement, SharedString, Styled, Window};
 use gpui_component::{
     WindowExt,
@@ -79,7 +79,7 @@ mod tests {
         BoardCardDTO, BoardLabelDTO, BoardListDTO, ChecklistItemDTO,
         move_entry_to_list_end_in_memory, normalize_entry_positions,
     };
-    use crate::board::persistence::load_board_data;
+    use crate::persistence::load_board_data;
 
     fn test_entry(id: u32, card_id: u32, position: i32, title: &str) -> BoardCardDTO {
         BoardCardDTO {
