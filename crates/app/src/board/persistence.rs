@@ -94,9 +94,7 @@ impl BoardView {
         let app_db = cx.global::<AppServices>();
         let store = app_db.store();
         let db = store.clone();
-        let board_layout_persistence = cx
-            .global::<super::BoardServices>()
-            .layout_persistence();
+        let board_layout_persistence = cx.global::<super::BoardServices>().layout_persistence();
         let runtime = app_db.runtime();
 
         let task = cx.spawn(async move |this, cx| {

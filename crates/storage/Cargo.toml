@@ -18,3 +18,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 tempfile = "3.23"
+test_support = { path = "../test_support" }

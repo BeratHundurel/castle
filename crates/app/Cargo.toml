@@ -27,6 +27,7 @@ tree-sitter-json.workspace = true
 storage = { path = "../storage" }
 app_services = { path = "../app_services" }
 app_settings = { path = "../app_settings" }
+workspace_ui = { path = "../workspace_ui" }
 mermaid_renderer = { path = "../mermaid_renderer" }
 dotenvy = "0.15"
 dprint-plugin-json = "0.22.1"
@@ -46,6 +47,7 @@ tempfile = "3.23"
 sea-orm.workspace = true
 migration = { path = "../migration" }
 entity = { path = "../entity" }
+test_support = { path = "../test_support" }
 
 [build-dependencies]
 embed-resource = "3.0"

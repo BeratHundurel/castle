@@ -79,18 +79,6 @@ impl SidebarContentItem {
         }
     }
 
-    pub(super) fn move_to(
-        &self,
-        sidebar: &mut SidebarView,
-        project_id: Option<u32>,
-        cx: &mut Context<SidebarView>,
-    ) {
-        match self {
-            Self::Board { id, .. } => sidebar.move_board(cx, *id, project_id),
-            Self::Note { id, .. } => sidebar.move_note(cx, *id, project_id),
-        }
-    }
-
     pub(super) fn is_pinned(&self) -> bool {
         match self {
             Self::Board { is_pinned, .. } | Self::Note { is_pinned, .. } => *is_pinned,

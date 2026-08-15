@@ -1,3 +1,9 @@
+//! Shared measurement primitives for Castle's test binaries.
+//!
+//! Add this crate only as a development dependency. A final test binary may
+//! contain only one global allocator, so consumers must remove any local
+//! `#[global_allocator]` declaration when adopting this crate.
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
@@ -5,7 +11,8 @@ use std::{
     rc::Rc,
 };
 
-struct TrackingAllocator;
+/// System allocator wrapper that tracks allocations independently per thread.
+pub struct TrackingAllocator;
 
 #[derive(Clone, Copy)]
 struct AllocationState {
@@ -82,19 +89,30 @@ fn record_deallocation(bytes: usize) {
     });
 }
 
-pub(crate) struct AllocationSnapshot {
+/// The allocation growth observed between the beginning and end of a measurement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AllocationDelta {
+    /// Maximum growth in live bytes over the measurement baseline.
+    pub peak_growth_bytes: usize,
+    /// Live bytes remaining above the measurement baseline at completion.
+    pub retained_growth_bytes: usize,
+    /// Sum of newly allocated bytes, including allocations later freed.
+    pub allocated_bytes: usize,
+}
+
+/// An in-progress allocation measurement bound to its originating thread.
+#[must_use = "call finish to obtain the allocation delta"]
+pub struct AllocationSnapshot {
     baseline_bytes: usize,
     allocated_bytes: usize,
     _current_thread: PhantomData<Rc<()>>,
 }
 
-pub(crate) struct AllocationDelta {
-    pub(crate) peak_growth_bytes: usize,
-    pub(crate) retained_growth_bytes: usize,
-    pub(crate) allocated_bytes: usize,
-}
-
-pub(crate) fn start_measurement() -> AllocationSnapshot {
+/// Starts a measurement for the calling thread.
+///
+/// Allocations on parallel test threads are excluded. Measurements must not be
+/// nested on the same thread because starting one resets that thread's peak.
+pub fn start_measurement() -> AllocationSnapshot {
     ALLOCATION_STATE.with(|cell| {
         let mut state = cell.get();
         state.peak_bytes = state.current_bytes;
@@ -109,7 +127,9 @@ pub(crate) fn start_measurement() -> AllocationSnapshot {
 }
 
 impl AllocationSnapshot {
-    pub(crate) fn finish(self) -> AllocationDelta {
+    /// Completes the measurement on its originating thread.
+    #[must_use]
+    pub fn finish(self) -> AllocationDelta {
         ALLOCATION_STATE.with(|state| {
             let state = state.get();
             AllocationDelta {
@@ -130,6 +150,36 @@ mod tests {
         sync::{Arc, Barrier},
         thread,
     };
+
+    #[test]
+    fn reports_allocated_peak_and_retained_bytes() {
+        const ALLOCATED_BYTES: usize = 64 * 1024;
+
+        let measurement = start_measurement();
+        let retained = vec![0_u8; ALLOCATED_BYTES];
+        std::hint::black_box(&retained);
+        let allocation = measurement.finish();
+
+        assert!(allocation.allocated_bytes >= ALLOCATED_BYTES);
+        assert!(allocation.peak_growth_bytes >= ALLOCATED_BYTES);
+        assert!(allocation.retained_growth_bytes >= ALLOCATED_BYTES);
+    }
+
+    #[test]
+    fn reports_freed_memory_as_not_retained() {
+        const ALLOCATED_BYTES: usize = 64 * 1024;
+
+        let measurement = start_measurement();
+        {
+            let released = vec![0_u8; ALLOCATED_BYTES];
+            std::hint::black_box(&released);
+        }
+        let allocation = measurement.finish();
+
+        assert!(allocation.allocated_bytes >= ALLOCATED_BYTES);
+        assert!(allocation.peak_growth_bytes >= ALLOCATED_BYTES);
+        assert_eq!(allocation.retained_growth_bytes, 0);
+    }
 
     #[test]
     fn measurement_ignores_allocations_from_parallel_test_threads() {

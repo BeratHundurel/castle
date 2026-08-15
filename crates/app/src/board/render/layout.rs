@@ -98,16 +98,16 @@ impl BoardView {
             .bg(cx.theme().background)
             .can_drop(|value, _, _| {
                 value
-                    .downcast_ref::<SidebarDragInfo>()
-                    .and_then(SidebarDragInfo::note_id)
+                    .downcast_ref::<WorkspaceDragInfo>()
+                    .and_then(WorkspaceDragInfo::note_id)
                     .is_some()
             })
-            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+            .drag_over::<WorkspaceDragInfo>(|this, _, _, cx| {
                 this.border_1()
                     .border_color(cx.theme().primary)
                     .bg(cx.theme().drop_target)
             })
-            .on_drop(cx.listener(|this, info: &SidebarDragInfo, _, cx| {
+            .on_drop(cx.listener(|this, info: &WorkspaceDragInfo, _, cx| {
                 if let (Some(board_id), Some(note_id)) = (this.data.board_id, info.note_id()) {
                     this.link_note_to_item(
                         storage::workspace_links::WorkspaceItemRef {

@@ -3,16 +3,16 @@ use super::*;
 fn accepts_entry_card_drop(value: &dyn std::any::Any) -> bool {
     value.is::<DragInfo>()
         || value
-            .downcast_ref::<SidebarDragInfo>()
-            .and_then(SidebarDragInfo::note_id)
+            .downcast_ref::<WorkspaceDragInfo>()
+            .and_then(WorkspaceDragInfo::note_id)
             .is_some()
 }
 
 fn accepts_list_header_drop(value: &dyn std::any::Any) -> bool {
     value.is::<CardDragInfo>()
         || value
-            .downcast_ref::<SidebarDragInfo>()
-            .and_then(SidebarDragInfo::note_id)
+            .downcast_ref::<WorkspaceDragInfo>()
+            .and_then(WorkspaceDragInfo::note_id)
             .is_some()
 }
 
@@ -115,13 +115,13 @@ impl BoardView {
             .cursor_move()
             .hover(|this| this.text_color(theme.foreground))
             .can_drop(|value, _, _| accepts_list_header_drop(value))
-            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+            .drag_over::<WorkspaceDragInfo>(|this, _, _, cx| {
                 this.rounded(cx.theme().radius)
                     .border_1()
                     .border_color(cx.theme().primary)
                     .bg(cx.theme().drop_target)
             })
-            .on_drop(cx.listener(move |this, info: &SidebarDragInfo, _, cx| {
+            .on_drop(cx.listener(move |this, info: &WorkspaceDragInfo, _, cx| {
                 if let Some(note_id) = info.note_id() {
                     this.link_note_to_item(
                         storage::workspace_links::WorkspaceItemRef {
@@ -261,12 +261,12 @@ impl BoardView {
             .id(entry.id as usize)
             .debug_selector(move || format!("board-entry-{entry_id}"))
             .can_drop(|value, _, _| accepts_entry_card_drop(value))
-            .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+            .drag_over::<WorkspaceDragInfo>(|this, _, _, cx| {
                 this.border_2()
                     .border_color(cx.theme().primary)
                     .bg(cx.theme().drop_target)
             })
-            .on_drop(cx.listener(move |this, info: &SidebarDragInfo, _, cx| {
+            .on_drop(cx.listener(move |this, info: &WorkspaceDragInfo, _, cx| {
                 if let Some(note_id) = info.note_id() {
                     this.link_note_to_item(
                         storage::workspace_links::WorkspaceItemRef {
@@ -453,5 +453,45 @@ impl BoardView {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{accepts_entry_card_drop, accepts_list_header_drop};
+    use gpui_component::IconName;
+    use workspace_ui::{WorkspaceDragInfo, WorkspaceDragKind};
+
+    fn workspace_drag(kind: WorkspaceDragKind) -> WorkspaceDragInfo {
+        WorkspaceDragInfo::new(
+            kind,
+            "Workspace item",
+            "Item",
+            "From workspace",
+            IconName::File,
+        )
+    }
+
+    #[test]
+    fn board_drop_targets_accept_notes_but_not_other_workspace_items() {
+        let note = workspace_drag(WorkspaceDragKind::Note {
+            id: 42,
+            project_id: None,
+        });
+        let board = workspace_drag(WorkspaceDragKind::Board {
+            id: 7,
+            project_id: None,
+        });
+        let project = workspace_drag(WorkspaceDragKind::Project {
+            id: 3,
+            source_index: 0,
+        });
+
+        assert!(accepts_entry_card_drop(&note));
+        assert!(accepts_list_header_drop(&note));
+        assert!(!accepts_entry_card_drop(&board));
+        assert!(!accepts_list_header_drop(&board));
+        assert!(!accepts_entry_card_drop(&project));
+        assert!(!accepts_list_header_drop(&project));
     }
 }

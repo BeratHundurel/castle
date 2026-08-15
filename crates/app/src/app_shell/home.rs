@@ -224,9 +224,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::app_settings::AppSettings::load(
-                settings_dir.path(),
-            ));
+            cx.set_global(crate::app_settings::AppSettings::load(settings_dir.path()));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, cx);

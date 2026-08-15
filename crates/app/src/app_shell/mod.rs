@@ -38,8 +38,8 @@ use crate::document_editor::{
     DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState,
     unique_note_path,
 };
-use crate::now_ts;
 use crate::home::WorkspaceHomeState;
+use crate::now_ts;
 use crate::sidebar::{SidebarEvent, SidebarView};
 use crate::trash::{TrashItem, TrashItemKind};
 

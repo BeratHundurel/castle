@@ -14,10 +14,11 @@ use gpui_component::{
 };
 
 use super::content_item::SidebarContentItem;
-use super::drag::{SidebarDragInfo, SidebarDragKind};
+use super::drag::{content_drag_info, project_drag_info};
 use super::event::SidebarEvent;
 use super::{SidebarView, action::*};
 use crate::app_settings::AppSettings;
+use workspace_ui::{WorkspaceDragInfo, WorkspaceDragKind};
 
 #[derive(Clone)]
 struct SidebarResizeDrag {
@@ -33,7 +34,7 @@ impl Render for SidebarResizeDrag {
 #[derive(Clone)]
 struct DraggableContentItem {
     menu_item: SidebarMenuItem,
-    drag_info: SidebarDragInfo,
+    drag_info: WorkspaceDragInfo,
 }
 
 #[derive(Clone)]
@@ -48,7 +49,7 @@ struct DraggableProjectItem {
     is_first: bool,
     is_last: bool,
     children: Vec<DraggableContentItem>,
-    drag_info: SidebarDragInfo,
+    drag_info: WorkspaceDragInfo,
     sidebar: Entity<SidebarView>,
 }
 
@@ -56,6 +57,19 @@ struct DraggableProjectItem {
 enum SidebarDragMenuEntry {
     Content(Box<DraggableContentItem>),
     Project(Box<DraggableProjectItem>),
+}
+
+fn move_dragged_content(
+    sidebar: &mut SidebarView,
+    kind: WorkspaceDragKind,
+    project_id: Option<u32>,
+    cx: &mut Context<SidebarView>,
+) {
+    match kind {
+        WorkspaceDragKind::Board { id, .. } => sidebar.move_board(cx, id, project_id),
+        WorkspaceDragKind::Note { id, .. } => sidebar.move_note(cx, id, project_id),
+        WorkspaceDragKind::Project { .. } => {}
+    }
 }
 
 #[derive(Clone)]
@@ -127,17 +141,16 @@ impl SidebarItem for SidebarDragMenu {
             .when(self.standalone_drop_target, |this| {
                 this.can_drop(|value, _, _| {
                     value
-                        .downcast_ref::<SidebarDragInfo>()
-                        .is_some_and(SidebarDragInfo::can_drop_on_standalone)
+                        .downcast_ref::<WorkspaceDragInfo>()
+                        .is_some_and(WorkspaceDragInfo::can_drop_on_standalone)
                 })
-                .drag_over::<SidebarDragInfo>(|this, _, _, cx| {
+                .drag_over::<WorkspaceDragInfo>(|this, _, _, cx| {
                     this.rounded(cx.theme().radius).bg(cx.theme().drop_target)
                 })
-                .on_drop(move |info: &SidebarDragInfo, _, cx| {
-                    let SidebarDragKind::Content(item) = &info.kind else {
-                        return;
-                    };
-                    sidebar.update(cx, |this, cx| item.move_to(this, None, cx));
+                .on_drop(move |info: &WorkspaceDragInfo, _, cx| {
+                    sidebar.update(cx, |this, cx| {
+                        move_dragged_content(this, info.kind(), None, cx)
+                    });
                 })
             })
             .into_any_element()
@@ -314,12 +327,12 @@ impl DraggableProjectItem {
                     .cursor_move()
                     .can_drop(move |value, _, _| {
                         value
-                            .downcast_ref::<SidebarDragInfo>()
+                            .downcast_ref::<WorkspaceDragInfo>()
                             .is_some_and(|info| info.can_drop_on_project(project_id))
                     })
-                    .drag_over::<SidebarDragInfo>(move |this, info, _, cx| match &info.kind {
-                        SidebarDragKind::Project { source_index, .. } => {
-                            if *source_index < project_index {
+                    .drag_over::<WorkspaceDragInfo>(move |this, info, _, cx| match info.kind() {
+                        WorkspaceDragKind::Project { source_index, .. } => {
+                            if source_index < project_index {
                                 this.border_b_2()
                             } else {
                                 this.border_t_2()
@@ -327,23 +340,24 @@ impl DraggableProjectItem {
                             .border_color(cx.theme().primary)
                             .bg(cx.theme().drop_target.opacity(0.72))
                         }
-                        SidebarDragKind::Content(_) => {
+                        WorkspaceDragKind::Board { .. } | WorkspaceDragKind::Note { .. } => {
                             this.rounded(cx.theme().radius).bg(cx.theme().drop_target)
                         }
                     })
-                    .on_drop(move |info: &SidebarDragInfo, _, cx| {
-                        if matches!(&info.kind, SidebarDragKind::Content(_)) {
+                    .on_drop(move |info: &WorkspaceDragInfo, _, cx| {
+                        if info.kind().is_content() {
                             drop_open_state.update(cx, |open, cx| {
                                 *open = true;
                                 cx.notify();
                             });
                         }
-                        sidebar.update(cx, |this, cx| match &info.kind {
-                            SidebarDragKind::Project { id, .. } => {
-                                this.reorder_project(*id, project_id, cx)
+                        sidebar.update(cx, |this, cx| match info.kind() {
+                            WorkspaceDragKind::Project { id, .. } => {
+                                this.reorder_project(id, project_id, cx)
                             }
-                            SidebarDragKind::Content(item) => {
-                                item.move_to(this, Some(project_id), cx)
+                            kind @ (WorkspaceDragKind::Board { .. }
+                            | WorkspaceDragKind::Note { .. }) => {
+                                move_dragged_content(this, kind, Some(project_id), cx)
                             }
                         });
                     })
@@ -495,7 +509,7 @@ impl SidebarView {
         cx: &mut Context<Self>,
         projects: Rc<Vec<(u32, SharedString)>>,
     ) -> DraggableContentItem {
-        let drag_info = SidebarDragInfo::content(item.clone(), origin);
+        let drag_info = content_drag_info(&item, origin);
         let menu_item = self.render_content_item(item, cx, true, projects);
 
         DraggableContentItem {
@@ -707,7 +721,7 @@ impl Render for SidebarView {
                         rename_input: self.rename_project_input.clone(),
                         is_first: is_first_project,
                         is_last: is_last_project,
-                        drag_info: SidebarDragInfo::project(
+                        drag_info: project_drag_info(
                             project_id,
                             project_index,
                             project_name,

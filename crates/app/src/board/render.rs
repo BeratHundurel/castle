@@ -35,7 +35,7 @@ use super::dto::BoardCardDTO;
 use super::due_date::{DueDateStatus, due_date_status};
 use super::filters::DueDateFilter;
 use crate::color_contrast::accessible_text_colors;
-use crate::sidebar::drag::SidebarDragInfo;
+use workspace_ui::WorkspaceDragInfo;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

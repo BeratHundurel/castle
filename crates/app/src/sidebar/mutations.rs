@@ -160,10 +160,9 @@ impl SidebarView {
                 id: board_id,
             };
             let result = match runtime
-                .spawn(async move {
-                    crate::trash::move_to_trash(&db, request, crate::now_ts())
-                        .await
-                })
+                .spawn(
+                    async move { crate::trash::move_to_trash(&db, request, crate::now_ts()).await },
+                )
                 .await
             {
                 Ok(result) => result,
@@ -259,10 +258,9 @@ impl SidebarView {
                 id: note_id,
             };
             let result = match runtime
-                .spawn(async move {
-                    crate::trash::move_to_trash(&db, request, crate::now_ts())
-                        .await
-                })
+                .spawn(
+                    async move { crate::trash::move_to_trash(&db, request, crate::now_ts()).await },
+                )
                 .await
             {
                 Ok(result) => result,

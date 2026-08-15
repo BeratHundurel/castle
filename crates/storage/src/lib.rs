@@ -20,4 +20,4 @@ pub mod workspace_links;
 pub use agent_store::{MutationOrigin, Mutations, Store, StoreOptions};
 
 #[cfg(test)]
-mod test_alloc;
+pub(crate) use test_support as test_alloc;
