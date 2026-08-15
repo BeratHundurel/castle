@@ -214,8 +214,7 @@ mod tests {
             })
             .expect("tab churn test setup should succeed");
 
-        let settings_dir =
-            std::env::temp_dir().join(format!("castle-restore-test-{}", std::process::id()));
+        let settings_dir = tempfile::tempdir().expect("settings directory should be created");
         let db = Arc::new(db);
         let held_connection = runtime
             .block_on(db.get_sqlite_connection_pool().acquire())
@@ -225,7 +224,9 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(crate::app_settings::AppSettings::load(settings_dir));
+            cx.set_global(crate::app_settings::AppSettings::load(
+                settings_dir.path(),
+            ));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, cx);
