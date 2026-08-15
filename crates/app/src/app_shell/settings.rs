@@ -352,10 +352,10 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                     ),
                     SettingItem::new(
                         "Open Shortcut",
-                        SettingField::input(
-                            AppSettings::tray_shortcut,
-                            AppSettings::set_tray_shortcut,
-                        )
+                        SettingField::input(AppSettings::tray_shortcut, |shortcut, cx| {
+                            AppSettings::set_tray_shortcut(shortcut.clone(), cx);
+                            crate::tray::update_shortcut(shortcut.as_ref(), cx);
+                        })
                         .default_value(crate::app_settings::DEFAULT_TRAY_SHORTCUT),
                     )
                     .description(

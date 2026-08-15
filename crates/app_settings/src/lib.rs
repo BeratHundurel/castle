@@ -14,7 +14,7 @@ mod persistence;
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DEFAULT_THEME_NAME: &str = "Sick";
-pub(crate) const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
+pub const DEFAULT_FONT_FAMILY: &str = "IBM Plex Sans";
 const DEFAULT_FONT_SIZE: f64 = 16.0;
 const DEFAULT_RADIUS: f64 = 6.0;
 const DEFAULT_SHOW_SIDEBAR: bool = true;
@@ -22,7 +22,7 @@ const DEFAULT_SIDEBAR_WIDTH: f64 = 260.0;
 const MIN_SIDEBAR_WIDTH: f64 = 200.0;
 const MAX_SIDEBAR_WIDTH: f64 = 480.0;
 const DEFAULT_SCROLLBAR_SHOW: &str = "scrolling";
-pub(crate) const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
+pub const DEFAULT_EDITOR_FONT_FAMILY: &str = "IBM Plex Mono";
 const DEFAULT_EDITOR_FONT_SIZE: f64 = 13.0;
 const DEFAULT_MARKDOWN_PREVIEW_FONT_SIZE: f64 = 16.0;
 const DEFAULT_MARKDOWN_EDITOR_MODE: &str = "source";
@@ -32,11 +32,11 @@ const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
 const DEFAULT_EDITOR_VIM_MODE: bool = false;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
-pub(crate) const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
+pub const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum StoredTab {
+pub enum StoredTab {
     Chooser,
     Trash,
     Board {
@@ -52,10 +52,10 @@ pub(crate) enum StoredTab {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct TabSession {
-    pub(crate) tabs: Vec<StoredTab>,
-    pub(crate) active_tab_index: usize,
-    pub(crate) active_project_id: Option<u32>,
+pub struct TabSession {
+    pub tabs: Vec<StoredTab>,
+    pub active_tab_index: usize,
+    pub active_project_id: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -67,7 +67,7 @@ pub struct AppSettings {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub(super) struct StoredSettings {
+struct StoredSettings {
     theme_name: String,
     font_family: String,
     font_size: f64,
@@ -156,11 +156,11 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn show_sidebar(cx: &App) -> bool {
+    pub fn show_sidebar(cx: &App) -> bool {
         cx.global::<Self>().values.show_sidebar
     }
 
-    pub(crate) fn set_show_sidebar(visible: bool, cx: &mut App) {
+    pub fn set_show_sidebar(visible: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.show_sidebar = visible;
         });
@@ -179,17 +179,17 @@ impl AppSettings {
         self.persist_sync();
     }
 
-    pub(crate) fn sidebar_width(cx: &App) -> gpui::Pixels {
+    pub fn sidebar_width(cx: &App) -> gpui::Pixels {
         px(cx.global::<Self>().values.sidebar_width as f32)
     }
 
-    pub(crate) fn set_sidebar_width(width: gpui::Pixels, cx: &mut App) {
+    pub fn set_sidebar_width(width: gpui::Pixels, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.sidebar_width = width.as_f32() as f64;
         });
     }
 
-    pub(crate) fn set_theme_name(theme_name: SharedString, cx: &mut App) {
+    pub fn set_theme_name(theme_name: SharedString, cx: &mut App) {
         let (values, write) = {
             let settings = cx.global_mut::<Self>();
             settings.values.theme_name = theme_name.to_string();
@@ -207,11 +207,11 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn font_family(cx: &App) -> SharedString {
+    pub fn font_family(cx: &App) -> SharedString {
         cx.global::<Self>().values.font_family.as_str().into()
     }
 
-    pub(crate) fn set_font_family(font_family: SharedString, cx: &mut App) {
+    pub fn set_font_family(font_family: SharedString, cx: &mut App) {
         apply_font_family(font_family.as_ref(), cx);
         Self::update(cx, |settings| {
             settings.values.font_family = font_family.to_string();
@@ -219,7 +219,7 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_font_size(font_size: f64, cx: &mut App) {
+    pub fn set_font_size(font_size: f64, cx: &mut App) {
         apply_font_size(font_size, cx);
         Self::update(cx, |settings| {
             settings.values.font_size = font_size;
@@ -227,7 +227,7 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_radius(radius: f64, cx: &mut App) {
+    pub fn set_radius(radius: f64, cx: &mut App) {
         apply_radius(radius, cx);
         Self::update(cx, |settings| {
             settings.values.radius = radius;
@@ -235,7 +235,7 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_scrollbar_show(value: SharedString, cx: &mut App) {
+    pub fn set_scrollbar_show(value: SharedString, cx: &mut App) {
         apply_scrollbar_show(value.as_ref(), cx);
         Self::update(cx, |settings| {
             settings.values.scrollbar_show = value.to_string();
@@ -243,7 +243,7 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn editor_font_family(cx: &App) -> SharedString {
+    pub fn editor_font_family(cx: &App) -> SharedString {
         cx.global::<Self>()
             .values
             .editor_font_family
@@ -251,7 +251,7 @@ impl AppSettings {
             .into()
     }
 
-    pub(crate) fn set_editor_font_family(font_family: SharedString, cx: &mut App) {
+    pub fn set_editor_font_family(font_family: SharedString, cx: &mut App) {
         apply_editor_font_family(font_family.as_ref(), cx);
         Self::update(cx, |settings| {
             settings.values.editor_font_family = font_family.to_string();
@@ -259,7 +259,7 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_editor_font_size(font_size: f64, cx: &mut App) {
+    pub fn set_editor_font_size(font_size: f64, cx: &mut App) {
         apply_editor_font_size(font_size, cx);
         Self::update(cx, |settings| {
             settings.values.editor_font_size = font_size;
@@ -267,22 +267,22 @@ impl AppSettings {
         cx.refresh_windows();
     }
 
-    pub(crate) fn editor_font_size(cx: &App) -> f64 {
+    pub fn editor_font_size(cx: &App) -> f64 {
         cx.global::<Self>().values.editor_font_size
     }
 
-    pub(crate) fn set_markdown_preview_font_size(font_size: f64, cx: &mut App) {
+    pub fn set_markdown_preview_font_size(font_size: f64, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_preview_font_size = font_size;
         });
         cx.refresh_windows();
     }
 
-    pub(crate) fn markdown_preview_font_size(cx: &App) -> f64 {
+    pub fn markdown_preview_font_size(cx: &App) -> f64 {
         cx.global::<Self>().values.markdown_preview_font_size
     }
 
-    pub(crate) fn markdown_editor_mode(cx: &App) -> SharedString {
+    pub fn markdown_editor_mode(cx: &App) -> SharedString {
         cx.global::<Self>()
             .values
             .markdown_editor_mode
@@ -290,91 +290,90 @@ impl AppSettings {
             .into()
     }
 
-    pub(crate) fn editor_line_numbers(cx: &App) -> bool {
+    pub fn editor_line_numbers(cx: &App) -> bool {
         cx.global::<Self>().values.editor_line_numbers
     }
 
-    pub(crate) fn editor_status_line_visible(cx: &App) -> bool {
+    pub fn editor_status_line_visible(cx: &App) -> bool {
         cx.global::<Self>().values.editor_status_line_visible
     }
 
-    pub(crate) fn editor_soft_wrap(cx: &App) -> bool {
+    pub fn editor_soft_wrap(cx: &App) -> bool {
         cx.global::<Self>().values.editor_soft_wrap
     }
 
-    pub(crate) fn editor_vim_mode(cx: &App) -> bool {
+    pub fn editor_vim_mode(cx: &App) -> bool {
         cx.global::<Self>().values.editor_vim_mode
     }
 
-    pub(crate) fn set_markdown_editor_mode(value: SharedString, cx: &mut App) {
+    pub fn set_markdown_editor_mode(value: SharedString, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_editor_mode = value.to_string();
         });
     }
 
-    pub(crate) fn set_editor_status_line_visible(visible: bool, cx: &mut App) {
+    pub fn set_editor_status_line_visible(visible: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.editor_status_line_visible = visible;
         });
         cx.refresh_windows();
     }
 
-    pub(crate) fn set_editor_line_numbers(enabled: bool, cx: &mut App) {
+    pub fn set_editor_line_numbers(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.editor_line_numbers = enabled;
         });
     }
 
-    pub(crate) fn set_editor_soft_wrap(enabled: bool, cx: &mut App) {
+    pub fn set_editor_soft_wrap(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.editor_soft_wrap = enabled;
         });
     }
 
-    pub(crate) fn set_editor_vim_mode(enabled: bool, cx: &mut App) {
+    pub fn set_editor_vim_mode(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.editor_vim_mode = enabled;
         });
         cx.refresh_windows();
     }
 
-    pub(crate) fn document_outline_visible(cx: &App) -> bool {
+    pub fn document_outline_visible(cx: &App) -> bool {
         cx.global::<Self>().values.document_outline_visible
     }
 
-    pub(crate) fn set_document_outline_visible(enabled: bool, cx: &mut App) {
+    pub fn set_document_outline_visible(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.document_outline_visible = enabled;
         });
     }
 
-    pub(crate) fn close_to_tray(cx: &App) -> bool {
+    pub fn close_to_tray(cx: &App) -> bool {
         cx.global::<Self>().values.close_to_tray
     }
 
-    pub(crate) fn set_close_to_tray(enabled: bool, cx: &mut App) {
+    pub fn set_close_to_tray(enabled: bool, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.close_to_tray = enabled;
         });
     }
 
-    pub(crate) fn tray_shortcut(cx: &App) -> SharedString {
+    pub fn tray_shortcut(cx: &App) -> SharedString {
         cx.global::<Self>().values.tray_shortcut.as_str().into()
     }
 
-    pub(crate) fn set_tray_shortcut(shortcut: SharedString, cx: &mut App) {
+    pub fn set_tray_shortcut(shortcut: SharedString, cx: &mut App) {
         let shortcut = shortcut.to_string();
         Self::update(cx, |settings| {
             settings.values.tray_shortcut = shortcut.clone();
         });
-        crate::tray::update_shortcut(&shortcut, cx);
     }
 
-    pub(crate) fn tab_session(cx: &App) -> TabSession {
+    pub fn tab_session(cx: &App) -> TabSession {
         cx.global::<Self>().values.tab_session.clone()
     }
 
-    pub(crate) fn set_tab_session(tab_session: TabSession, cx: &mut App) {
+    pub fn set_tab_session(tab_session: TabSession, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.tab_session = tab_session;
         });
@@ -397,7 +396,7 @@ impl AppSettings {
         SettingsPersistence::schedule(write);
     }
 
-    pub(crate) fn flush(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    pub fn flush(cx: &mut App) -> impl Future<Output = ()> + use<> {
         let write = cx.global::<Self>().prepare_write();
         async move {
             SettingsPersistence::write(write).await;
@@ -501,7 +500,7 @@ fn apply_editor_font_size(font_size: f64, cx: &mut App) {
     Theme::global_mut(cx).mono_font_size = px(font_size as f32);
 }
 
-pub(crate) fn scrollbar_show_key(show: ScrollbarShow) -> SharedString {
+pub fn scrollbar_show_key(show: ScrollbarShow) -> SharedString {
     match show {
         ScrollbarShow::Scrolling => "scrolling".into(),
         ScrollbarShow::Hover => "hover".into(),

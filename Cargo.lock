@@ -274,6 +274,7 @@ name = "app"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "app_settings",
  "chrono",
  "dotenvy",
  "dprint-plugin-json",
@@ -304,6 +305,19 @@ dependencies = [
  "tree-sitter-json",
  "windows 0.62.2",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "app_settings"
+version = "0.4.0"
+dependencies = [
+ "global-hotkey",
+ "gpui",
+ "gpui-component",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

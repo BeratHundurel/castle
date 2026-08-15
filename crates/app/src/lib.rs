@@ -1,5 +1,7 @@
 pub mod app_paths;
-pub mod app_settings;
+pub mod app_settings {
+    pub use ::app_settings::*;
+}
 pub mod app_shell;
 pub(crate) mod board;
 pub(crate) mod color_contrast;
