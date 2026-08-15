@@ -164,9 +164,7 @@ pub async fn load_board_view_projection(
             })
             .collect::<Vec<_>>();
         if let Some(sort) = config.sort.as_ref() {
-            entries.sort_by(|left, right| {
-                compare_entries_for_view(left, right, sort, &values, &properties.definitions)
-            });
+            sort_entries_for_view(&mut entries, sort, &values, &properties.definitions);
         }
         matching_card_count = matching_card_count.saturating_add(entries.len());
         let cards = entries
@@ -352,23 +350,64 @@ pub fn compare_entries_for_view(
 ) -> Ordering {
     let left_value = sort_value(left, &sort.property, values, definitions);
     let right_value = sort_value(right, &sort.property, values, definitions);
-    let ordering = match (&left_value, &right_value) {
+    compare_sort_values(left_value.as_ref(), right_value.as_ref(), sort.direction).then_with(|| {
+        (left.view_position(), left.view_id()).cmp(&(right.view_position(), right.view_id()))
+    })
+}
+
+fn sort_entries_for_view<T: BoardViewEntry>(
+    entries: &mut [T],
+    sort: &crate::board_properties::ViewSort,
+    values: &HashMap<(i64, i64), PropertyValue>,
+    definitions: &[PropertyDefinition],
+) {
+    let sort_values = entries
+        .iter()
+        .map(|entry| sort_value(entry, &sort.property, values, definitions))
+        .collect::<Vec<_>>();
+    let mut ordered_indices = (0..entries.len()).collect::<Vec<_>>();
+    ordered_indices.sort_by(|left_index, right_index| {
+        let left = &entries[*left_index];
+        let right = &entries[*right_index];
+        compare_sort_values(
+            sort_values[*left_index].as_ref(),
+            sort_values[*right_index].as_ref(),
+            sort.direction,
+        )
+        .then_with(|| {
+            (left.view_position(), left.view_id()).cmp(&(right.view_position(), right.view_id()))
+        })
+    });
+    let mut destinations = vec![0usize; entries.len()];
+    for (destination, source) in ordered_indices.into_iter().enumerate() {
+        destinations[source] = destination;
+    }
+    drop(sort_values);
+    for source in 0..entries.len() {
+        while destinations[source] != source {
+            let destination = destinations[source];
+            entries.swap(source, destination);
+            destinations.swap(source, destination);
+        }
+    }
+}
+
+fn compare_sort_values(
+    left_value: Option<&SortValue>,
+    right_value: Option<&SortValue>,
+    direction: SortDirection,
+) -> Ordering {
+    let ordering = match (left_value, right_value) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Greater,
         (Some(_), None) => Ordering::Less,
         (Some(left), Some(right)) => left.compare(right),
     };
-    let ordering = if sort.direction == SortDirection::Descending
-        && left_value.is_some()
-        && right_value.is_some()
-    {
+    if direction == SortDirection::Descending && left_value.is_some() && right_value.is_some() {
         ordering.reverse()
     } else {
         ordering
-    };
-    ordering.then_with(|| {
-        (left.view_position(), left.view_id()).cmp(&(right.view_position(), right.view_id()))
-    })
+    }
 }
 
 enum SortValue {
@@ -562,13 +601,354 @@ pub fn parse_board_view_embeds(content: &str) -> Vec<BoardViewEmbed> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BOARD_VIEW_PROJECTION_LIMIT, BoardViewProjectionResult, load_board_view_projection,
-        parse_embed_config,
+        BOARD_VIEW_PROJECTION_LIMIT, BoardViewEntry, BoardViewProjectionResult,
+        compare_entries_for_view, load_board_view_projection, parse_embed_config,
+        sort_entries_for_view,
     };
     use anyhow::Result;
     use entity::{board, card, entry, note};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use std::{cell::Cell, collections::HashMap};
+
+    use crate::board_properties::{
+        PropertyDefinition, PropertyKey, PropertyKind, PropertyOption, PropertyValue,
+        SortDirection, ViewSort,
+    };
+
+    #[derive(Debug)]
+    struct TestEntry {
+        id: i64,
+        position: i32,
+        due_on: Option<String>,
+        labels: Vec<String>,
+        related_note_count: usize,
+        label_sort_key_calls: Cell<usize>,
+    }
+
+    impl TestEntry {
+        fn new(id: i64, position: i32) -> Self {
+            Self {
+                id,
+                position,
+                due_on: None,
+                labels: Vec::new(),
+                related_note_count: 0,
+                label_sort_key_calls: Cell::new(0),
+            }
+        }
+
+        fn with_due_on(mut self, due_on: &str) -> Self {
+            self.due_on = Some(due_on.to_string());
+            self
+        }
+
+        fn with_labels(mut self, labels: &[&str]) -> Self {
+            self.labels = labels.iter().map(|label| (*label).to_string()).collect();
+            self
+        }
+    }
+
+    impl BoardViewEntry for TestEntry {
+        fn view_id(&self) -> i64 {
+            self.id
+        }
+
+        fn view_position(&self) -> i32 {
+            self.position
+        }
+
+        fn view_due_on(&self) -> Option<&str> {
+            self.due_on.as_deref()
+        }
+
+        fn view_has_labels(&self) -> bool {
+            !self.labels.is_empty()
+        }
+
+        fn view_has_any_label(&self, label_ids: &[i64]) -> bool {
+            self.labels
+                .iter()
+                .enumerate()
+                .any(|(index, _)| i64::try_from(index).is_ok_and(|id| label_ids.contains(&id)))
+        }
+
+        fn view_has_no_labels(&self, label_ids: &[i64]) -> bool {
+            !self.view_has_any_label(label_ids)
+        }
+
+        fn view_label_sort_key(&self) -> String {
+            self.label_sort_key_calls
+                .set(self.label_sort_key_calls.get().saturating_add(1));
+            self.labels
+                .iter()
+                .map(|label| label.to_lowercase())
+                .collect::<Vec<_>>()
+                .join("\0")
+        }
+
+        fn view_related_note_count(&self) -> usize {
+            self.related_note_count
+        }
+    }
+
+    fn sort_entries(
+        entries: &mut [TestEntry],
+        property: PropertyKey,
+        direction: SortDirection,
+        values: &HashMap<(i64, i64), PropertyValue>,
+        definitions: &[PropertyDefinition],
+    ) {
+        let sort = ViewSort {
+            property,
+            direction,
+        };
+        sort_entries_for_view(entries, &sort, values, definitions);
+    }
+
+    fn entry_ids(entries: &[TestEntry]) -> Vec<i64> {
+        entries.iter().map(|entry| entry.id).collect()
+    }
+
+    fn custom_property_definition() -> PropertyDefinition {
+        PropertyDefinition {
+            id: 7,
+            board_id: 1,
+            name: "Status".to_string(),
+            kind: PropertyKind::Select,
+            position: 0,
+            options: vec![
+                PropertyOption {
+                    id: 70,
+                    property_id: 7,
+                    name: "Beta".to_string(),
+                    color: "blue".to_string(),
+                    position: 0,
+                },
+                PropertyOption {
+                    id: 71,
+                    property_id: 7,
+                    name: "alpha".to_string(),
+                    color: "green".to_string(),
+                    position: 1,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn sorting_preserves_direction_missing_value_and_tie_break_behavior() {
+        let values = HashMap::new();
+        let definitions = Vec::new();
+        let make_entries = || {
+            vec![
+                TestEntry::new(9, 1).with_due_on("2026-09-01"),
+                TestEntry::new(8, 1).with_due_on("2026-08-20"),
+                TestEntry::new(10, 1).with_due_on("2026-08-20"),
+                TestEntry::new(7, 0).with_due_on("2026-08-20"),
+                TestEntry::new(6, 0),
+                TestEntry::new(5, 1),
+            ]
+        };
+
+        let mut ascending = make_entries();
+        sort_entries(
+            &mut ascending,
+            PropertyKey::DueDate,
+            SortDirection::Ascending,
+            &values,
+            &definitions,
+        );
+        assert_eq!(entry_ids(&ascending), vec![7, 8, 10, 9, 6, 5]);
+
+        let mut descending = make_entries();
+        sort_entries(
+            &mut descending,
+            PropertyKey::DueDate,
+            SortDirection::Descending,
+            &values,
+            &definitions,
+        );
+        assert_eq!(entry_ids(&descending), vec![9, 7, 8, 10, 6, 5]);
+
+        let sort = ViewSort {
+            property: PropertyKey::DueDate,
+            direction: SortDirection::Descending,
+        };
+        assert_eq!(
+            compare_entries_for_view(&descending[1], &descending[2], &sort, &values, &definitions,),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn sorting_labels_uses_case_insensitive_label_order_and_places_empty_last() {
+        let mut entries = vec![
+            TestEntry::new(1, 0).with_labels(&["Beta", "Alpha"]),
+            TestEntry::new(2, 0).with_labels(&["alpha", "Zulu"]),
+            TestEntry::new(3, 0),
+            TestEntry::new(4, 0).with_labels(&["ALPHA", "Beta"]),
+        ];
+
+        sort_entries(
+            &mut entries,
+            PropertyKey::Labels,
+            SortDirection::Ascending,
+            &HashMap::new(),
+            &[],
+        );
+
+        assert_eq!(entry_ids(&entries), vec![4, 2, 1, 3]);
+    }
+
+    #[test]
+    fn sorting_custom_text_select_and_date_is_case_insensitive_with_missing_last() {
+        let definitions = vec![custom_property_definition()];
+        let entries = || {
+            vec![
+                TestEntry::new(1, 0),
+                TestEntry::new(2, 0),
+                TestEntry::new(3, 0),
+            ]
+        };
+        let cases = [
+            (
+                HashMap::from([
+                    ((1, 7), PropertyValue::Text("Zulu".to_string())),
+                    ((2, 7), PropertyValue::Text("alpha".to_string())),
+                ]),
+                vec![2, 1, 3],
+            ),
+            (
+                HashMap::from([
+                    ((1, 7), PropertyValue::Select(70)),
+                    ((2, 7), PropertyValue::Select(71)),
+                ]),
+                vec![2, 1, 3],
+            ),
+            (
+                HashMap::from([
+                    ((1, 7), PropertyValue::Date("2026-09-01".to_string())),
+                    ((2, 7), PropertyValue::Date("2026-08-20".to_string())),
+                ]),
+                vec![2, 1, 3],
+            ),
+        ];
+
+        for (values, expected) in cases {
+            let mut entries = entries();
+            sort_entries(
+                &mut entries,
+                PropertyKey::Custom(7),
+                SortDirection::Ascending,
+                &values,
+                &definitions,
+            );
+            assert_eq!(entry_ids(&entries), expected);
+        }
+    }
+
+    #[test]
+    fn sorting_custom_number_and_checkbox_preserves_native_value_order() {
+        let definitions = vec![custom_property_definition()];
+        let mut number_entries = vec![
+            TestEntry::new(1, 0),
+            TestEntry::new(2, 0),
+            TestEntry::new(3, 0),
+        ];
+        let number_values = HashMap::from([
+            ((1, 7), PropertyValue::Number(4.5)),
+            ((2, 7), PropertyValue::Number(-2.0)),
+        ]);
+        sort_entries(
+            &mut number_entries,
+            PropertyKey::Custom(7),
+            SortDirection::Descending,
+            &number_values,
+            &definitions,
+        );
+        assert_eq!(entry_ids(&number_entries), vec![1, 2, 3]);
+
+        let mut checkbox_entries = vec![
+            TestEntry::new(1, 0),
+            TestEntry::new(2, 0),
+            TestEntry::new(3, 0),
+        ];
+        let checkbox_values = HashMap::from([
+            ((1, 7), PropertyValue::Checkbox(true)),
+            ((2, 7), PropertyValue::Checkbox(false)),
+        ]);
+        sort_entries(
+            &mut checkbox_entries,
+            PropertyKey::Custom(7),
+            SortDirection::Ascending,
+            &checkbox_values,
+            &definitions,
+        );
+        assert_eq!(entry_ids(&checkbox_entries), vec![2, 1, 3]);
+    }
+
+    fn large_label_entry_set(entry_count: usize) -> Vec<TestEntry> {
+        (0..entry_count)
+            .map(|index| {
+                let mixed_index = (index * 2_653 + 17) % entry_count;
+                TestEntry::new(i64::try_from(index).unwrap_or_default(), 0).with_labels(&[
+                    &format!("Label {mixed_index:05} Alpha"),
+                    &format!("Second {mixed_index:05} Beta"),
+                    &format!("Third {mixed_index:05} Gamma"),
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn projection_sort_generates_each_label_key_once_per_entry() {
+        const ENTRY_COUNT: usize = 4_096;
+        let mut entries = large_label_entry_set(ENTRY_COUNT);
+
+        sort_entries(
+            &mut entries,
+            PropertyKey::Labels,
+            SortDirection::Ascending,
+            &HashMap::new(),
+            &[],
+        );
+
+        let key_generation_calls = entries
+            .iter()
+            .map(|entry| entry.label_sort_key_calls.get())
+            .sum::<usize>();
+        eprintln!("entries={ENTRY_COUNT} label_sort_key_calls={key_generation_calls}");
+        assert_eq!(key_generation_calls, ENTRY_COUNT);
+    }
+
+    #[test]
+    #[ignore = "single-thread allocation probe; run with --ignored --exact --test-threads=1"]
+    fn measure_comparator_sort_allocations() {
+        const ENTRY_COUNT: usize = 4_096;
+        let mut entries = large_label_entry_set(ENTRY_COUNT);
+        let allocation = crate::test_alloc::start_measurement();
+
+        sort_entries(
+            &mut entries,
+            PropertyKey::Labels,
+            SortDirection::Ascending,
+            &HashMap::new(),
+            &[],
+        );
+
+        let allocation = allocation.finish();
+        let key_generation_calls = entries
+            .iter()
+            .map(|entry| entry.label_sort_key_calls.get())
+            .sum::<usize>();
+        eprintln!(
+            "entries={ENTRY_COUNT} label_sort_key_calls={key_generation_calls} allocated_bytes={} peak_heap_growth_bytes={} retained_heap_growth_bytes={}",
+            allocation.allocated_bytes,
+            allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes,
+        );
+    }
 
     #[test]
     fn parses_readable_embed_config() {
