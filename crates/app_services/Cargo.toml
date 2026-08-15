@@ -1,0 +1,10 @@
+[package]
+name = "app_services"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+tokio.workspace = true
+storage = { path = "../storage" }

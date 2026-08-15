@@ -94,7 +94,9 @@ impl BoardView {
         let app_db = cx.global::<AppServices>();
         let store = app_db.store();
         let db = store.clone();
-        let board_layout_persistence = app_db.board_layout_persistence();
+        let board_layout_persistence = cx
+            .global::<super::BoardServices>()
+            .layout_persistence();
         let runtime = app_db.runtime();
 
         let task = cx.spawn(async move |this, cx| {
@@ -520,11 +522,13 @@ mod tests {
             .expect("board move race setup should succeed");
 
         let app_db = crate::AppServices::new(db.clone(), PathBuf::new());
-        let position_persistence = app_db.board_layout_persistence();
+        let board_services = crate::board::BoardServices::new(runtime.handle().clone());
+        let position_persistence = board_services.layout_persistence();
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(app_db);
+            cx.set_global(board_services);
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
                 view.update(cx, |board, cx| board.load_board(board_id, cx));

@@ -308,7 +308,7 @@ impl BoardView {
                         note_id,
                         item,
                         true,
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })
@@ -376,7 +376,7 @@ impl BoardView {
                         note_id,
                         item,
                         false,
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })

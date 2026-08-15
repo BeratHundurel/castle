@@ -136,7 +136,7 @@ impl BoardView {
             return;
         };
         let db = cx.global::<AppServices>();
-        let persistence = db.board_layout_persistence();
+        let persistence = cx.global::<crate::board::BoardServices>().layout_persistence();
         let runtime = db.runtime();
         let revision = match persistence.submit(
             board_id,

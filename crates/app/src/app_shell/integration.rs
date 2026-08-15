@@ -190,7 +190,7 @@ impl AppShell {
                                             i64::from(note_id),
                                             list_id,
                                             title,
-                                            crate::document_editor::now_ts(),
+                                            crate::now_ts(),
                                         )
                                         .await
                                     })

@@ -35,9 +35,10 @@ use crate::app_settings::{AppSettings, StoredTab};
 use crate::board::{BoardView, BoardViewEvent};
 use crate::command_palette::{CommandPalette, CommandPaletteMode};
 use crate::document_editor::{
-    DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState, now_ts,
+    DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState,
     unique_note_path,
 };
+use crate::now_ts;
 use crate::home::WorkspaceHomeState;
 use crate::sidebar::{SidebarEvent, SidebarView};
 use crate::trash::{TrashItem, TrashItemKind};

@@ -45,7 +45,7 @@ impl BoardView {
                         entry_id,
                         title,
                         description,
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })

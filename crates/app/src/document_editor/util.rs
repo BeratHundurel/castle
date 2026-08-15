@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::path::{Path, PathBuf};
 
 pub(crate) fn suggested_file_name(title: &str) -> String {
     storage::workspace::suggested_note_file_name(title, "md")
@@ -49,13 +46,6 @@ pub(crate) fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
     }
 
     dir.join(file_name)
-}
-
-pub(crate) fn now_ts() -> i64 {
-    SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

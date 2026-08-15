@@ -27,6 +27,32 @@ use gpui_component::input::{InputEvent, InputState};
 
 use crate::board::entry_dialog::EntryDialog;
 
+#[derive(Clone)]
+struct BoardServices {
+    layout_persistence: storage::board_positions::BoardLayoutPersistence,
+}
+
+impl BoardServices {
+    fn new(runtime: tokio::runtime::Handle) -> Self {
+        Self {
+            layout_persistence: storage::board_positions::BoardLayoutPersistence::new(runtime),
+        }
+    }
+
+    fn layout_persistence(&self) -> storage::board_positions::BoardLayoutPersistence {
+        self.layout_persistence.clone()
+    }
+}
+
+impl Global for BoardServices {}
+
+pub(crate) fn init(cx: &mut App) {
+    if !cx.has_global::<BoardServices>() {
+        let runtime = cx.global::<crate::AppServices>().runtime();
+        cx.set_global(BoardServices::new(runtime));
+    }
+}
+
 struct BoardDataState {
     board_id: Option<u32>,
     lists: Vec<BoardListDTO>,
@@ -159,6 +185,7 @@ impl BoardView {
     }
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        init(cx);
         let entry_wikilink_completion_provider =
             crate::document_editor::links::WikiLinkCompletionProvider::new(-1);
         let entry_completion_provider =

@@ -161,7 +161,7 @@ impl SidebarView {
             };
             let result = match runtime
                 .spawn(async move {
-                    crate::trash::move_to_trash(&db, request, crate::document_editor::now_ts())
+                    crate::trash::move_to_trash(&db, request, crate::now_ts())
                         .await
                 })
                 .await
@@ -260,7 +260,7 @@ impl SidebarView {
             };
             let result = match runtime
                 .spawn(async move {
-                    crate::trash::move_to_trash(&db, request, crate::document_editor::now_ts())
+                    crate::trash::move_to_trash(&db, request, crate::now_ts())
                         .await
                 })
                 .await
@@ -610,7 +610,7 @@ impl SidebarView {
                             kind: crate::trash::TrashItemKind::Project,
                             id: project_id,
                         },
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })

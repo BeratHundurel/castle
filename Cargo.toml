@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/app",
+    "crates/app_services",
     "crates/app_settings",
     "crates/mermaid_renderer",
     "crates/storage",

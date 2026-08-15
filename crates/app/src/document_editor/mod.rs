@@ -37,7 +37,7 @@ use vim::VimState;
 
 pub use types::DocumentStats;
 pub(crate) use types::{DEFAULT_NOTE, DocumentKind, SaveState};
-pub(crate) use util::{now_ts, unique_note_path};
+pub(crate) use util::unique_note_path;
 
 const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);

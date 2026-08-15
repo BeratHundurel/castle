@@ -25,6 +25,7 @@ chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
 storage = { path = "../storage" }
+app_services = { path = "../app_services" }
 app_settings = { path = "../app_settings" }
 mermaid_renderer = { path = "../mermaid_renderer" }
 dotenvy = "0.15"

@@ -32,7 +32,7 @@ impl BoardView {
                     storage::board_commands::duplicate_board_card(
                         &db,
                         board_card_draft(source),
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })
@@ -87,7 +87,7 @@ impl BoardView {
                     storage::board_commands::duplicate_board_list(
                         &db,
                         board_list_draft(source),
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })
@@ -178,7 +178,7 @@ impl BoardView {
                     storage::board_commands::create_board_card(
                         &db,
                         board_card_draft(entry),
-                        crate::document_editor::now_ts(),
+                        crate::now_ts(),
                     )
                     .await
                 })

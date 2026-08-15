@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
         app_settings.apply_to_theme(cx);
         cx.set_global(app_settings.clone());
         cx.set_global(services);
+        app::init_board(cx);
 
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
         let window = cx
