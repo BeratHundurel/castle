@@ -1,5 +1,5 @@
 use gpui::SharedString;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 const JSON_OUTLINE_NODE_LIMIT: usize = 10_000;
 const JSON_VALUE_PREVIEW_LIMIT: usize = 80;
@@ -22,6 +22,15 @@ pub(crate) struct MarkdownOutline {
     items: Vec<OutlineRow>,
     pub(crate) sections: Vec<SharedString>,
     pub(crate) section_offsets: Vec<usize>,
+}
+
+struct MarkdownHeading {
+    level: u8,
+    title: String,
+    source_line: usize,
+    source_column: usize,
+    source_line_offset: usize,
+    source_byte_offset: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,19 +160,14 @@ impl DocumentOutline {
 
 impl MarkdownOutline {
     pub(crate) fn parse(source: &str) -> Self {
-        let lines = source.lines().collect::<Vec<_>>();
-        let mut line_offsets = Vec::with_capacity(lines.len());
-        let mut offset = 0usize;
-        for line in &lines {
-            line_offsets.push(offset);
-            offset = offset.saturating_add(line.len()).saturating_add(1);
-        }
-
-        let mut headings = Vec::<(u8, String, usize, usize)>::new();
+        let mut headings = Vec::<MarkdownHeading>::new();
         let mut in_fence = false;
         let mut fence_marker = None::<char>;
+        let mut previous_line = None::<(&str, usize, usize, usize)>;
+        let mut line_offset = 0usize;
 
-        for (line_index, line) in lines.iter().enumerate() {
+        for (line_index, line) in source.lines().enumerate() {
+            let source_byte_offset = line.as_ptr() as usize - source.as_ptr() as usize;
             let trimmed = line.trim_start();
             let marker = trimmed.chars().next();
             if matches!(marker, Some('`' | '~'))
@@ -176,61 +180,68 @@ impl MarkdownOutline {
                     in_fence = false;
                     fence_marker = None;
                 }
-                continue;
-            }
-            if in_fence {
-                continue;
-            }
-
-            let hash_count = trimmed.chars().take_while(|ch| *ch == '#').count();
-            if (1..=6).contains(&hash_count)
-                && trimmed
-                    .chars()
-                    .nth(hash_count)
-                    .is_some_and(char::is_whitespace)
-            {
-                let title = clean_heading(&trimmed[hash_count..]);
-                if !title.is_empty() {
-                    headings.push((
-                        hash_count as u8,
-                        title,
-                        line_index,
-                        line.len().saturating_sub(trimmed.len()),
-                    ));
-                }
-                continue;
-            }
-
-            if line_index > 0 && !trimmed.is_empty() {
-                let underline = trimmed.trim();
-                let level = if underline.len() >= 2 && underline.chars().all(|ch| ch == '=') {
-                    Some(1)
-                } else if underline.len() >= 2 && underline.chars().all(|ch| ch == '-') {
-                    Some(2)
-                } else {
-                    None
-                };
-                if let Some(level) = level {
-                    let previous = lines[line_index - 1].trim();
-                    if !previous.is_empty() {
-                        headings.push((level, clean_heading(previous), line_index - 1, 0));
+            } else if !in_fence {
+                let hash_count = trimmed.chars().take_while(|ch| *ch == '#').count();
+                if (1..=6).contains(&hash_count)
+                    && trimmed
+                        .chars()
+                        .nth(hash_count)
+                        .is_some_and(char::is_whitespace)
+                {
+                    let title = clean_heading(&trimmed[hash_count..]);
+                    if !title.is_empty() {
+                        headings.push(MarkdownHeading {
+                            level: hash_count as u8,
+                            title,
+                            source_line: line_index,
+                            source_column: line.len().saturating_sub(trimmed.len()),
+                            source_line_offset: line_offset,
+                            source_byte_offset,
+                        });
+                    }
+                } else if !trimmed.is_empty() {
+                    let underline = trimmed.trim();
+                    let level = if underline.len() >= 2 && underline.chars().all(|ch| ch == '=') {
+                        Some(1)
+                    } else if underline.len() >= 2 && underline.chars().all(|ch| ch == '-') {
+                        Some(2)
+                    } else {
+                        None
+                    };
+                    if let (Some(level), Some((previous, line, offset, byte_offset))) =
+                        (level, previous_line)
+                    {
+                        let previous = previous.trim();
+                        if !previous.is_empty() {
+                            headings.push(MarkdownHeading {
+                                level,
+                                title: clean_heading(previous),
+                                source_line: line,
+                                source_column: 0,
+                                source_line_offset: offset,
+                                source_byte_offset: byte_offset,
+                            });
+                        }
                     }
                 }
             }
+
+            previous_line = Some((line, line_index, line_offset, source_byte_offset));
+            line_offset = line_offset.saturating_add(line.len()).saturating_add(1);
         }
 
-        headings.sort_by_key(|heading| heading.2);
-        headings.dedup_by_key(|heading| heading.2);
+        headings.sort_by_key(|heading| heading.source_line);
+        headings.dedup_by_key(|heading| heading.source_line);
 
         let mut sections = Vec::with_capacity(headings.len().saturating_add(1));
         let mut section_offsets = Vec::with_capacity(headings.len().saturating_add(1));
         if let Some(first) = headings.first() {
-            if first.2 > 0 {
-                sections.push(SharedString::from(lines[..first.2].join("\n")));
+            if first.source_line > 0 {
+                sections.push(markdown_section(source, 0, first.source_byte_offset));
                 section_offsets.push(0);
             }
         } else if !source.is_empty() {
-            sections.push(SharedString::from(source.to_string()));
+            sections.push(SharedString::from(Arc::<str>::from(source)));
             section_offsets.push(0);
         }
 
@@ -238,23 +249,21 @@ impl MarkdownOutline {
         let items = headings
             .iter()
             .enumerate()
-            .map(|(index, (level, title, source_line, source_column))| {
+            .map(|(index, heading)| {
                 let end = headings
                     .get(index + 1)
-                    .map(|heading| heading.2)
-                    .unwrap_or(lines.len());
-                sections.push(SharedString::from(lines[*source_line..end].join("\n")));
-                section_offsets.push(line_offsets.get(*source_line).copied().unwrap_or_default());
+                    .map(|next| next.source_byte_offset)
+                    .unwrap_or(source.len());
+                sections.push(markdown_section(source, heading.source_byte_offset, end));
+                section_offsets.push(heading.source_line_offset);
                 OutlineRow {
                     node_index: Some(index),
-                    title: title.clone(),
-                    depth: usize::from(level.saturating_sub(1)),
-                    source_offset: line_offsets
-                        .get(*source_line)
-                        .copied()
-                        .unwrap_or_default()
-                        .saturating_add(*source_column),
-                    source_line: *source_line,
+                    title: heading.title.clone(),
+                    depth: usize::from(heading.level.saturating_sub(1)),
+                    source_offset: heading
+                        .source_line_offset
+                        .saturating_add(heading.source_column),
+                    source_line: heading.source_line,
                     preview_section_index: Some(index + section_offset),
                     has_children: false,
                     expanded: false,
@@ -278,6 +287,24 @@ impl MarkdownOutline {
             .find(|(_, item)| item.source_line <= line)
             .map(|(index, _)| index)
     }
+}
+
+fn markdown_section(source: &str, start: usize, end: usize) -> SharedString {
+    let source = &source[start..end];
+    if source.contains('\r') {
+        let mut section = String::with_capacity(source.len());
+        for (index, line) in source.lines().enumerate() {
+            if index > 0 {
+                section.push('\n');
+            }
+            section.push_str(line);
+        }
+        return SharedString::from(section);
+    }
+
+    SharedString::from(Arc::<str>::from(
+        source.strip_suffix('\n').unwrap_or(source),
+    ))
 }
 
 impl JsonOutline {
@@ -653,6 +680,200 @@ mod tests {
         assert_eq!(outline.section_offsets, vec![0, 7, 18]);
         assert_eq!(outline.items[1].preview_section_index, Some(2));
         assert_eq!(outline.items[1].depth, 1);
+    }
+
+    #[test]
+    fn parses_atx_and_setext_headings_with_exact_sections() {
+        let outline =
+            MarkdownOutline::parse("# One ###\nBody\nTwo\n===\nTail\n### _Three_ ###\nMore");
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (
+                    item.title.as_str(),
+                    item.depth,
+                    item.source_line,
+                    item.source_offset,
+                    item.preview_section_index,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("One", 0, 0, 0, Some(0)),
+                ("Two", 0, 2, 15, Some(1)),
+                ("Three", 2, 5, 28, Some(2)),
+            ]
+        );
+        assert_eq!(
+            outline
+                .sections
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["# One ###\nBody", "Two\n===\nTail", "### _Three_ ###\nMore",]
+        );
+        assert_eq!(outline.section_offsets, vec![0, 15, 28]);
+    }
+
+    #[test]
+    fn ignores_atx_and_setext_headings_inside_matching_fences() {
+        let source = "~~~markdown\n# Hidden\n~~~\n# Visible\n```md\nSetext hidden\n---\n```\nOutside\n=======";
+        let outline = MarkdownOutline::parse(source);
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.title.as_str(), item.source_line, item.source_offset))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "Visible",
+                    3,
+                    source.find("# Visible").expect("heading should exist")
+                ),
+                (
+                    "Outside",
+                    8,
+                    source.find("Outside").expect("heading should exist")
+                ),
+            ]
+        );
+        assert_eq!(
+            outline
+                .sections
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec![
+                "~~~markdown\n# Hidden\n~~~",
+                "# Visible\n```md\nSetext hidden\n---\n```",
+                "Outside\n=======",
+            ]
+        );
+        assert_eq!(
+            outline.section_offsets,
+            vec![
+                0,
+                source.find("# Visible").expect("heading should exist"),
+                source.find("Outside").expect("heading should exist")
+            ]
+        );
+    }
+
+    #[test]
+    fn markdown_offsets_count_utf8_bytes() {
+        let source = "Préface\n  ## Café\nBody\nRésumé\n-------";
+        let outline = MarkdownOutline::parse(source);
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.title.as_str(), item.source_line, item.source_offset))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "Café",
+                    1,
+                    source.find("## Café").expect("heading should exist")
+                ),
+                (
+                    "Résumé",
+                    3,
+                    source.find("Résumé").expect("heading should exist")
+                ),
+            ]
+        );
+        assert_eq!(
+            outline.section_offsets,
+            vec![
+                0,
+                source.find("  ## Café").expect("section should exist"),
+                source.find("Résumé").expect("section should exist"),
+            ]
+        );
+    }
+
+    #[test]
+    fn handles_empty_input_preamble_and_trailing_newlines() {
+        let empty = MarkdownOutline::parse("");
+        assert!(empty.items.is_empty());
+        assert!(empty.sections.is_empty());
+        assert!(empty.section_offsets.is_empty());
+
+        let plain = MarkdownOutline::parse("Plain text\n");
+        assert!(plain.items.is_empty());
+        assert_eq!(plain.sections[0].as_ref(), "Plain text\n");
+        assert_eq!(plain.section_offsets, vec![0]);
+
+        let outline = MarkdownOutline::parse("Intro\n\n# One\nBody\n");
+        assert_eq!(
+            outline
+                .sections
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["Intro\n", "# One\nBody"]
+        );
+        assert_eq!(outline.section_offsets, vec![0, 7]);
+    }
+
+    #[test]
+    fn normalizes_crlf_heading_sections_and_offsets_like_lf() {
+        let outline = MarkdownOutline::parse("Intro\r\n# One\r\nBody\r\n## Two\r\nLast\r\n");
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.title.as_str(), item.source_line, item.source_offset))
+                .collect::<Vec<_>>(),
+            vec![("One", 1, 6), ("Two", 3, 17)]
+        );
+        assert_eq!(
+            outline
+                .sections
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["Intro", "# One\nBody", "## Two\nLast"]
+        );
+        assert_eq!(outline.section_offsets, vec![0, 6, 17]);
+    }
+
+    #[test]
+    fn parses_many_markdown_lines_with_bounded_allocations() {
+        const BODY_LINES: usize = 50_000;
+        const PARSER_OVERHEAD_BUDGET: usize = 64 * 1024;
+
+        let source = format!("# Root\n{}", "body line\n".repeat(BODY_LINES));
+        let measurement = test_alloc::start_measurement();
+        let started = std::time::Instant::now();
+        let outline = MarkdownOutline::parse(&source);
+        let elapsed = started.elapsed();
+        let allocation = measurement.finish();
+        std::hint::black_box(&outline);
+
+        assert_eq!(outline.items.len(), 1);
+        assert_eq!(outline.sections.len(), 1);
+        assert_eq!(outline.sections[0].len(), source.len() - 1);
+        assert!(
+            allocation.allocated_bytes < source.len() + PARSER_OVERHEAD_BUDGET,
+            "many-line outline allocated {} bytes for {} source bytes with a {} byte overhead budget",
+            allocation.allocated_bytes,
+            source.len(),
+            PARSER_OVERHEAD_BUDGET
+        );
+        println!(
+            "markdown_bytes={} body_lines={BODY_LINES} elapsed_micros={} allocated_bytes={} peak_heap_growth_bytes={} retained_heap_growth_bytes={}",
+            source.len(),
+            elapsed.as_micros(),
+            allocation.allocated_bytes,
+            allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes
+        );
     }
 
     #[test]
