@@ -293,20 +293,25 @@ pub async fn set_label_assignment(
     label_id: u32,
     assigned: bool,
 ) -> Result<()> {
-    if assigned {
-        entry_label::ActiveModel {
-            entry_id: Set(i64::from(card_id)),
-            board_label_id: Set(i64::from(label_id)),
-            ..Default::default()
-        }
-        .insert(db)
+    let existing = EntryLabel::find()
+        .filter(entry_label::Column::EntryId.eq(i64::from(card_id)))
+        .filter(entry_label::Column::BoardLabelId.eq(i64::from(label_id)))
+        .one(db)
         .await?;
-    } else {
-        EntryLabel::delete_many()
-            .filter(entry_label::Column::EntryId.eq(i64::from(card_id)))
-            .filter(entry_label::Column::BoardLabelId.eq(i64::from(label_id)))
-            .exec(db)
+    match (assigned, existing) {
+        (true, None) => {
+            entry_label::ActiveModel {
+                entry_id: Set(i64::from(card_id)),
+                board_label_id: Set(i64::from(label_id)),
+                ..Default::default()
+            }
+            .insert(db)
             .await?;
+        }
+        (false, Some(assignment)) => {
+            EntryLabel::delete_by_id(assignment.id).exec(db).await?;
+        }
+        _ => {}
     }
     Ok(())
 }

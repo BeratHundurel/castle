@@ -16,10 +16,9 @@ impl BoardView {
         self.entry_editing.dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not delete card", true, async move {
+        self.commit_board_mutation(cx, "Could not delete card", true, move |store| async move {
             storage::trash::move_to_trash(
-                &db,
+                &store,
                 storage::trash::MoveToTrash {
                     kind: storage::trash::TrashItemKind::Entry,
                     id: entry_id,
@@ -102,10 +101,9 @@ impl BoardView {
         self.data.lists.retain(|card| card.id != card_id);
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not delete list", true, async move {
+        self.commit_board_mutation(cx, "Could not delete list", true, move |store| async move {
             storage::trash::move_to_trash(
-                &db,
+                &store,
                 storage::trash::MoveToTrash {
                     kind: storage::trash::TrashItemKind::List,
                     id: card_id,

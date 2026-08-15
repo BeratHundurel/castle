@@ -32,24 +32,23 @@ impl BoardView {
         self.entry_editing.dialog.editing = false;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
         let title = trimmed_title.to_string();
         let description = description.to_string();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::update_board_card(
+                    &store,
+                    entry_id,
+                    title,
+                    description,
+                    app_services::now_ts(),
+                )
+                .await
+            });
 
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::update_board_card(
-                        &db,
-                        entry_id,
-                        title,
-                        description,
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| match result {
                 Ok(Ok(())) => {
                     this.mutation.mutation_error = None;
@@ -110,21 +109,25 @@ impl BoardView {
             .saturating_add(1);
         let revision = self.entry_editing.next_due_date_update_revision;
         let persisted_revisions = self.entry_editing.persisted_due_date_revisions.clone();
-        let db = cx.global::<AppServices>().store();
         let notifications = cx.global::<crate::BoardServices>().notifications();
-        self.commit_board_mutation(cx, "Could not save due date", false, async move {
-            let mut persisted_revisions = persisted_revisions.lock().await;
-            if persisted_revisions
-                .get(&entry_id)
-                .is_some_and(|persisted_revision| *persisted_revision >= revision)
-            {
-                return Ok::<(), anyhow::Error>(());
-            }
-            storage::board_commands::set_board_card_due_on(&db, entry_id, due_on).await?;
-            persisted_revisions.insert(entry_id, revision);
-            notifications.wake();
-            Ok::<(), anyhow::Error>(())
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not save due date",
+            false,
+            move |store| async move {
+                let mut persisted_revisions = persisted_revisions.lock().await;
+                if persisted_revisions
+                    .get(&entry_id)
+                    .is_some_and(|persisted_revision| *persisted_revision >= revision)
+                {
+                    return Ok::<(), anyhow::Error>(());
+                }
+                storage::board_commands::set_board_card_due_on(&store, entry_id, due_on).await?;
+                persisted_revisions.insert(entry_id, revision);
+                notifications.wake();
+                Ok::<(), anyhow::Error>(())
+            },
+        );
     }
 
     pub(crate) fn set_selected_entry_reminder(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -147,12 +150,16 @@ impl BoardView {
         entry.reminder_enabled = enabled;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
         let notifications = cx.global::<crate::BoardServices>().notifications();
-        self.commit_board_mutation(cx, "Could not save reminder", false, async move {
-            storage::board_commands::set_board_card_reminder(&db, entry_id, enabled).await?;
-            notifications.wake();
-            Ok::<(), anyhow::Error>(())
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not save reminder",
+            false,
+            move |store| async move {
+                storage::board_commands::set_board_card_reminder(&store, entry_id, enabled).await?;
+                notifications.wake();
+                Ok::<(), anyhow::Error>(())
+            },
+        );
     }
 }

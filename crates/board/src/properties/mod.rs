@@ -249,15 +249,14 @@ impl BoardView {
             return;
         }
         let kind = self.properties.new_property_kind;
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::create_property(&store, i64::from(board_id), name, kind)
+                    .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::create_property(&db, i64::from(board_id), name, kind)
-                        .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(property)) => {
@@ -308,14 +307,13 @@ impl BoardView {
         let Some(property_id) = self.properties.renaming_property_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::rename_property(&store, property_id, name).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::rename_property(&db, property_id, name).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(property)) => {
@@ -378,19 +376,18 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::reorder_properties(
+                    &store,
+                    i64::from(board_id),
+                    &ordered_ids,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::reorder_properties(
-                        &db,
-                        i64::from(board_id),
-                        &ordered_ids,
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => this.emit_data_committed(cx, false),
@@ -462,15 +459,13 @@ impl BoardView {
     }
 
     fn delete_property(&mut self, property_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::delete_property(&store, property_id).await
+            });
         cx.spawn(async move |this, cx| {
-            let result =
-                runtime
-                    .spawn(async move {
-                        storage::board_properties::delete_property(&db, property_id).await
-                    })
-                    .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => {
@@ -523,15 +518,14 @@ impl BoardView {
             .find(|property| property.id == property_id)
             .map(|property| OPTION_COLORS[property.options.len() % OPTION_COLORS.len()].to_string())
             .unwrap_or_else(|| "blue".to_string());
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::create_property_option(&store, property_id, name, color)
+                    .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::create_property_option(&db, property_id, name, color)
-                        .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(option)) => {
@@ -591,14 +585,13 @@ impl BoardView {
         let Some(option_id) = self.properties.renaming_property_option_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::rename_property_option(&store, option_id, name).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::rename_property_option(&db, option_id, name).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(option)) => {
@@ -644,15 +637,14 @@ impl BoardView {
             .position(|color| *color == current)
             .unwrap_or(0);
         let color = OPTION_COLORS[(index + 1) % OPTION_COLORS.len()].to_string();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::update_property_option_color(&store, option_id, color)
+                    .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::update_property_option_color(&db, option_id, color)
-                        .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 if let Ok(Ok(option)) = result
                     && let Some(current) = this
@@ -709,19 +701,18 @@ impl BoardView {
             .iter()
             .map(|option| option.id)
             .collect::<Vec<_>>();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::reorder_property_options(
+                    &store,
+                    property_id,
+                    &ordered_ids,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::reorder_property_options(
-                        &db,
-                        property_id,
-                        &ordered_ids,
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => this.emit_data_committed(cx, false),
@@ -801,14 +792,13 @@ impl BoardView {
     }
 
     fn delete_property_option(&mut self, option_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::delete_property_option(&store, option_id).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::delete_property_option(&db, option_id).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => {
@@ -863,42 +853,40 @@ impl BoardView {
         let revision = self.properties.next_update_revision;
         self.properties.update_revisions.insert(key, revision);
         let persisted_revisions = self.properties.persisted_revisions.clone();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
-
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                let mut persisted_revisions = persisted_revisions.lock().await;
+                if persisted_revisions
+                    .get(&key)
+                    .is_some_and(|persisted_revision| *persisted_revision >= revision)
+                {
+                    return Ok::<(), anyhow::Error>(());
+                }
+                match value {
+                    Some(value) => {
+                        storage::board_properties::set_entry_property(
+                            &store,
+                            entry_id,
+                            property_id,
+                            value,
+                        )
+                        .await?;
+                    }
+                    None => {
+                        storage::board_properties::clear_entry_property(
+                            &store,
+                            entry_id,
+                            property_id,
+                        )
+                        .await?;
+                    }
+                }
+                persisted_revisions.insert(key, revision);
+                Ok(())
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    let mut persisted_revisions = persisted_revisions.lock().await;
-                    if persisted_revisions
-                        .get(&key)
-                        .is_some_and(|persisted_revision| *persisted_revision >= revision)
-                    {
-                        return Ok::<(), anyhow::Error>(());
-                    }
-                    match value {
-                        Some(value) => {
-                            storage::board_properties::set_entry_property(
-                                &db,
-                                entry_id,
-                                property_id,
-                                value,
-                            )
-                            .await?;
-                        }
-                        None => {
-                            storage::board_properties::clear_entry_property(
-                                &db,
-                                entry_id,
-                                property_id,
-                            )
-                            .await?;
-                        }
-                    }
-                    persisted_revisions.insert(key, revision);
-                    Ok(())
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| {
                 if this.properties.update_revisions.get(&key) != Some(&revision) {
@@ -1068,19 +1056,18 @@ impl BoardView {
             cx.notify();
             return;
         };
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::set_selected_board_view(
+                    &store,
+                    i64::from(board_id),
+                    view_id,
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::set_selected_board_view(
-                        &db,
-                        i64::from(board_id),
-                        view_id,
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => this.properties.update_error = None,
@@ -1124,14 +1111,13 @@ impl BoardView {
         let Some(view_id) = self.properties.renaming_view_id else {
             return;
         };
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::rename_board_view(&store, view_id, name).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::rename_board_view(&db, view_id, name).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(view)) => {
@@ -1173,27 +1159,26 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                let view = storage::board_properties::create_board_view(
+                    &store,
+                    i64::from(board_id),
+                    name,
+                    config,
+                )
+                .await?;
+                storage::board_properties::set_selected_board_view(
+                    &store,
+                    i64::from(board_id),
+                    Some(view.id),
+                )
+                .await?;
+                Ok::<_, anyhow::Error>(view)
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    let view = storage::board_properties::create_board_view(
-                        &db,
-                        i64::from(board_id),
-                        name,
-                        config,
-                    )
-                    .await?;
-                    storage::board_properties::set_selected_board_view(
-                        &db,
-                        i64::from(board_id),
-                        Some(view.id),
-                    )
-                    .await?;
-                    Ok::<_, anyhow::Error>(view)
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(view)) => {
@@ -1225,14 +1210,13 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::update_board_view(&store, view_id, config).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::update_board_view(&db, view_id, config).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(view)) => {
@@ -1262,14 +1246,13 @@ impl BoardView {
     }
 
     pub(super) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::set_default_board_view(&store, view_id).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_properties::set_default_board_view(&db, view_id).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 if let Ok(Ok(default_view)) = result {
                     for view in &mut this.properties.saved_views {
@@ -1284,14 +1267,13 @@ impl BoardView {
     }
 
     pub(super) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_properties::delete_board_view(&store, view_id).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(
-                    async move { storage::board_properties::delete_board_view(&db, view_id).await },
-                )
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 if matches!(result, Ok(Ok(()))) {
                     this.properties

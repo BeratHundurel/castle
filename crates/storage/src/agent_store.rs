@@ -1045,17 +1045,9 @@ where
 
     pub async fn create_project(&self, input: CreateProjectInput) -> Result<ProjectSummary> {
         let name = required_text(input.name, "project name")?;
-        let position = Project::find().count(self.db.as_ref()).await? as i32;
-        let project = project::ActiveModel {
-            name: Set(name),
-            archived: Set(false),
-            position: Set(position),
-            ..Default::default()
-        }
-        .insert(self.db.as_ref())
-        .await?;
+        let project = crate::workspace::create_project(self, name).await?;
         Ok(ProjectSummary {
-            id: project.id,
+            id: i64::from(project.id),
             name: project.name,
             position: project.position,
             board_count: 0,
@@ -1063,13 +1055,12 @@ where
     }
 
     pub async fn rename_project(&self, input: RenameProjectInput) -> Result<ProjectSummary> {
-        let project = self.active_project(input.project_id).await?;
-        project::ActiveModel {
-            id: Set(project.id),
-            name: Set(required_text(input.name, "project name")?),
-            ..Default::default()
-        }
-        .update(self.db.as_ref())
+        self.active_project(input.project_id).await?;
+        crate::workspace::rename_project(
+            self,
+            u32::try_from(input.project_id).context("project ID is out of range")?,
+            required_text(input.name, "project name")?,
+        )
         .await?;
         self.list_projects()
             .await?
@@ -1084,29 +1075,34 @@ where
             Some(project_id) => Some(self.active_project(project_id).await?.name),
             None => None,
         };
-        let board = board::ActiveModel {
-            title: Set(title),
-            project_id: Set(input.project_id),
-            ..Default::default()
-        }
-        .insert(self.db.as_ref())
+        let board = crate::workspace::create_board(
+            self,
+            input
+                .project_id
+                .map(u32::try_from)
+                .transpose()
+                .context("project ID is out of range")?,
+            title,
+        )
         .await?;
         Ok(BoardSummary {
-            id: board.id,
+            id: i64::from(board.id),
             title: board.title,
-            project_id: board.project_id,
+            project_id: input.project_id,
             project_name,
         })
     }
 
     pub async fn rename_board(&self, input: RenameBoardInput) -> Result<BoardSummary> {
         let board = self.active_board(input.board_id).await?;
-        let board = board::ActiveModel {
-            id: Set(board.id),
-            title: Set(required_text(input.title, "board title")?),
-            ..Default::default()
-        }
-        .update(self.db.as_ref())
+        let title = required_text(input.title, "board title")?;
+        crate::workspace::persist_workspace_title(
+            self,
+            crate::workspace::WorkspaceTitleTarget::Board(
+                u32::try_from(board.id).context("board ID is out of range")?,
+            ),
+            title.clone(),
+        )
         .await?;
         let project_name = match board.project_id {
             Some(project_id) => Some(self.active_project(project_id).await?.name),
@@ -1114,7 +1110,7 @@ where
         };
         Ok(BoardSummary {
             id: board.id,
-            title: board.title,
+            title,
             project_id: board.project_id,
             project_name,
         })
@@ -1128,16 +1124,18 @@ where
             .filter(card::Column::DeletedAt.is_null())
             .count(self.db.as_ref())
             .await? as i32;
-        let list = card::ActiveModel {
-            title: Set(title),
-            board_id: Set(input.board_id),
-            position: Set(position),
-            ..Default::default()
-        }
-        .insert(self.db.as_ref())
+        let list = crate::board_commands::create_board_list(
+            self,
+            crate::board_commands::BoardListDraft {
+                title,
+                board_id: u32::try_from(input.board_id).context("board ID is out of range")?,
+                position,
+                cards: Vec::new(),
+            },
+        )
         .await?;
         Ok(ListDetail {
-            id: list.id,
+            id: i64::from(list.id),
             title: list.title,
             position: list.position,
             entries: Vec::new(),
@@ -1147,12 +1145,11 @@ where
 
     pub async fn rename_list(&self, input: RenameListInput) -> Result<ListDetail> {
         let list = self.active_list(input.list_id).await?;
-        let list = card::ActiveModel {
-            id: Set(list.id),
-            title: Set(required_text(input.title, "list title")?),
-            ..Default::default()
-        }
-        .update(self.db.as_ref())
+        crate::board_commands::rename_board_list(
+            self,
+            u32::try_from(list.id).context("list ID is out of range")?,
+            required_text(input.title, "list title")?,
+        )
         .await?;
         self.get_board(list.board_id)
             .await?
@@ -1171,27 +1168,21 @@ where
             .filter(entry::Column::DeletedAt.is_null())
             .count(self.db.as_ref())
             .await? as i32;
-        let description = input.description;
-        let txn = self.db.as_ref().begin().await?;
-        let entry = entry::ActiveModel {
-            title: Set(title),
-            description: Set(description.clone()),
-            card_id: Set(input.list_id),
-            position: Set(position),
-            due_on: Set(input.due_on),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
-        crate::workspace_links::index_entry_workspace_links_in_connection(
-            &txn,
-            entry.id,
-            &description,
+        let entry = crate::board_commands::create_board_card(
+            self,
+            crate::board_commands::BoardCardDraft {
+                title,
+                description: input.description,
+                list_id: u32::try_from(input.list_id).context("list ID is out of range")?,
+                position,
+                due_on: input.due_on,
+                label_ids: Vec::new(),
+                checklist_items: Vec::new(),
+            },
             now_ts(),
         )
         .await?;
-        txn.commit().await?;
-        self.entry_detail(entry).await
+        self.get_entry(i64::from(entry.id)).await
     }
 
     pub async fn update_entry(&self, input: UpdateEntryInput) -> Result<EntryDetail> {
@@ -1204,29 +1195,34 @@ where
             .one(self.db.as_ref())
             .await?
             .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
-        let mut active: entry::ActiveModel = entry.into();
-        if let Some(title) = input.title {
-            active.title = Set(required_text(title, "entry title")?);
-        }
-        if let Some(description) = input.description {
-            active.description = Set(description);
-        }
-        if input.clear_due_on {
-            active.due_on = Set(None);
-        } else if let Some(due_on) = input.due_on {
-            active.due_on = Set(Some(due_on));
-        }
-        let txn = self.db.as_ref().begin().await?;
-        let entry = active.update(&txn).await?;
-        crate::workspace_links::index_entry_workspace_links_in_connection(
-            &txn,
-            entry.id,
-            &entry.description,
+        let title = match input.title {
+            Some(title) => required_text(title, "entry title")?,
+            None => entry.title.clone(),
+        };
+        let description = input
+            .description
+            .unwrap_or_else(|| entry.description.clone());
+        crate::board_commands::update_board_card(
+            self,
+            u32::try_from(entry.id).context("entry ID is out of range")?,
+            title,
+            description,
             now_ts(),
         )
         .await?;
-        txn.commit().await?;
-        self.entry_detail(entry).await
+        if input.clear_due_on || input.due_on.is_some() {
+            crate::board_commands::set_board_card_due_on(
+                self,
+                u32::try_from(entry.id).context("entry ID is out of range")?,
+                if input.clear_due_on {
+                    None
+                } else {
+                    input.due_on
+                },
+            )
+            .await?;
+        }
+        self.get_entry(entry.id).await
     }
 
     pub async fn set_entry_reminder(&self, input: SetEntryReminderInput) -> Result<EntryDetail> {
@@ -1239,15 +1235,13 @@ where
         if input.enabled && entry.due_on.is_none() {
             bail!("a board entry needs a due date before its reminder can be enabled");
         }
-        let entry = entry::ActiveModel {
-            id: Set(entry.id),
-            reminder_enabled: Set(input.enabled),
-            reminder_notified_for: Set(None),
-            ..Default::default()
-        }
-        .update(self.db.as_ref())
+        crate::board_commands::set_board_card_reminder(
+            self,
+            u32::try_from(entry.id).context("entry ID is out of range")?,
+            input.enabled,
+        )
         .await?;
-        self.entry_detail(entry).await
+        self.get_entry(entry.id).await
     }
 
     pub async fn add_checklist_item(
@@ -1259,17 +1253,15 @@ where
             .filter(entry_checklist_item::Column::EntryId.eq(input.entry_id))
             .count(self.db.as_ref())
             .await? as i32;
-        let item = entry_checklist_item::ActiveModel {
-            entry_id: Set(input.entry_id),
-            title: Set(required_text(input.title, "checklist item title")?),
-            checked: Set(false),
-            position: Set(position),
-            ..Default::default()
-        }
-        .insert(self.db.as_ref())
+        let item = crate::board_commands::create_checklist_item(
+            self,
+            u32::try_from(input.entry_id).context("entry ID is out of range")?,
+            required_text(input.title, "checklist item title")?,
+            position,
+        )
         .await?;
         Ok(ChecklistItemDetail {
-            id: item.id,
+            id: i64::from(item.id),
             title: item.title,
             checked: item.checked,
             position: item.position,
@@ -1288,14 +1280,21 @@ where
             .await?
             .with_context(|| format!("checklist item {} was not found", input.item_id))?;
         self.get_entry(item.entry_id).await?;
-        let mut active: entry_checklist_item::ActiveModel = item.into();
-        if let Some(title) = input.title {
-            active.title = Set(required_text(title, "checklist item title")?);
-        }
-        if let Some(checked) = input.checked {
-            active.checked = Set(checked);
-        }
-        let item = active.update(self.db.as_ref()).await?;
+        let title = input
+            .title
+            .map(|title| required_text(title, "checklist item title"))
+            .transpose()?;
+        crate::board_commands::update_checklist_item(
+            self,
+            u32::try_from(item.id).context("checklist item ID is out of range")?,
+            title,
+            input.checked,
+        )
+        .await?;
+        let item = EntryChecklistItem::find_by_id(item.id)
+            .one(self.db.as_ref())
+            .await?
+            .context("updated checklist item was not found")?;
         Ok(ChecklistItemDetail {
             id: item.id,
             title: item.title,
@@ -1306,15 +1305,14 @@ where
 
     pub async fn create_board_label(&self, input: CreateBoardLabelInput) -> Result<LabelDetail> {
         self.active_board(input.board_id).await?;
-        let label = board_label::ActiveModel {
-            board_id: Set(input.board_id),
-            name: Set(required_text(input.name, "label name")?),
-            color: Set(required_text(input.color, "label color")?),
-            ..Default::default()
-        }
-        .insert(self.db.as_ref())
+        let label = crate::board_commands::create_label(
+            self,
+            u32::try_from(input.board_id).context("board ID is out of range")?,
+            required_text(input.name, "label name")?,
+            required_text(input.color, "label color")?,
+        )
         .await?;
-        Ok(label_detail(label))
+        Ok(label_record_detail(label))
     }
 
     pub async fn set_entry_label(&self, input: SetEntryLabelInput) -> Result<EntryDetail> {
@@ -1332,28 +1330,13 @@ where
                 entry.board_id
             );
         }
-        let existing = EntryLabel::find()
-            .filter(entry_label::Column::EntryId.eq(input.entry_id))
-            .filter(entry_label::Column::BoardLabelId.eq(input.label_id))
-            .one(self.db.as_ref())
-            .await?;
-        match (input.assigned, existing) {
-            (true, None) => {
-                entry_label::ActiveModel {
-                    entry_id: Set(input.entry_id),
-                    board_label_id: Set(input.label_id),
-                    ..Default::default()
-                }
-                .insert(self.db.as_ref())
-                .await?;
-            }
-            (false, Some(association)) => {
-                EntryLabel::delete_by_id(association.id)
-                    .exec(self.db.as_ref())
-                    .await?;
-            }
-            _ => {}
-        }
+        crate::board_commands::set_label_assignment(
+            self,
+            u32::try_from(input.entry_id).context("entry ID is out of range")?,
+            u32::try_from(input.label_id).context("label ID is out of range")?,
+            input.assigned,
+        )
+        .await?;
         self.get_entry(input.entry_id).await
     }
 
@@ -2016,6 +1999,13 @@ mod tests {
                 assigned: true,
             })
             .await?;
+        store
+            .set_entry_label(SetEntryLabelInput {
+                entry_id: entry.id,
+                label_id: label.id,
+                assigned: true,
+            })
+            .await?;
         let note = store
             .create_note(CreateNoteInput {
                 title: "Delivery context".to_string(),
@@ -2072,6 +2062,7 @@ mod tests {
         assert_eq!(matches[0].id, entry.id);
         assert_eq!(matches[0].checklist_items.len(), 1);
         assert!(matches[0].checklist_items[0].checked);
+        assert_eq!(matches[0].labels.len(), 1);
         assert_eq!(matches[0].labels[0].name, "Agent");
 
         let moved = store

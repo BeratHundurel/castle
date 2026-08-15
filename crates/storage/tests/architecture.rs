@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 #[test]
-fn app_and_mcp_production_sources_do_not_depend_on_database_implementation_crates() {
+fn production_consumers_do_not_depend_on_database_implementation_crates() {
     let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -9,10 +9,39 @@ fn app_and_mcp_production_sources_do_not_depend_on_database_implementation_crate
         panic!("storage crate should be inside the workspace");
     };
 
-    for crate_name in ["app", "mcp_server"] {
+    for crate_name in [
+        "app",
+        "app_services",
+        "app_settings",
+        "board",
+        "document_editor",
+        "mcp_server",
+        "workspace_ui",
+    ] {
         let crate_root = workspace.join("crates").join(crate_name);
         assert_manifest_has_no_production_database_dependency(&crate_root.join("Cargo.toml"));
         assert_sources_have_no_production_database_imports(&crate_root.join("src"));
+    }
+}
+
+#[test]
+fn storage_does_not_own_protocol_schema_dependencies() {
+    let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .expect("storage manifest should be readable");
+    let production_dependencies = manifest
+        .split("[dev-dependencies]")
+        .next()
+        .unwrap_or(&manifest);
+
+    for dependency in ["rmcp", "schemars"] {
+        assert!(
+            !production_dependencies.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with(&format!("{dependency}."))
+                    || line.starts_with(&format!("{dependency} ="))
+            }),
+            "storage has a protocol dependency on {dependency}"
+        );
     }
 }
 

@@ -287,7 +287,6 @@ impl BoardView {
         self.related_notes.error = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
         let board_id = self
             .related_notes
             .catalog
@@ -295,20 +294,20 @@ impl BoardView {
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace_links::set_manual_note_link(
+                    &store,
+                    note_id,
+                    item,
+                    true,
+                    app_services::now_ts(),
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::workspace_links::set_manual_note_link(
-                        &db,
-                        note_id,
-                        item,
-                        true,
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| {
                 this.related_notes.picker.pending.remove(&(item, note_id));
@@ -355,7 +354,6 @@ impl BoardView {
         self.related_notes.error = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
         let board_id = self
             .related_notes
             .catalog
@@ -363,20 +361,20 @@ impl BoardView {
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::workspace_links::set_manual_note_link(
+                    &store,
+                    note_id,
+                    item,
+                    false,
+                    app_services::now_ts(),
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::workspace_links::set_manual_note_link(
-                        &db,
-                        note_id,
-                        item,
-                        false,
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 this.related_notes.picker.pending.remove(&(item, note_id));
                 let error = match result {

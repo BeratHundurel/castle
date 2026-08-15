@@ -19,20 +19,19 @@ impl BoardView {
     }
 
     pub(crate) fn duplicate_entry(&mut self, source: BoardCardDTO, cx: &mut Context<Self>) {
-        let db = cx.global::<AppServices>().store();
         let board_id = self.data.board_id;
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::duplicate_board_card(
+                    &store,
+                    board_card_draft(source),
+                    app_services::now_ts(),
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::duplicate_board_card(
-                        &db,
-                        board_card_draft(source),
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| match result {
                 Ok(Ok(())) => {
                     this.mutation.mutation_error = None;
@@ -74,20 +73,19 @@ impl BoardView {
         else {
             return;
         };
-        let db = cx.global::<AppServices>().store();
         let board_id = self.data.board_id;
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::duplicate_board_list(
+                    &store,
+                    board_list_draft(source),
+                    app_services::now_ts(),
+                )
+                .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::duplicate_board_list(
-                        &db,
-                        board_list_draft(source),
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| match result {
                 Ok(Ok(())) => {
                     this.mutation.mutation_error = None;
@@ -149,8 +147,6 @@ impl BoardView {
     }
 
     pub(crate) fn add_entry(&mut self, cx: &mut Context<Self>, entry: BoardCardDTO, temp_id: u32) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
         let card_id = entry.card_id;
 
         if let Some(card) = self
@@ -163,17 +159,19 @@ impl BoardView {
             cx.notify();
         }
 
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::create_board_card(
+                    &store,
+                    board_card_draft(entry),
+                    app_services::now_ts(),
+                )
+                .await
+            });
+
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::create_board_card(
-                        &db,
-                        board_card_draft(entry),
-                        app_services::now_ts(),
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
@@ -219,19 +217,19 @@ impl BoardView {
     }
 
     pub(crate) fn add_card(&mut self, cx: &mut Context<Self>, card: BoardListDTO, temp_id: u32) {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
         let board_id = card.board_id;
 
         self.data.lists.push(card.clone());
         cx.notify();
 
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::create_board_list(&store, board_list_draft(card)).await
+            });
+
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::create_board_list(&db, board_list_draft(card)).await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
@@ -270,8 +268,6 @@ impl BoardView {
         };
 
         let title = new_title.to_string();
-        let db = cx.global::<AppServices>().store();
-
         let Some(card) = self.data.lists.iter_mut().find(|card| card.id == card_id) else {
             return;
         };
@@ -280,9 +276,14 @@ impl BoardView {
         self.entry_editing.renaming_list_id = None;
         cx.notify();
 
-        self.commit_board_mutation(cx, "Could not rename list", false, async move {
-            storage::board_commands::rename_board_list(&db, card_id, title).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not rename list",
+            false,
+            move |store| async move {
+                storage::board_commands::rename_board_list(&store, card_id, title).await
+            },
+        );
     }
 
     pub(crate) fn show_add_entry_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {

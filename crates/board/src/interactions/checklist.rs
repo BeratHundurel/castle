@@ -30,15 +30,14 @@ impl BoardView {
         );
         self.entry_editing.next_checklist_item_position = position.saturating_add(1);
 
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::create_checklist_item(&store, entry_id, title, position)
+                    .await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::create_checklist_item(&db, entry_id, title, position)
-                        .await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
                     let Some(entry) = this
@@ -94,10 +93,15 @@ impl BoardView {
         item.checked = checked;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not update checklist item", false, async move {
-            storage::board_commands::update_checklist_item(&db, item_id, None, Some(checked)).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not update checklist item",
+            false,
+            move |store| async move {
+                storage::board_commands::update_checklist_item(&store, item_id, None, Some(checked))
+                    .await
+            },
+        );
     }
 
     pub(crate) fn delete_checklist_item(&mut self, item_id: u32, cx: &mut Context<Self>) {
@@ -111,10 +115,14 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not delete checklist item", false, async move {
-            storage::board_commands::delete_checklist_item(&db, item_id).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not delete checklist item",
+            false,
+            move |store| async move {
+                storage::board_commands::delete_checklist_item(&store, item_id).await
+            },
+        );
     }
 
     pub(crate) fn move_checklist_item(
@@ -157,10 +165,14 @@ impl BoardView {
             .collect::<Vec<_>>();
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not reorder checklist", false, async move {
-            storage::board_commands::reorder_checklist_items(&db, positions).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not reorder checklist",
+            false,
+            move |store| async move {
+                storage::board_commands::reorder_checklist_items(&store, positions).await
+            },
+        );
     }
 
     pub(crate) fn rename_checklist_item(&mut self, title: String, cx: &mut Context<Self>) {
@@ -180,9 +192,14 @@ impl BoardView {
         item.title = SharedString::from(title.as_str());
         self.entry_editing.renaming_checklist_item_id = None;
         cx.notify();
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not rename checklist item", false, async move {
-            storage::board_commands::update_checklist_item(&db, item_id, Some(title), None).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not rename checklist item",
+            false,
+            move |store| async move {
+                storage::board_commands::update_checklist_item(&store, item_id, Some(title), None)
+                    .await
+            },
+        );
     }
 }

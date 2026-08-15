@@ -7,15 +7,14 @@ impl BoardView {
         };
 
         let color = self.entry_editing.selected_label_color.to_string();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx
+            .global::<AppServices>()
+            .spawn_store(move |store| async move {
+                storage::board_commands::create_label(&store, board_id, name, color).await
+            });
 
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board_commands::create_label(&db, board_id, name, color).await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) if this.data.board_id == Some(board_id) => {
@@ -74,10 +73,14 @@ impl BoardView {
             });
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not rename label", false, async move {
-            storage::board_commands::rename_label(&db, label_id, name).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not rename label",
+            false,
+            move |store| async move {
+                storage::board_commands::rename_label(&store, label_id, name).await
+            },
+        );
     }
 
     pub(crate) fn set_entry_label_assignment(
@@ -122,10 +125,15 @@ impl BoardView {
         }
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not update card label", false, async move {
-            storage::board_commands::set_label_assignment(&db, entry_id, label_id, assigned).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not update card label",
+            false,
+            move |store| async move {
+                storage::board_commands::set_label_assignment(&store, entry_id, label_id, assigned)
+                    .await
+            },
+        );
     }
 
     pub(crate) fn delete_board_label(&mut self, label_id: u32, cx: &mut Context<Self>) {
@@ -139,9 +147,13 @@ impl BoardView {
         self.entry_editing.renaming_label_id = None;
         cx.notify();
 
-        let db = cx.global::<AppServices>().store();
-        self.commit_board_mutation(cx, "Could not delete label", false, async move {
-            storage::board_commands::delete_label(&db, label_id).await
-        });
+        self.commit_board_mutation(
+            cx,
+            "Could not delete label",
+            false,
+            move |store| async move {
+                storage::board_commands::delete_label(&store, label_id).await
+            },
+        );
     }
 }

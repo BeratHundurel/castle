@@ -29,7 +29,7 @@ impl CastleServer {
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Json<ToolResponse<Vec<ProjectSummary>>> {
-        response(self.store.list_projects().await)
+        response_vec(self.store.list_projects().await)
     }
 
     #[tool(
@@ -40,7 +40,7 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<ProjectBoardsInput>,
     ) -> Json<ToolResponse<Vec<BoardSummary>>> {
-        response(self.store.list_boards(input.project_id).await)
+        response_vec(self.store.list_boards(input.project_id).await)
     }
 
     #[tool(
@@ -76,7 +76,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_board_property(input)
+                .create_board_property(input.into())
                 .await,
         )
     }
@@ -92,7 +92,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_board_property_option(input)
+                .create_board_property_option(input.into())
                 .await,
         )
     }
@@ -112,7 +112,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .set_entry_property(input)
+                .set_entry_property(input.into())
                 .await,
         )
     }
@@ -132,7 +132,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .clear_entry_property(input)
+                .clear_entry_property(input.into())
                 .await,
         )
     }
@@ -156,7 +156,7 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<SearchEntriesInput>,
     ) -> Json<ToolResponse<Vec<EntryDetail>>> {
-        response(self.store.search_entries(input).await)
+        response_vec(self.store.search_entries(input.into()).await)
     }
 
     #[tool(
@@ -170,7 +170,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_project(input)
+                .create_project(input.into())
                 .await,
         )
     }
@@ -186,7 +186,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_board(input)
+                .create_board(input.into())
                 .await,
         )
     }
@@ -202,7 +202,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_list(input)
+                .create_list(input.into())
                 .await,
         )
     }
@@ -218,7 +218,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_entry(input)
+                .create_entry(input.into())
                 .await,
         )
     }
@@ -238,7 +238,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .update_entry(input)
+                .update_entry(input.into())
                 .await,
         )
     }
@@ -258,7 +258,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .move_entry(input)
+                .move_entry(input.into())
                 .await,
         )
     }
@@ -271,7 +271,7 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<ProjectNotesInput>,
     ) -> Json<ToolResponse<Vec<NoteSummary>>> {
-        response(self.store.list_notes(input.project_id, input.limit).await)
+        response_vec(self.store.list_notes(input.project_id, input.limit).await)
     }
 
     #[tool(
@@ -304,7 +304,7 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<WorkspaceRelationsInput>,
     ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
-        response(self.store.list_workspace_relations(input).await)
+        response_vec(self.store.list_workspace_relations(input.into()).await)
     }
 
     #[tool(
@@ -319,10 +319,10 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<NoteWorkspaceRelationInput>,
     ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
-        response(
+        response_vec(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .link_note_to_workspace_item(input)
+                .link_note_to_workspace_item(input.into())
                 .await,
         )
     }
@@ -339,10 +339,10 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<NoteWorkspaceRelationInput>,
     ) -> Json<ToolResponse<Vec<RelatedItemDetail>>> {
-        response(
+        response_vec(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .unlink_note_from_workspace_item(input)
+                .unlink_note_from_workspace_item(input.into())
                 .await,
         )
     }
@@ -355,7 +355,7 @@ impl CastleServer {
         &self,
         Parameters(input): Parameters<SearchNotesInput>,
     ) -> Json<ToolResponse<Vec<NoteSummary>>> {
-        response(self.store.search_notes(input).await)
+        response_vec(self.store.search_notes(input.into()).await)
     }
 
     #[tool(
@@ -369,7 +369,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_note(input)
+                .create_note(input.into())
                 .await,
         )
     }
@@ -389,7 +389,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .update_note(input)
+                .update_note(input.into())
                 .await,
         )
     }
@@ -409,7 +409,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .move_note(input)
+                .move_note(input.into())
                 .await,
         )
     }
@@ -429,7 +429,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .rename_project(input)
+                .rename_project(input.into())
                 .await,
         )
     }
@@ -449,7 +449,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .rename_board(input)
+                .rename_board(input.into())
                 .await,
         )
     }
@@ -469,7 +469,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .rename_list(input)
+                .rename_list(input.into())
                 .await,
         )
     }
@@ -489,7 +489,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .set_entry_reminder(input)
+                .set_entry_reminder(input.into())
                 .await,
         )
     }
@@ -505,7 +505,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .add_checklist_item(input)
+                .add_checklist_item(input.into())
                 .await,
         )
     }
@@ -525,7 +525,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .update_checklist_item(input)
+                .update_checklist_item(input.into())
                 .await,
         )
     }
@@ -541,7 +541,7 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .create_board_label(input)
+                .create_board_label(input.into())
                 .await,
         )
     }
@@ -561,15 +561,28 @@ impl CastleServer {
         response(
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
-                .set_entry_label(input)
+                .set_entry_label(input.into())
                 .await,
         )
     }
 }
 
-fn response<T>(result: anyhow::Result<T>) -> Json<ToolResponse<T>> {
+fn response<T, U>(result: anyhow::Result<T>) -> Json<ToolResponse<U>>
+where
+    U: From<T>,
+{
     Json(match result {
-        Ok(data) => ToolResponse::success(data),
+        Ok(data) => ToolResponse::success(data.into()),
+        Err(error) => ToolResponse::error(error),
+    })
+}
+
+fn response_vec<T, U>(result: anyhow::Result<Vec<T>>) -> Json<ToolResponse<Vec<U>>>
+where
+    U: From<T>,
+{
+    Json(match result {
+        Ok(data) => ToolResponse::success(data.into_iter().map(Into::into).collect()),
         Err(error) => ToolResponse::error(error),
     })
 }

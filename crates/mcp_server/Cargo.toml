@@ -18,3 +18,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "transport-async-rw"] }
+serde_json.workspace = true

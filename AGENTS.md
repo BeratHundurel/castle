@@ -4,7 +4,7 @@ This project is a note taking and kanban board app that uses GPUI and GPUI Compo
 
 ## Tools
 
-Use 'cargo check' and 'cargo clippy --fix --allow-dirty' for related files when it is applicable to ensure code quality
+Use 'cargo clippy --fix --allow-dirty' for related files when it is applicable to ensure code quality
 
 ## Code Style
 

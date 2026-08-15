@@ -15,21 +15,22 @@ impl BoardView {
         }
     }
 
-    pub(crate) fn commit_board_mutation<F>(
+    pub(crate) fn commit_board_mutation<F, Fut>(
         &mut self,
         cx: &mut Context<Self>,
         failure_context: &'static str,
         links_changed: bool,
         mutation: F,
     ) where
-        F: Future<Output = anyhow::Result<()>> + Send + 'static,
+        F: FnOnce(storage::Store) -> Fut + Send + 'static,
+        Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let runtime = cx.global::<AppServices>().runtime();
+        let task = cx.global::<AppServices>().spawn_store(mutation);
         cx.spawn(async move |this, cx| {
-            let result = runtime.spawn(mutation).await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 if this.data.board_id != Some(board_id) {
                     return;

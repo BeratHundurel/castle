@@ -47,18 +47,17 @@ impl BoardView {
                             return false;
                         }
 
-                        let db = cx.global::<AppServices>().store();
-                        let runtime = cx.global::<AppServices>().runtime();
+                        let task =
+                            cx.global::<AppServices>()
+                                .spawn_store(move |store| async move {
+                                    storage::board_templates::save_board_as_template(
+                                        &store, board_id, name,
+                                    )
+                                    .await
+                                });
                         board_view.update(cx, |_, cx| {
                             cx.spawn_in(window, async move |_, window| {
-                                let result = runtime
-                                    .spawn(async move {
-                                        storage::board_templates::save_board_as_template(
-                                            &db, board_id, name,
-                                        )
-                                        .await
-                                    })
-                                    .await;
+                                let result = task.await;
                                 window
                                     .update(|window, cx| match result {
                                         Ok(Ok(template)) => window.push_notification(
