@@ -26,8 +26,12 @@ impl BoardView {
                 })
                 .and_then(|candidate| candidate.project_id)
         });
-        let wikilink_plugin = crate::document_editor::links::WikiLinkPreviewPlugin::new_for_board(
-            cx.entity(),
+        let open_target = crate::workspace_navigation::weak_navigation_handler(
+            cx.entity().downgrade(),
+            |_, target, cx| cx.emit(crate::board::BoardViewEvent::OpenWorkspaceTarget(target)),
+        );
+        let wikilink_plugin = crate::document_editor::links::WikiLinkPreviewPlugin::new_for_workspace(
+            open_target,
             source_project_id,
             self.related_notes.catalog.clone(),
         );

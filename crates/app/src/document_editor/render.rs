@@ -268,8 +268,12 @@ impl DocumentEditorView {
             cx.global::<AppServices>().data_dir(),
             self.persistence.current_path.as_deref(),
         );
+        let open_target = crate::workspace_navigation::weak_navigation_handler(
+            cx.entity().downgrade(),
+            |_, target, cx| cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target)),
+        );
         let wikilink_plugin = super::links::WikiLinkPreviewPlugin::new(
-            cx.entity(),
+            open_target,
             self.inspector_links.project_id,
             self.inspector_links.note_catalog.clone(),
             self.inspector_links.note_links.clone(),

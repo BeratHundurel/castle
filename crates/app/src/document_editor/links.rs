@@ -1,7 +1,7 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    Context, Entity, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _,
+    Context, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _,
     Styled as _, StyledText, Task, UnderlineStyle, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
@@ -161,14 +161,8 @@ struct WikiLinkPreviewBlock {
 }
 
 #[derive(Clone)]
-enum WikiLinkPreviewOwner {
-    Document(Entity<DocumentEditorView>),
-    Board(Entity<crate::board::BoardView>),
-}
-
-#[derive(Clone)]
 pub(crate) struct WikiLinkPreviewPlugin {
-    owner: WikiLinkPreviewOwner,
+    open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
     project_id: Option<i64>,
     catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
     indexed_links: Arc<storage::note_links::NoteLinkSet>,
@@ -177,14 +171,14 @@ pub(crate) struct WikiLinkPreviewPlugin {
 
 impl WikiLinkPreviewPlugin {
     pub(super) fn new(
-        editor: Entity<DocumentEditorView>,
+        open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
         project_id: Option<i64>,
         catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
         indexed_links: Arc<storage::note_links::NoteLinkSet>,
         workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
     ) -> Self {
         Self {
-            owner: WikiLinkPreviewOwner::Document(editor),
+            open_target,
             project_id,
             catalog,
             indexed_links,
@@ -192,8 +186,8 @@ impl WikiLinkPreviewPlugin {
         }
     }
 
-    pub(crate) fn new_for_board(
-        board: Entity<crate::board::BoardView>,
+    pub(crate) fn new_for_workspace(
+        open_target: crate::workspace_navigation::WorkspaceNavigationHandler,
         project_id: Option<i64>,
         workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
     ) -> Self {
@@ -208,7 +202,7 @@ impl WikiLinkPreviewPlugin {
             })
             .collect();
         Self {
-            owner: WikiLinkPreviewOwner::Board(board),
+            open_target,
             project_id,
             catalog: Arc::new(catalog),
             indexed_links: Arc::new(storage::note_links::NoteLinkSet::default()),
@@ -305,7 +299,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             )
         });
 
-        let owner = self.owner.clone();
+        let open_target = self.open_target.clone();
         let text = InteractiveText::new(
             ("wikilink-preview", block.source_offset),
             StyledText::new(block.text.clone()).with_highlights(highlights),
@@ -316,8 +310,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             };
             match target {
                 PreviewLinkTarget::Note(note_id) => {
-                    emit_preview_target(
-                        &owner,
+                    open_target(
                         crate::workspace_navigation::WorkspaceNavigationTarget::Note {
                             note_id: *note_id,
                             source_offset: None,
@@ -326,7 +319,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
                     );
                 }
                 PreviewLinkTarget::Workspace(target) => {
-                    emit_preview_target(&owner, *target, cx);
+                    open_target(*target, cx);
                 }
                 PreviewLinkTarget::External(url) => cx.open_url(url),
             }
@@ -340,25 +333,6 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
             })
             .child(text)
             .into_any_element()
-    }
-}
-
-fn emit_preview_target(
-    owner: &WikiLinkPreviewOwner,
-    target: crate::workspace_navigation::WorkspaceNavigationTarget,
-    cx: &mut gpui::App,
-) {
-    match owner {
-        WikiLinkPreviewOwner::Document(editor) => {
-            editor.update(cx, |_, cx| {
-                cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(target));
-            });
-        }
-        WikiLinkPreviewOwner::Board(board) => {
-            board.update(cx, |_, cx| {
-                cx.emit(crate::board::BoardViewEvent::OpenWorkspaceTarget(target));
-            });
-        }
     }
 }
 
