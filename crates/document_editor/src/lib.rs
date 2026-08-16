@@ -123,10 +123,10 @@ struct AnalysisState {
 
 struct InspectorLinksState {
     tab: DocumentInspectorTab,
-    note_links: Arc<storage::note_links::NoteLinkSet>,
-    note_catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
-    workspace_links: Arc<storage::workspace_links::NoteWorkspaceLinks>,
-    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    note_links: Arc<storage::note::links::NoteLinkSet>,
+    note_catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
+    workspace_links: Arc<storage::workspace::links::NoteWorkspaceLinks>,
+    workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     relation_signature: Vec<String>,
     project_id: Option<i64>,
     completion_provider: links::WikiLinkCompletionProvider,
@@ -290,9 +290,9 @@ impl DocumentEditorView {
             emmet_replacement_range: None,
             inspector_links: InspectorLinksState {
                 tab: DocumentInspectorTab::Outline,
-                note_links: Arc::new(storage::note_links::NoteLinkSet::default()),
+                note_links: Arc::new(storage::note::links::NoteLinkSet::default()),
                 note_catalog: Arc::new(Vec::new()),
-                workspace_links: Arc::new(storage::workspace_links::NoteWorkspaceLinks::default()),
+                workspace_links: Arc::new(storage::workspace::links::NoteWorkspaceLinks::default()),
                 workspace_catalog: Arc::new(Vec::new()),
                 relation_signature: Vec::new(),
                 project_id: None,

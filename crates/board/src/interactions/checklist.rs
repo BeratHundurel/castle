@@ -33,7 +33,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::create_checklist_item(&store, entry_id, title, position)
+                storage::board::commands::create_checklist_item(&store, entry_id, title, position)
                     .await
             });
         cx.spawn(async move |this, cx| {
@@ -98,8 +98,13 @@ impl BoardView {
             "Could not update checklist item",
             false,
             move |store| async move {
-                storage::board_commands::update_checklist_item(&store, item_id, None, Some(checked))
-                    .await
+                storage::board::commands::update_checklist_item(
+                    &store,
+                    item_id,
+                    None,
+                    Some(checked),
+                )
+                .await
             },
         );
     }
@@ -120,7 +125,7 @@ impl BoardView {
             "Could not delete checklist item",
             false,
             move |store| async move {
-                storage::board_commands::delete_checklist_item(&store, item_id).await
+                storage::board::commands::delete_checklist_item(&store, item_id).await
             },
         );
     }
@@ -170,7 +175,7 @@ impl BoardView {
             "Could not reorder checklist",
             false,
             move |store| async move {
-                storage::board_commands::reorder_checklist_items(&store, positions).await
+                storage::board::commands::reorder_checklist_items(&store, positions).await
             },
         );
     }
@@ -197,7 +202,7 @@ impl BoardView {
             "Could not rename checklist item",
             false,
             move |store| async move {
-                storage::board_commands::update_checklist_item(&store, item_id, Some(title), None)
+                storage::board::commands::update_checklist_item(&store, item_id, Some(title), None)
                     .await
             },
         );

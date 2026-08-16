@@ -24,16 +24,16 @@ impl BoardView {
             .catalog
             .iter()
             .find(|entry| {
-                entry.item.kind == storage::workspace_links::WorkspaceItemKind::Board
+                entry.item.kind == storage::workspace::links::WorkspaceItemKind::Board
                     && entry.item.id == i64::from(board_id)
             })
             .map(|entry| entry.title.as_str())
             .unwrap_or("Board");
 
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace_links::stable_workspace_link(
-                storage::workspace_links::WorkspaceItemRef {
-                    kind: storage::workspace_links::WorkspaceItemKind::Board,
+            storage::workspace::links::stable_workspace_link(
+                storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Board,
                     id: i64::from(board_id),
                 },
                 title,
@@ -56,9 +56,9 @@ impl BoardView {
             .unwrap_or("List");
 
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace_links::stable_workspace_link(
-                storage::workspace_links::WorkspaceItemRef {
-                    kind: storage::workspace_links::WorkspaceItemKind::List,
+            storage::workspace::links::stable_workspace_link(
+                storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::List,
                     id: i64::from(action.0),
                 },
                 title,
@@ -76,9 +76,9 @@ impl BoardView {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace_links::stable_workspace_link(
-                storage::workspace_links::WorkspaceItemRef {
-                    kind: storage::workspace_links::WorkspaceItemKind::Card,
+            storage::workspace::links::stable_workspace_link(
+                storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Card,
                     id: i64::from(entry.id),
                 },
                 entry.title.as_ref(),

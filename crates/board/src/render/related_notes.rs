@@ -60,7 +60,7 @@ fn render_related_note_candidate(
 impl BoardView {
     pub(super) fn render_related_notes_popover(
         &self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         id: SharedString,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -292,8 +292,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let item = selected_entry.map(|(_, card)| storage::workspace_links::WorkspaceItemRef {
-            kind: storage::workspace_links::WorkspaceItemKind::Card,
+        let item = selected_entry.map(|(_, card)| storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Card,
             id: i64::from(card.id),
         });
         let related = item

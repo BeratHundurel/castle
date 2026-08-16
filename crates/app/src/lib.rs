@@ -17,7 +17,8 @@ pub mod system_notifications;
 pub mod tray;
 pub(crate) mod workspace_navigation;
 
-pub(crate) use storage::{folder_import, home, search, trash, workspace as workspace_data};
+pub(crate) use storage::workspace as workspace_data;
+pub(crate) use storage::workspace::{folder_import, home, search, trash};
 
 #[cfg(test)]
 pub(crate) use test_support as test_alloc;

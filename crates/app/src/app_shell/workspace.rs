@@ -23,7 +23,7 @@ impl AppShell {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::workspace_links::repair_workspace_link_index_batch(&db, 32).await
+                    storage::workspace::links::repair_workspace_link_index_batch(&db, 32).await
                 })
                 .await;
             match result {
@@ -354,7 +354,7 @@ impl AppShell {
         &mut self,
         project_id: Option<u32>,
         title: String,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -431,7 +431,7 @@ impl AppShell {
         project_id: Option<u32>,
         title: String,
         source_title: String,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -442,7 +442,7 @@ impl AppShell {
         let background_executor = cx.background_executor().clone();
         let runtime = cx.global::<AppServices>().runtime();
         let display_title = title.replace(['\r', '\n', '|'], " ");
-        let source_link = storage::workspace_links::stable_workspace_link(item, &source_title);
+        let source_link = storage::workspace::links::stable_workspace_link(item, &source_title);
         let content = format!(
             "# {display_title}\n\nRelated {}: {source_link}\n",
             item.kind.as_str(),
@@ -484,7 +484,7 @@ impl AppShell {
                         item,
                     )
                     .await?;
-                    let board_id = storage::workspace_links::load_workspace_link_catalog(
+                    let board_id = storage::workspace::links::load_workspace_link_catalog(
                         &db_for_insert,
                     )
                     .await?
@@ -819,8 +819,8 @@ mod tests {
             "Linked note".to_string(),
             path.display().to_string(),
             "# Linked note".to_string(),
-            storage::workspace_links::WorkspaceItemRef {
-                kind: storage::workspace_links::WorkspaceItemKind::Board,
+            storage::workspace::links::WorkspaceItemRef {
+                kind: storage::workspace::links::WorkspaceItemKind::Board,
                 id: 999,
             },
         )

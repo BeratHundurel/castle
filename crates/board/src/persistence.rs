@@ -104,27 +104,27 @@ impl BoardView {
                     let board_data = async {
                         load_board_data(&store, board_id)
                             .await};
-                    let properties = storage::board_properties::load_board_properties(
+                    let properties = storage::board::properties::load_board_properties(
                         &db,
                         board_id as i64,
                     );
                     let views =
-                        storage::board_properties::load_board_views(&db, board_id as i64);
+                        storage::board::properties::load_board_views(&db, board_id as i64);
                     let link_catalog =
-                        storage::workspace_links::load_workspace_link_catalog(&db);
+                        storage::workspace::links::load_workspace_link_catalog(&db);
                     let ((cards, labels), properties, views, link_catalog) =
                         tokio::try_join!(board_data, properties, views, link_catalog)?;
-                    let mut related_targets = vec![storage::workspace_links::WorkspaceItemRef {
-                        kind: storage::workspace_links::WorkspaceItemKind::Board,
+                    let mut related_targets = vec![storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Board,
                         id: i64::from(board_id),
                     }];
                     related_targets.extend(cards.iter().map(|list| {
-                        storage::workspace_links::WorkspaceItemRef {
-                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                        storage::workspace::links::WorkspaceItemRef {
+                            kind: storage::workspace::links::WorkspaceItemKind::List,
                             id: i64::from(list.id),
                         }
                     }));
-                    let related_notes = storage::workspace_links::load_related_notes_for_items(
+                    let related_notes = storage::workspace::links::load_related_notes_for_items(
                         &db,
                         &related_targets,
                     )
@@ -199,7 +199,7 @@ impl BoardView {
                                 .iter()
                                 .find(|entry| {
                                     entry.item.kind
-                                        == storage::workspace_links::WorkspaceItemKind::Board
+                                        == storage::workspace::links::WorkspaceItemKind::Board
                                         && entry.item.id == i64::from(board_id)
                                 })
                                 .and_then(|entry| entry.project_id);
@@ -426,13 +426,16 @@ mod tests {
                 .insert(&db)
                 .await?;
 
-                let request = storage::trash::MoveToTrash {
-                    kind: storage::trash::TrashItemKind::Board,
+                let request = storage::workspace::trash::MoveToTrash {
+                    kind: storage::workspace::trash::TrashItemKind::Board,
                     id: board.id as u32,
                 };
-                storage::trash::move_to_trash(&db, request, 1).await?;
-                storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(request))
-                    .await?;
+                storage::workspace::trash::move_to_trash(&db, request, 1).await?;
+                storage::workspace::trash::restore_item(
+                    &db,
+                    storage::workspace::trash::RestoreTrashItem(request),
+                )
+                .await?;
                 Ok::<_, anyhow::Error>((db, request))
             })
             .expect("board restore setup should succeed");
@@ -615,12 +618,16 @@ mod tests {
         .insert(&db)
         .await?;
 
-        let board_request = storage::trash::MoveToTrash {
-            kind: storage::trash::TrashItemKind::Board,
+        let board_request = storage::workspace::trash::MoveToTrash {
+            kind: storage::workspace::trash::TrashItemKind::Board,
             id: board.id as u32,
         };
-        storage::trash::move_to_trash(&db, board_request, 10).await?;
-        storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(board_request)).await?;
+        storage::workspace::trash::move_to_trash(&db, board_request, 10).await?;
+        storage::workspace::trash::restore_item(
+            &db,
+            storage::workspace::trash::RestoreTrashItem(board_request),
+        )
+        .await?;
 
         let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);
@@ -628,13 +635,16 @@ mod tests {
         assert_eq!(cards[0].entries.len(), 1);
         assert_eq!(cards[0].entries[0].id, entry.id as u32);
 
-        let project_request = storage::trash::MoveToTrash {
-            kind: storage::trash::TrashItemKind::Project,
+        let project_request = storage::workspace::trash::MoveToTrash {
+            kind: storage::workspace::trash::TrashItemKind::Project,
             id: project.id as u32,
         };
-        storage::trash::move_to_trash(&db, project_request, 20).await?;
-        storage::trash::restore_item(&db, storage::trash::RestoreTrashItem(project_request))
-            .await?;
+        storage::workspace::trash::move_to_trash(&db, project_request, 20).await?;
+        storage::workspace::trash::restore_item(
+            &db,
+            storage::workspace::trash::RestoreTrashItem(project_request),
+        )
+        .await?;
 
         let (cards, _) = load_board_data(&db, board.id as u32).await?;
         assert_eq!(cards.len(), 1);

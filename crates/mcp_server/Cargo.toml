@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 storage = { path = "../storage" }
+workspace_api = { path = "../workspace_api", features = ["schema"] }
 anyhow.workspace = true
 rmcp.workspace = true
 schemars.workspace = true

@@ -1,5 +1,11 @@
 use std::collections::HashMap;
 
+pub mod commands;
+pub mod positions;
+pub mod projection;
+pub mod properties;
+pub mod templates;
+
 use entity::{
     board_label, board_label::Entity as BoardLabel, card, card::Entity as Card,
     entry::Entity as Entry, entry_attachment, entry_attachment::Entity as EntryAttachment,
@@ -37,7 +43,7 @@ pub struct BoardCardRecord {
     pub labels: Vec<LabelRecord>,
     pub checklist_items: Vec<ChecklistItemRecord>,
     pub attachments: Vec<AttachmentRecord>,
-    pub related_notes: Vec<crate::workspace_links::RelatedNote>,
+    pub related_notes: Vec<crate::workspace::links::RelatedNote>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,7 +161,7 @@ pub async fn load_board_snapshot(
     }
 
     let mut related_notes_by_entry =
-        crate::workspace_links::load_related_notes_for_entries(db, &entry_ids)
+        crate::workspace::links::load_related_notes_for_entries(db, &entry_ids)
             .await
             .map_err(|error| DbErr::Custom(error.to_string()))?;
 

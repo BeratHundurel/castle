@@ -34,7 +34,7 @@ use entry_dialog::EntryDialog;
 
 #[derive(Clone)]
 struct BoardServices {
-    layout_persistence: storage::board_positions::BoardLayoutPersistence,
+    layout_persistence: storage::board::positions::BoardLayoutPersistence,
     notifications: notifications::BoardNotifications,
 }
 
@@ -48,12 +48,12 @@ impl BoardServices {
         notifications: notifications::BoardNotifications,
     ) -> Self {
         Self {
-            layout_persistence: storage::board_positions::BoardLayoutPersistence::new(runtime),
+            layout_persistence: storage::board::positions::BoardLayoutPersistence::new(runtime),
             notifications,
         }
     }
 
-    fn layout_persistence(&self) -> storage::board_positions::BoardLayoutPersistence {
+    fn layout_persistence(&self) -> storage::board::positions::BoardLayoutPersistence {
         self.layout_persistence.clone()
     }
 
@@ -90,10 +90,10 @@ struct BoardDataState {
 struct RelatedNotesState {
     picker: related_notes::RelatedNotePickerState,
     by_item: HashMap<
-        storage::workspace_links::WorkspaceItemRef,
-        Vec<storage::workspace_links::RelatedNote>,
+        storage::workspace::links::WorkspaceItemRef,
+        Vec<storage::workspace::links::RelatedNote>,
     >,
-    catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     completion_provider: workspace_ui::WikiLinkCompletionProvider,
     error: Option<SharedString>,
 }
@@ -108,11 +108,11 @@ struct BoardMutationState {
 }
 
 struct BoardPropertiesState {
-    data: storage::board_properties::BoardProperties,
-    values: HashMap<(i64, i64), storage::board_properties::PropertyValue>,
-    saved_views: Vec<storage::board_properties::BoardView>,
+    data: storage::board::properties::BoardProperties,
+    values: HashMap<(i64, i64), storage::board::properties::PropertyValue>,
+    saved_views: Vec<storage::board::properties::BoardView>,
     active_view_id: Option<i64>,
-    active_view_config: storage::board_properties::BoardViewConfig,
+    active_view_config: storage::board::properties::BoardViewConfig,
     view_config_dirty: bool,
     view_load_warnings: Vec<SharedString>,
     update_error: Option<SharedString>,
@@ -124,7 +124,7 @@ struct BoardPropertiesState {
     view_panel_open: bool,
     new_view_form_open: bool,
     sort_panel_open: bool,
-    new_property_kind: storage::board_properties::PropertyKind,
+    new_property_kind: storage::board::properties::PropertyKind,
     new_property_input: Entity<InputState>,
     rename_property_input: Entity<InputState>,
     renaming_property_id: Option<i64>,
@@ -199,7 +199,7 @@ pub enum BoardViewEvent {
         links_changed: bool,
     },
     CreateLinkedNote {
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         project_id: Option<u32>,
         title: String,
     },
@@ -500,7 +500,7 @@ impl BoardView {
                         i64::from(entry_id),
                         property_id,
                         date.map(|date| {
-                            storage::board_properties::PropertyValue::Date(
+                            storage::board::properties::PropertyValue::Date(
                                 date.format("%Y-%m-%d").to_string(),
                             )
                         }),
@@ -578,14 +578,14 @@ impl BoardView {
                 labels: vec![],
             },
             properties: BoardPropertiesState {
-                data: storage::board_properties::BoardProperties::default(),
+                data: storage::board::properties::BoardProperties::default(),
                 values: HashMap::new(),
                 saved_views: vec![],
                 active_view_id: None,
-                active_view_config: storage::board_properties::BoardViewConfig {
+                active_view_config: storage::board::properties::BoardViewConfig {
                     visible_properties: vec![
-                        storage::board_properties::PropertyKey::Labels,
-                        storage::board_properties::PropertyKey::DueDate,
+                        storage::board::properties::PropertyKey::Labels,
+                        storage::board::properties::PropertyKey::DueDate,
                     ],
                     ..Default::default()
                 },
@@ -600,7 +600,7 @@ impl BoardView {
                 view_panel_open: false,
                 new_view_form_open: false,
                 sort_panel_open: false,
-                new_property_kind: storage::board_properties::PropertyKind::Text,
+                new_property_kind: storage::board::properties::PropertyKind::Text,
                 new_property_input,
                 rename_property_input,
                 renaming_property_id: None,

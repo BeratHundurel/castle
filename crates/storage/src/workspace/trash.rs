@@ -144,7 +144,7 @@ pub async fn move_to_trash(
         [deleted_at.into(), (item.id as i64).into()],
     ))
     .await?;
-    crate::search::rebuild_search_index(db).await?;
+    crate::workspace::search::rebuild_search_index(db).await?;
     Ok(())
 }
 
@@ -175,7 +175,7 @@ pub async fn restore_item(
     if result.rows_affected() != 1 {
         bail!("This item is no longer in Trash");
     }
-    crate::search::rebuild_search_index(db).await?;
+    crate::workspace::search::rebuild_search_index(db).await?;
     Ok(())
 }
 
@@ -253,7 +253,7 @@ pub async fn purge_item(
         [(item.0.id as i64).into()],
     ))
     .await?;
-    crate::search::rebuild_search_index(db).await?;
+    crate::workspace::search::rebuild_search_index(db).await?;
     Ok(artifacts)
 }
 
@@ -324,7 +324,7 @@ pub async fn purge_all(
         db.execute_raw(Statement::from_string(DbBackend::Sqlite, sql))
             .await?;
     }
-    crate::search::rebuild_search_index(db).await?;
+    crate::workspace::search::rebuild_search_index(db).await?;
     Ok(artifacts)
 }
 

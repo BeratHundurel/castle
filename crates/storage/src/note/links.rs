@@ -44,8 +44,8 @@ pub struct NoteLinkCatalogEntry {
 pub(crate) struct NoteIndexCatalogs<'a> {
     pub note_links: &'a [NoteLinkCatalogEntry],
     pub aliases: &'a [note_alias::Model],
-    pub workspace: &'a [crate::workspace_links::WorkspaceCatalogEntry],
-    pub existing_workspace_items: &'a HashSet<crate::workspace_links::WorkspaceItemRef>,
+    pub workspace: &'a [crate::workspace::links::WorkspaceCatalogEntry],
+    pub existing_workspace_items: &'a HashSet<crate::workspace::links::WorkspaceItemRef>,
     pub saved_views: &'a HashSet<(i64, i64)>,
 }
 
@@ -61,7 +61,7 @@ pub struct UnresolvedLinkReference {
     pub source_note_id: i64,
     pub source_title: String,
     pub source_project_name: Option<String>,
-    pub target_kind: Option<crate::workspace_links::WorkspaceItemKind>,
+    pub target_kind: Option<crate::workspace::links::WorkspaceItemKind>,
     pub raw_target: String,
     pub display_text: Option<String>,
     pub start_byte: usize,
@@ -280,19 +280,19 @@ pub async fn load_note_links(
     };
     let workspace_targets = outbound_models
         .iter()
-        .filter_map(|link| crate::workspace_links::parse_workspace_target(&link.raw_target))
+        .filter_map(|link| crate::workspace::links::parse_workspace_target(&link.raw_target))
         .collect::<Vec<_>>();
-    let active_workspace_items = crate::workspace_links::load_workspace_link_catalog(db)
+    let active_workspace_items = crate::workspace::links::load_workspace_link_catalog(db)
         .await?
         .into_iter()
         .map(|entry| entry.item)
         .collect::<HashSet<_>>();
     let existing_workspace_items =
-        crate::workspace_links::load_existing_workspace_items(db, &workspace_targets).await?;
+        crate::workspace::links::load_existing_workspace_items(db, &workspace_targets).await?;
     let mut outbound = Vec::new();
     let mut unresolved = Vec::new();
     for model in outbound_models {
-        if let Some(item) = crate::workspace_links::parse_workspace_target(&model.raw_target) {
+        if let Some(item) = crate::workspace::links::parse_workspace_target(&model.raw_target) {
             if !active_workspace_items.contains(&item) && !existing_workspace_items.contains(&item)
             {
                 unresolved.push(UnresolvedLinkReference {
@@ -377,23 +377,23 @@ pub async fn index_note_links_in_connection(
             .all(db)
             .await?
     };
-    let workspace_catalog = crate::workspace_links::load_workspace_link_catalog(db).await?;
+    let workspace_catalog = crate::workspace::links::load_workspace_link_catalog(db).await?;
     let mut requested_workspace_targets = parsed
         .iter()
-        .filter_map(|link| crate::workspace_links::parse_workspace_target(&link.raw_target))
+        .filter_map(|link| crate::workspace::links::parse_workspace_target(&link.raw_target))
         .collect::<Vec<_>>();
     requested_workspace_targets.extend(
-        crate::board_projection::parse_board_view_embeds(content)
+        crate::board::projection::parse_board_view_embeds(content)
             .into_iter()
-            .map(|embed| crate::workspace_links::WorkspaceItemRef {
-                kind: crate::workspace_links::WorkspaceItemKind::Board,
+            .map(|embed| crate::workspace::links::WorkspaceItemRef {
+                kind: crate::workspace::links::WorkspaceItemKind::Board,
                 id: embed.board_id,
             }),
     );
     let existing_workspace_targets =
-        crate::workspace_links::load_existing_workspace_items(db, &requested_workspace_targets)
+        crate::workspace::links::load_existing_workspace_items(db, &requested_workspace_targets)
             .await?;
-    let saved_views = crate::workspace_links::load_saved_view_identities(db).await?;
+    let saved_views = crate::workspace::links::load_saved_view_identities(db).await?;
     index_note_links_with_catalog(
         db,
         note_id,
@@ -461,7 +461,7 @@ pub(crate) async fn index_note_links_with_catalog(
     }
     .insert(db)
     .await?;
-    crate::workspace_links::index_note_workspace_links_with_catalog(
+    crate::workspace::links::index_note_workspace_links_with_catalog(
         db,
         note_id,
         content,
@@ -703,7 +703,7 @@ mod tests {
         let links = load_note_links(&db, source.id).await?;
         assert!(links.unresolved.is_empty());
         assert_eq!(
-            crate::workspace_links::load_note_workspace_links(&db, source.id)
+            crate::workspace::links::load_note_workspace_links(&db, source.id)
                 .await?
                 .references
                 .len(),
@@ -721,7 +721,7 @@ mod tests {
         let links = load_note_links(&db, source.id).await?;
         assert!(links.unresolved.is_empty());
         assert!(
-            crate::workspace_links::load_note_workspace_links(&db, source.id)
+            crate::workspace::links::load_note_workspace_links(&db, source.id)
                 .await?
                 .references
                 .is_empty()
@@ -733,7 +733,7 @@ mod tests {
         assert_eq!(links.unresolved.len(), 1);
         assert_eq!(
             links.unresolved[0].target_kind,
-            Some(crate::workspace_links::WorkspaceItemKind::Board)
+            Some(crate::workspace::links::WorkspaceItemKind::Board)
         );
         assert_eq!(
             links.unresolved[0].raw_target,

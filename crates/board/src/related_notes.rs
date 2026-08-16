@@ -34,11 +34,11 @@ fn moved_candidate_row(
 pub(super) struct RelatedNotePickerState {
     pub(super) search_input: Entity<InputState>,
     pub(super) open: bool,
-    pub(super) target: Option<storage::workspace_links::WorkspaceItemRef>,
+    pub(super) target: Option<storage::workspace::links::WorkspaceItemRef>,
     pub(super) active_row: usize,
     pub(super) keyboard_selection_visible: bool,
     pub(super) scroll_handle: ScrollHandle,
-    pub(super) pending: HashSet<(storage::workspace_links::WorkspaceItemRef, i64)>,
+    pub(super) pending: HashSet<(storage::workspace::links::WorkspaceItemRef, i64)>,
     return_focus: Option<FocusHandle>,
 }
 
@@ -59,7 +59,7 @@ impl RelatedNotePickerState {
     pub(super) fn set_open(
         &mut self,
         open: bool,
-        target: Option<storage::workspace_links::WorkspaceItemRef>,
+        target: Option<storage::workspace::links::WorkspaceItemRef>,
         window: &mut Window,
         cx: &mut Context<BoardView>,
     ) {
@@ -83,9 +83,9 @@ impl RelatedNotePickerState {
 impl BoardView {
     pub(crate) fn related_note_candidates(
         &self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         cx: &mut Context<Self>,
-    ) -> Vec<storage::workspace_links::WorkspaceCatalogEntry> {
+    ) -> Vec<storage::workspace::links::WorkspaceCatalogEntry> {
         let linked_note_ids = self
             .related_notes_for_item(item)
             .into_iter()
@@ -109,7 +109,7 @@ impl BoardView {
             .related_notes
             .catalog
             .iter()
-            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
+            .filter(|entry| entry.item.kind == storage::workspace::links::WorkspaceItemKind::Note)
             .filter(|entry| !linked_note_ids.contains(&entry.item.id))
             .filter(|entry| {
                 query.is_empty()
@@ -188,18 +188,18 @@ impl BoardView {
 
     pub(crate) fn selected_workspace_item(
         &self,
-    ) -> Option<storage::workspace_links::WorkspaceItemRef> {
-        Some(storage::workspace_links::WorkspaceItemRef {
-            kind: storage::workspace_links::WorkspaceItemKind::Card,
+    ) -> Option<storage::workspace::links::WorkspaceItemRef> {
+        Some(storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Card,
             id: i64::from(self.entry_editing.dialog.entry_id?),
         })
     }
 
     pub(crate) fn related_notes_for_item(
         &self,
-        item: storage::workspace_links::WorkspaceItemRef,
-    ) -> Vec<storage::workspace_links::RelatedNote> {
-        if item.kind == storage::workspace_links::WorkspaceItemKind::Card {
+        item: storage::workspace::links::WorkspaceItemRef,
+    ) -> Vec<storage::workspace::links::RelatedNote> {
+        if item.kind == storage::workspace::links::WorkspaceItemKind::Card {
             return self
                 .data
                 .lists
@@ -218,9 +218,9 @@ impl BoardView {
 
     fn related_notes_for_item_mut(
         &mut self,
-        item: storage::workspace_links::WorkspaceItemRef,
-    ) -> Option<&mut Vec<storage::workspace_links::RelatedNote>> {
-        if item.kind == storage::workspace_links::WorkspaceItemKind::Card {
+        item: storage::workspace::links::WorkspaceItemRef,
+    ) -> Option<&mut Vec<storage::workspace::links::RelatedNote>> {
+        if item.kind == storage::workspace::links::WorkspaceItemKind::Card {
             return self
                 .data
                 .lists
@@ -234,7 +234,7 @@ impl BoardView {
 
     pub(crate) fn link_note_to_item(
         &mut self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         note_id: i64,
         cx: &mut Context<Self>,
     ) {
@@ -246,7 +246,7 @@ impl BoardView {
             .catalog
             .iter()
             .find(|entry| {
-                entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note
+                entry.item.kind == storage::workspace::links::WorkspaceItemKind::Note
                     && entry.item.id == note_id
             })
             .cloned()
@@ -266,19 +266,19 @@ impl BoardView {
         {
             if !related
                 .origins
-                .contains(&storage::workspace_links::WorkspaceLinkOrigin::Manual)
+                .contains(&storage::workspace::links::WorkspaceLinkOrigin::Manual)
             {
                 related
                     .origins
-                    .push(storage::workspace_links::WorkspaceLinkOrigin::Manual);
+                    .push(storage::workspace::links::WorkspaceLinkOrigin::Manual);
             }
         } else {
-            related_notes.push(storage::workspace_links::RelatedNote {
+            related_notes.push(storage::workspace::links::RelatedNote {
                 note_id,
                 title: note.title,
                 project_id: note.project_id,
                 project_name: note.project_name,
-                origins: vec![storage::workspace_links::WorkspaceLinkOrigin::Manual],
+                origins: vec![storage::workspace::links::WorkspaceLinkOrigin::Manual],
             });
         }
 
@@ -297,7 +297,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace_links::set_manual_note_link(
+                storage::workspace::links::set_manual_note_link(
                     &store,
                     note_id,
                     item,
@@ -343,7 +343,7 @@ impl BoardView {
 
     pub(crate) fn unlink_note_from_item(
         &mut self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         note_id: i64,
         cx: &mut Context<Self>,
     ) {
@@ -364,7 +364,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::workspace_links::set_manual_note_link(
+                storage::workspace::links::set_manual_note_link(
                     &store,
                     note_id,
                     item,
@@ -410,7 +410,7 @@ impl BoardView {
 
     fn remove_manual_origin(
         &mut self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         note_id: i64,
     ) {
         let Some(related_notes) = self.related_notes_for_item_mut(item) else {
@@ -422,7 +422,7 @@ impl BoardView {
         {
             related
                 .origins
-                .retain(|origin| *origin != storage::workspace_links::WorkspaceLinkOrigin::Manual);
+                .retain(|origin| *origin != storage::workspace::links::WorkspaceLinkOrigin::Manual);
         }
         related_notes.retain(|related| !related.origins.is_empty());
     }
@@ -435,7 +435,7 @@ impl BoardView {
 
     pub(crate) fn create_note_for_item(
         &self,
-        item: storage::workspace_links::WorkspaceItemRef,
+        item: storage::workspace::links::WorkspaceItemRef,
         cx: &mut Context<Self>,
     ) {
         let Some(source) = self

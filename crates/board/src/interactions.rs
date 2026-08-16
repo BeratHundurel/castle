@@ -73,7 +73,7 @@ mod tests {
     use gpui::SharedString;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
-    use storage::board_positions::{BoardLayoutPersistence, BoardLayoutSnapshot};
+    use storage::board::positions::{BoardLayoutPersistence, BoardLayoutSnapshot};
 
     use super::{
         BoardCardDTO, BoardLabelDTO, BoardListDTO, ChecklistItemDTO,

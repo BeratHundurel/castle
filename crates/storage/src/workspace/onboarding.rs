@@ -16,8 +16,8 @@ use sea_orm::{
 };
 
 use crate::{
-    board_properties::{BoardViewConfig, PropertyKey, PropertyKind},
-    board_templates::{
+    board::properties::{BoardViewConfig, PropertyKey, PropertyKind},
+    board::templates::{
         BoardTemplateColumn, BoardTemplateDefinition, BoardTemplateEntry,
         create_board_from_template_in_transaction,
     },
@@ -163,7 +163,7 @@ pub async fn seed_fresh_workspace(
         remove_seed_file(&docs_path);
         return Err(err.into());
     }
-    crate::note_links::index_note_links(db, note.id, &docs_content, note.updated_at).await?;
+    crate::note::links::index_note_links(db, note.id, &docs_content, note.updated_at).await?;
 
     Ok(Some(FreshWorkspace {
         docs_note: WorkspaceItem {
@@ -242,14 +242,14 @@ async fn seed_starter_board_details(
         .all(transaction)
         .await?;
 
-    let try_me = crate::board_commands::create_label(
+    let try_me = crate::board::commands::create_label(
         transaction,
         board.id,
         "Try me".to_string(),
         "blue".to_string(),
     )
     .await?;
-    let connected = crate::board_commands::create_label(
+    let connected = crate::board::commands::create_label(
         transaction,
         board.id,
         "Connected".to_string(),
@@ -258,7 +258,7 @@ async fn seed_starter_board_details(
     .await?;
 
     for title in [OPEN_CARD_TITLE, DRAG_CARD_TITLE] {
-        crate::board_commands::set_label_assignment(
+        crate::board::commands::set_label_assignment(
             transaction,
             starter_entry_id(&entries, title)?,
             try_me.id,
@@ -267,7 +267,7 @@ async fn seed_starter_board_details(
         .await?;
     }
     for title in [CONNECT_CARD_TITLE, EMBED_CARD_TITLE] {
-        crate::board_commands::set_label_assignment(
+        crate::board::commands::set_label_assignment(
             transaction,
             starter_entry_id(&entries, title)?,
             connected.id,
@@ -293,28 +293,28 @@ async fn seed_starter_board_details(
         .await?;
     }
 
-    let area = crate::board_properties::create_property(
+    let area = crate::board::properties::create_property(
         transaction,
         i64::from(board.id),
         "Area".to_string(),
         PropertyKind::Select,
     )
     .await?;
-    let notes = crate::board_properties::create_property_option(
+    let notes = crate::board::properties::create_property_option(
         transaction,
         area.id,
         "Notes".to_string(),
         "blue".to_string(),
     )
     .await?;
-    let boards = crate::board_properties::create_property_option(
+    let boards = crate::board::properties::create_property_option(
         transaction,
         area.id,
         "Boards".to_string(),
         "green".to_string(),
     )
     .await?;
-    let connections = crate::board_properties::create_property_option(
+    let connections = crate::board::properties::create_property_option(
         transaction,
         area.id,
         "Connections".to_string(),
@@ -346,7 +346,7 @@ async fn seed_starter_board_details(
         .await?;
     }
 
-    let view = crate::board_properties::create_board_view(
+    let view = crate::board::properties::create_board_view(
         transaction,
         i64::from(board.id),
         "Feature tour".to_string(),
@@ -356,7 +356,7 @@ async fn seed_starter_board_details(
         },
     )
     .await?;
-    crate::board_properties::set_selected_board_view(
+    crate::board::properties::set_selected_board_view(
         transaction,
         i64::from(board.id),
         Some(view.id),
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(seeded.docs_path, directory.path().join("notes/docs.md"));
         let seeded_docs = fs::read_to_string(&seeded.docs_path)?;
         assert!(seeded_docs.contains("```mermaid\nflowchart LR"));
-        let embeds = crate::board_projection::parse_board_view_embeds(&seeded_docs);
+        let embeds = crate::board::projection::parse_board_view_embeds(&seeded_docs);
         assert_eq!(embeds.len(), 1);
         assert_eq!(embeds[0].board_id, i64::from(seeded.starter_board.id));
         assert_eq!(
@@ -527,9 +527,11 @@ mod tests {
         assert!(open_card.checklist_items[0].checked);
         assert_eq!(open_card.labels[0].name, "Try me");
 
-        let properties =
-            crate::board_properties::load_board_properties(&db, i64::from(seeded.starter_board.id))
-                .await?;
+        let properties = crate::board::properties::load_board_properties(
+            &db,
+            i64::from(seeded.starter_board.id),
+        )
+        .await?;
         assert_eq!(properties.definitions.len(), 1);
         assert_eq!(properties.definitions[0].name, "Area");
         assert_eq!(properties.definitions[0].kind, PropertyKind::Select);
@@ -537,7 +539,7 @@ mod tests {
         assert_eq!(properties.values.len(), 9);
 
         let views =
-            crate::board_properties::load_board_views(&db, i64::from(seeded.starter_board.id))
+            crate::board::properties::load_board_views(&db, i64::from(seeded.starter_board.id))
                 .await?;
         assert_eq!(views.views.len(), 1);
         assert_eq!(views.views[0].name, "Feature tour");
@@ -552,8 +554,8 @@ mod tests {
             vec![PropertyKey::Custom(properties.definitions[0].id)]
         );
 
-        let crate::board_projection::BoardViewProjectionResult::Available(projection) =
-            crate::board_projection::load_board_view_projection(
+        let crate::board::projection::BoardViewProjectionResult::Available(projection) =
+            crate::board::projection::load_board_view_projection(
                 &db,
                 i64::from(seeded.starter_board.id),
                 Some(views.views[0].id),

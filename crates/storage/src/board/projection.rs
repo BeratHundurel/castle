@@ -6,11 +6,11 @@ use entity::{board, board::Entity as Board};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::{
-    board::{BoardCardRecord, LabelRecord},
-    board_properties::{
+    board::properties::{
         BoardViewConfig, DueDatePreset, FilterOperand, FilterOperator, PropertyDefinition,
         PropertyKey, PropertyValue, SortDirection, ViewFilter,
     },
+    board::{BoardCardRecord, LabelRecord},
 };
 
 pub const BOARD_VIEW_PROJECTION_LIMIT: usize = 100;
@@ -121,15 +121,15 @@ pub async fn load_board_view_projection(
         return Ok(BoardViewProjectionResult::MissingBoard);
     };
     if board.project_id.is_some() {
-        let catalog = crate::workspace_links::load_workspace_link_catalog(db).await?;
+        let catalog = crate::workspace::links::load_workspace_link_catalog(db).await?;
         if !catalog.iter().any(|entry| {
-            entry.item.kind == crate::workspace_links::WorkspaceItemKind::Board
+            entry.item.kind == crate::workspace::links::WorkspaceItemKind::Board
                 && entry.item.id == board_id
         }) {
             return Ok(BoardViewProjectionResult::MissingBoard);
         }
     }
-    let views = crate::board_properties::load_board_views(db, board_id).await?;
+    let views = crate::board::properties::load_board_views(db, board_id).await?;
     let selected_view = match view_id {
         Some(view_id) => {
             let Some(view) = views.views.into_iter().find(|view| view.id == view_id) else {
@@ -145,7 +145,7 @@ pub async fn load_board_view_projection(
         .unwrap_or_else(default_projection_config);
     let board_id_u32 = u32::try_from(board_id).map_err(|_| anyhow::anyhow!("invalid board id"))?;
     let snapshot = crate::board::load_board_snapshot(db, board_id_u32).await?;
-    let properties = crate::board_properties::load_board_properties(db, board_id).await?;
+    let properties = crate::board::properties::load_board_properties(db, board_id).await?;
     let values = properties
         .values
         .iter()
@@ -344,7 +344,7 @@ fn parse_date(value: &str) -> Option<NaiveDate> {
 pub fn compare_entries_for_view(
     left: &impl BoardViewEntry,
     right: &impl BoardViewEntry,
-    sort: &crate::board_properties::ViewSort,
+    sort: &crate::board::properties::ViewSort,
     values: &HashMap<(i64, i64), PropertyValue>,
     definitions: &[PropertyDefinition],
 ) -> Ordering {
@@ -357,7 +357,7 @@ pub fn compare_entries_for_view(
 
 fn sort_entries_for_view<T: BoardViewEntry>(
     entries: &mut [T],
-    sort: &crate::board_properties::ViewSort,
+    sort: &crate::board::properties::ViewSort,
     values: &HashMap<(i64, i64), PropertyValue>,
     definitions: &[PropertyDefinition],
 ) {
@@ -611,7 +611,7 @@ mod tests {
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use std::{cell::Cell, collections::HashMap};
 
-    use crate::board_properties::{
+    use crate::board::properties::{
         PropertyDefinition, PropertyKey, PropertyKind, PropertyOption, PropertyValue,
         SortDirection, ViewSort,
     };
@@ -1037,24 +1037,24 @@ mod tests {
         .insert(&db)
         .await?;
         let first_entry_id = first_entry_id.ok_or_else(|| anyhow::anyhow!("missing test card"))?;
-        crate::workspace_links::link_note_to_item(
+        crate::workspace::links::link_note_to_item(
             &db,
             note.id,
-            crate::workspace_links::WorkspaceItemRef {
-                kind: crate::workspace_links::WorkspaceItemKind::Card,
+            crate::workspace::links::WorkspaceItemRef {
+                kind: crate::workspace::links::WorkspaceItemKind::Card,
                 id: first_entry_id,
             },
             0,
         )
         .await?;
-        let related_view = crate::board_properties::create_board_view(
+        let related_view = crate::board::properties::create_board_view(
             &db,
             board.id,
             "With notes".to_string(),
-            crate::board_properties::BoardViewConfig {
-                filters: vec![crate::board_properties::ViewFilter {
-                    property: crate::board_properties::PropertyKey::RelatedNotes,
-                    operator: crate::board_properties::FilterOperator::IsNotEmpty,
+            crate::board::properties::BoardViewConfig {
+                filters: vec![crate::board::properties::ViewFilter {
+                    property: crate::board::properties::PropertyKey::RelatedNotes,
+                    operator: crate::board::properties::FilterOperator::IsNotEmpty,
                     operand: None,
                 }],
                 ..Default::default()

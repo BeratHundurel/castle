@@ -14,7 +14,7 @@ impl BoardView {
     }
 
     pub(super) fn entry_matches_filters(&self, entry: &BoardCardDTO) -> bool {
-        storage::board_projection::entry_matches_view(
+        storage::board::projection::entry_matches_view(
             entry,
             &self.properties.active_view_config,
             &self.properties.values,
@@ -33,7 +33,7 @@ impl BoardView {
             .sort
             .as_ref()
             .map_or(Ordering::Equal, |sort| {
-                storage::board_projection::compare_entries_for_view(
+                storage::board::projection::compare_entries_for_view(
                     left,
                     right,
                     sort,

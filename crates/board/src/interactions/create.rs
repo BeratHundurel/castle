@@ -23,7 +23,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::duplicate_board_card(
+                storage::board::commands::duplicate_board_card(
                     &store,
                     board_card_draft(source),
                     app_services::now_ts(),
@@ -77,7 +77,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::duplicate_board_list(
+                storage::board::commands::duplicate_board_list(
                     &store,
                     board_list_draft(source),
                     app_services::now_ts(),
@@ -162,7 +162,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::create_board_card(
+                storage::board::commands::create_board_card(
                     &store,
                     board_card_draft(entry),
                     app_services::now_ts(),
@@ -225,7 +225,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::create_board_list(&store, board_list_draft(card)).await
+                storage::board::commands::create_board_list(&store, board_list_draft(card)).await
             });
 
         cx.spawn(async move |this, cx| {
@@ -281,7 +281,7 @@ impl BoardView {
             "Could not rename list",
             false,
             move |store| async move {
-                storage::board_commands::rename_board_list(&store, card_id, title).await
+                storage::board::commands::rename_board_list(&store, card_id, title).await
             },
         );
     }
@@ -379,8 +379,8 @@ impl BoardView {
     }
 }
 
-fn board_card_draft(card: BoardCardDTO) -> storage::board_commands::BoardCardDraft {
-    storage::board_commands::BoardCardDraft {
+fn board_card_draft(card: BoardCardDTO) -> storage::board::commands::BoardCardDraft {
+    storage::board::commands::BoardCardDraft {
         title: card.title.to_string(),
         description: card.description.to_string(),
         list_id: card.card_id,
@@ -390,7 +390,7 @@ fn board_card_draft(card: BoardCardDTO) -> storage::board_commands::BoardCardDra
         checklist_items: card
             .checklist_items
             .into_iter()
-            .map(|item| storage::board_commands::ChecklistItemDraft {
+            .map(|item| storage::board::commands::ChecklistItemDraft {
                 title: item.title.to_string(),
                 checked: item.checked,
                 position: item.position,
@@ -399,8 +399,8 @@ fn board_card_draft(card: BoardCardDTO) -> storage::board_commands::BoardCardDra
     }
 }
 
-fn board_list_draft(list: BoardListDTO) -> storage::board_commands::BoardListDraft {
-    storage::board_commands::BoardListDraft {
+fn board_list_draft(list: BoardListDTO) -> storage::board::commands::BoardListDraft {
+    storage::board::commands::BoardListDraft {
         title: list.title.to_string(),
         board_id: list.board_id,
         position: list.position,

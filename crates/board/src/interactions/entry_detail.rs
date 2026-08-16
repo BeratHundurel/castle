@@ -25,8 +25,8 @@ impl BoardView {
         };
 
         let workspace_links_changed =
-            storage::workspace_links::workspace_relation_signature(entry.description.as_ref())
-                != storage::workspace_links::workspace_relation_signature(description.as_ref());
+            storage::workspace::links::workspace_relation_signature(entry.description.as_ref())
+                != storage::workspace::links::workspace_relation_signature(description.as_ref());
         entry.title = SharedString::from(trimmed_title);
         entry.description = description.clone();
         self.entry_editing.dialog.editing = false;
@@ -37,7 +37,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::update_board_card(
+                storage::board::commands::update_board_card(
                     &store,
                     entry_id,
                     title,
@@ -122,7 +122,7 @@ impl BoardView {
                 {
                     return Ok::<(), anyhow::Error>(());
                 }
-                storage::board_commands::set_board_card_due_on(&store, entry_id, due_on).await?;
+                storage::board::commands::set_board_card_due_on(&store, entry_id, due_on).await?;
                 persisted_revisions.insert(entry_id, revision);
                 notifications.wake();
                 Ok::<(), anyhow::Error>(())
@@ -156,7 +156,8 @@ impl BoardView {
             "Could not save reminder",
             false,
             move |store| async move {
-                storage::board_commands::set_board_card_reminder(&store, entry_id, enabled).await?;
+                storage::board::commands::set_board_card_reminder(&store, entry_id, enabled)
+                    .await?;
                 notifications.wake();
                 Ok::<(), anyhow::Error>(())
             },

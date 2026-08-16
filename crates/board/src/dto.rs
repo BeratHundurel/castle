@@ -21,10 +21,10 @@ pub(crate) struct BoardCardDTO {
     pub(crate) labels: Vec<BoardLabelDTO>,
     pub(crate) checklist_items: Vec<ChecklistItemDTO>,
     pub(crate) attachments: Vec<EntryAttachmentDTO>,
-    pub(crate) related_notes: Vec<storage::workspace_links::RelatedNote>,
+    pub(crate) related_notes: Vec<storage::workspace::links::RelatedNote>,
 }
 
-impl storage::board_projection::BoardViewEntry for BoardCardDTO {
+impl storage::board::projection::BoardViewEntry for BoardCardDTO {
     fn view_id(&self) -> i64 {
         i64::from(self.id)
     }

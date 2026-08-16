@@ -80,7 +80,7 @@ async fn persist_document(
         note.file_managed_by_app = Set(file_managed_by_app);
     }
     note.update(&txn).await?;
-    crate::note_links::index_note_links_in_connection(
+    crate::note::links::index_note_links_in_connection(
         &txn,
         i64::from(note_id),
         &content,

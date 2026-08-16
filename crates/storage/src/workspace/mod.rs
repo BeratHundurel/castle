@@ -16,6 +16,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub mod folder_import;
+pub mod home;
+pub mod links;
+pub mod onboarding;
+mod operations;
+mod properties;
+pub mod search;
+pub mod trash;
+
 static WORKSPACE_LOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -269,7 +278,7 @@ pub async fn create_managed_note(
 ) -> Result<WorkspaceItem, DbErr> {
     let txn = db.begin().await?;
     let note = insert_managed_note(&txn, project_id, title, file_path, content.clone()).await?;
-    crate::note_links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
+    crate::note::links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
         .await
         .map_err(|error| DbErr::Custom(error.to_string()))?;
     txn.commit().await?;
@@ -286,14 +295,14 @@ pub async fn create_managed_linked_note(
     title: String,
     file_path: String,
     content: String,
-    item: crate::workspace_links::WorkspaceItemRef,
+    item: crate::workspace::links::WorkspaceItemRef,
 ) -> Result<WorkspaceItem, DbErr> {
     let txn = db.begin().await?;
     let note = insert_managed_note(&txn, project_id, title, file_path, content.clone()).await?;
-    crate::note_links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
+    crate::note::links::index_note_links_in_connection(&txn, note.id, &content, note.updated_at)
         .await
         .map_err(|error| DbErr::Custom(error.to_string()))?;
-    crate::workspace_links::set_manual_note_link_in_connection(
+    crate::workspace::links::set_manual_note_link_in_connection(
         &txn,
         note.id,
         item,
@@ -372,7 +381,7 @@ pub async fn import_external_note(
         .insert(db)
         .await?
     };
-    crate::note_links::index_note_links(db, note.id, &indexed_content, note.updated_at)
+    crate::note::links::index_note_links(db, note.id, &indexed_content, note.updated_at)
         .await
         .map_err(|error| DbErr::Custom(error.to_string()))?;
 
@@ -460,7 +469,7 @@ pub async fn persist_workspace_title(
 
             let update_result = async {
                 if current.title != title {
-                    crate::note_links::record_note_alias(
+                    crate::note::links::record_note_alias(
                         &transaction,
                         current.id,
                         &current.title,

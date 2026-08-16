@@ -1,9 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    future::Future,
     path::PathBuf,
-    pin::Pin,
-    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -18,537 +15,29 @@ use entity::{
     project::Entity as Project,
 };
 use sea_orm::{
-    AccessMode, ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectOptions,
-    ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction, DbBackend, DbErr,
-    EntityTrait, ExecResult, ExprTrait, IsolationLevel, PaginatorTrait, QueryFilter, QueryOrder,
-    QueryResult, QuerySelect, Statement, TransactionError, TransactionOptions, TransactionSession,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait, EntityTrait,
+    ExprTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionSession,
     TransactionTrait, sea_query::Expr,
 };
 
-use migration::{Migrator, MigratorTrait};
-
-use crate::agent_types::{
-    AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardPropertiesDetail,
-    BoardPropertyDefinitionDetail, BoardPropertyKindInput, BoardPropertyOptionDetail,
-    BoardPropertyValueDetail, BoardSummary, ChecklistItemDetail, ClearEntryPropertyInput,
-    CreateBoardInput, CreateBoardLabelInput, CreateBoardPropertyInput,
-    CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput, CreateNoteInput,
-    CreateProjectInput, EntryDetail, EntryPropertyValueDetail, LabelDetail, ListDetail,
-    MoveEntryInput, MoveNoteInput, NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary,
-    NoteWorkspaceRelationInput, ProjectSummary, RelatedItemDetail, RenameBoardInput,
-    RenameListInput, RenameProjectInput, SearchEntriesInput, SearchNotesInput, SetEntryLabelInput,
-    SetEntryPropertyInput, SetEntryReminderInput, UpdateChecklistItemInput, UpdateEntryInput,
-    UpdateNoteInput, WorkspaceItemKindInput, WorkspaceRelationsInput,
+use workspace_api::{
+    AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardPropertyDefinitionDetail,
+    BoardPropertyOptionDetail, BoardPropertyValueDetail, BoardSummary, ChecklistItemDetail,
+    CreateBoardInput, CreateBoardLabelInput, CreateEntryInput, CreateListInput, CreateNoteInput,
+    CreateProjectInput, EntryDetail, LabelDetail, ListDetail, MoveEntryInput, MoveNoteInput,
+    NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary, NoteWorkspaceRelationInput,
+    ProjectSummary, RelatedItemDetail, RenameBoardInput, RenameListInput, RenameProjectInput,
+    SearchEntriesInput, SearchNotesInput, SetEntryLabelInput, SetEntryReminderInput,
+    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkspaceItemKindInput,
+    WorkspaceRelationsInput,
 };
 
-#[derive(Clone)]
-pub struct Store<C = DatabaseConnection> {
-    db: Arc<C>,
-}
-
-impl From<DatabaseConnection> for Store {
-    fn from(db: DatabaseConnection) -> Self {
-        Self::from_connection(db)
-    }
-}
-
-impl From<&DatabaseConnection> for Store {
-    fn from(db: &DatabaseConnection) -> Self {
-        Self::from_connection(db.clone())
-    }
-}
-
-impl From<&Store> for Store {
-    fn from(store: &Store) -> Self {
-        store.clone()
-    }
-}
-
-impl From<Arc<DatabaseConnection>> for Store {
-    fn from(db: Arc<DatabaseConnection>) -> Self {
-        Self::from_shared_connection(db)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct StoreOptions {
-    database_url: String,
-    min_connections: u32,
-    max_connections: u32,
-}
-
-impl StoreOptions {
-    pub fn new(database_url: impl Into<String>) -> Self {
-        Self {
-            database_url: database_url.into(),
-            min_connections: 1,
-            max_connections: 4,
-        }
-    }
-
-    pub fn connection_pool(mut self, min_connections: u32, max_connections: u32) -> Self {
-        self.min_connections = min_connections;
-        self.max_connections = std::cmp::max(max_connections, min_connections);
-        self
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MutationOrigin {
-    LocalApp,
-    ExternalAgent,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChangeDomain {
-    Workspace,
-    Board,
-    Note,
-    Link,
-}
-
-async fn record_change_in_connection(
-    db: &impl ConnectionTrait,
-    domain: ChangeDomain,
-) -> Result<()> {
-    let assignments = match domain {
-        ChangeDomain::Workspace => "revision = revision + 1",
-        ChangeDomain::Board => "revision = revision + 1, board_revision = board_revision + 1",
-        ChangeDomain::Note => "revision = revision + 1, note_revision = note_revision + 1",
-        ChangeDomain::Link => {
-            "revision = revision + 1, board_revision = board_revision + 1, note_revision = note_revision + 1, link_revision = link_revision + 1"
-        }
-    };
-    db.execute_raw(Statement::from_string(
-        DbBackend::Sqlite,
-        format!("UPDATE castle_change_revision SET {assignments} WHERE id = 1"),
-    ))
-    .await?;
-    Ok(())
-}
-
-impl Store {
-    pub async fn connect(options: StoreOptions) -> Result<Self> {
-        let mut connect_options = ConnectOptions::new(options.database_url);
-        connect_options
-            .min_connections(options.min_connections)
-            .max_connections(options.max_connections);
-        let db = Database::connect(connect_options).await?;
-        Migrator::up(&db, None).await?;
-        Ok(Self { db: Arc::new(db) })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new(db: DatabaseConnection) -> Self {
-        Self { db: Arc::new(db) }
-    }
-
-    pub fn from_connection(db: DatabaseConnection) -> Self {
-        Self { db: Arc::new(db) }
-    }
-
-    pub(crate) fn from_shared_connection(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
-    }
-
-    pub fn mutations(&self, origin: MutationOrigin) -> Mutations {
-        Mutations {
-            store: self.clone(),
-            origin,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<C> ConnectionTrait for Store<C>
-where
-    C: ConnectionTrait + Send + Sync,
-{
-    fn get_database_backend(&self) -> DbBackend {
-        self.db.get_database_backend()
-    }
-
-    async fn execute_raw(&self, statement: Statement) -> Result<ExecResult, DbErr> {
-        self.db.execute_raw(statement).await
-    }
-
-    async fn execute_unprepared(&self, sql: &str) -> Result<ExecResult, DbErr> {
-        self.db.execute_unprepared(sql).await
-    }
-
-    async fn query_one_raw(&self, statement: Statement) -> Result<Option<QueryResult>, DbErr> {
-        self.db.query_one_raw(statement).await
-    }
-
-    async fn query_all_raw(&self, statement: Statement) -> Result<Vec<QueryResult>, DbErr> {
-        self.db.query_all_raw(statement).await
-    }
-
-    fn support_returning(&self) -> bool {
-        self.db.support_returning()
-    }
-
-    fn is_mock_connection(&self) -> bool {
-        self.db.is_mock_connection()
-    }
-}
-
-#[async_trait::async_trait]
-impl<C> TransactionTrait for Store<C>
-where
-    C: TransactionTrait + Send + Sync,
-{
-    type Transaction = C::Transaction;
-
-    async fn begin(&self) -> Result<Self::Transaction, DbErr> {
-        self.db.begin().await
-    }
-
-    async fn begin_with_config(
-        &self,
-        isolation_level: Option<IsolationLevel>,
-        access_mode: Option<AccessMode>,
-    ) -> Result<Self::Transaction, DbErr> {
-        self.db
-            .begin_with_config(isolation_level, access_mode)
-            .await
-    }
-
-    async fn begin_with_options(
-        &self,
-        options: TransactionOptions,
-    ) -> Result<Self::Transaction, DbErr> {
-        self.db.begin_with_options(options).await
-    }
-
-    async fn transaction<F, T, E>(&self, callback: F) -> Result<T, TransactionError<E>>
-    where
-        F: for<'a> FnOnce(
-                &'a Self::Transaction,
-            ) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
-            + Send,
-        T: Send,
-        E: std::fmt::Display + std::fmt::Debug + Send,
-    {
-        self.db.transaction(callback).await
-    }
-
-    async fn transaction_with_config<F, T, E>(
-        &self,
-        callback: F,
-        isolation_level: Option<IsolationLevel>,
-        access_mode: Option<AccessMode>,
-    ) -> Result<T, TransactionError<E>>
-    where
-        F: for<'a> FnOnce(
-                &'a Self::Transaction,
-            ) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
-            + Send,
-        T: Send,
-        E: std::fmt::Display + std::fmt::Debug + Send,
-    {
-        self.db
-            .transaction_with_config(callback, isolation_level, access_mode)
-            .await
-    }
-}
-
-#[derive(Clone)]
-pub struct Mutations {
-    store: Store,
-    origin: MutationOrigin,
-}
-
-type MutationFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
-
-impl Mutations {
-    async fn execute<T, F>(&self, domain: ChangeDomain, operation: F) -> Result<T>
-    where
-        T: Send,
-        F: for<'a> FnOnce(&'a Store<DatabaseTransaction>) -> MutationFuture<'a, T>,
-    {
-        let transaction = Arc::new(self.store.db.as_ref().begin().await?);
-        let transactional_store = Store {
-            db: transaction.clone(),
-        };
-        let result = operation(&transactional_store).await?;
-        if self.origin == MutationOrigin::ExternalAgent {
-            record_change_in_connection(transactional_store.db.as_ref(), domain).await?;
-        }
-        drop(transactional_store);
-        let transaction = Arc::try_unwrap(transaction)
-            .map_err(|_| anyhow::anyhow!("storage transaction remained shared after mutation"))?;
-        transaction.commit().await?;
-        Ok(result)
-    }
-
-    pub async fn create_board_property(
-        &self,
-        input: CreateBoardPropertyInput,
-    ) -> Result<BoardPropertyDefinitionDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.create_board_property(input))
-        })
-        .await
-    }
-
-    pub async fn create_board_property_option(
-        &self,
-        input: CreateBoardPropertyOptionInput,
-    ) -> Result<BoardPropertyOptionDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.create_board_property_option(input))
-        })
-        .await
-    }
-
-    pub async fn set_entry_property(
-        &self,
-        input: SetEntryPropertyInput,
-    ) -> Result<EntryPropertyValueDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.set_entry_property(input))
-        })
-        .await
-    }
-
-    pub async fn clear_entry_property(&self, input: ClearEntryPropertyInput) -> Result<()> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.clear_entry_property(input))
-        })
-        .await
-    }
-
-    pub async fn link_note_to_workspace_item(
-        &self,
-        input: NoteWorkspaceRelationInput,
-    ) -> Result<Vec<RelatedItemDetail>> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.link_note_to_workspace_item(input))
-        })
-        .await
-    }
-
-    pub async fn unlink_note_from_workspace_item(
-        &self,
-        input: NoteWorkspaceRelationInput,
-    ) -> Result<Vec<RelatedItemDetail>> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.unlink_note_from_workspace_item(input))
-        })
-        .await
-    }
-
-    pub async fn create_note(&self, input: CreateNoteInput) -> Result<NoteDetail> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.create_note(input))
-        })
-        .await
-    }
-
-    pub async fn update_note(&self, input: UpdateNoteInput) -> Result<NoteDetail> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.update_note(input))
-        })
-        .await
-    }
-
-    pub async fn move_note(&self, input: MoveNoteInput) -> Result<NoteDetail> {
-        self.execute(ChangeDomain::Note, move |store| {
-            Box::pin(store.move_note(input))
-        })
-        .await
-    }
-
-    pub async fn create_project(&self, input: CreateProjectInput) -> Result<ProjectSummary> {
-        self.execute(ChangeDomain::Workspace, move |store| {
-            Box::pin(store.create_project(input))
-        })
-        .await
-    }
-
-    pub async fn rename_project(&self, input: RenameProjectInput) -> Result<ProjectSummary> {
-        self.execute(ChangeDomain::Workspace, move |store| {
-            Box::pin(store.rename_project(input))
-        })
-        .await
-    }
-
-    pub async fn create_board(&self, input: CreateBoardInput) -> Result<BoardSummary> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.create_board(input))
-        })
-        .await
-    }
-
-    pub async fn rename_board(&self, input: RenameBoardInput) -> Result<BoardSummary> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.rename_board(input))
-        })
-        .await
-    }
-
-    pub async fn create_list(&self, input: CreateListInput) -> Result<ListDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.create_list(input))
-        })
-        .await
-    }
-
-    pub async fn rename_list(&self, input: RenameListInput) -> Result<ListDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.rename_list(input))
-        })
-        .await
-    }
-
-    pub async fn create_entry(&self, input: CreateEntryInput) -> Result<EntryDetail> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.create_entry(input))
-        })
-        .await
-    }
-
-    pub async fn update_entry(&self, input: UpdateEntryInput) -> Result<EntryDetail> {
-        self.execute(ChangeDomain::Link, move |store| {
-            Box::pin(store.update_entry(input))
-        })
-        .await
-    }
-
-    pub async fn move_entry(&self, input: MoveEntryInput) -> Result<EntryDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.move_entry(input))
-        })
-        .await
-    }
-
-    pub async fn set_entry_reminder(&self, input: SetEntryReminderInput) -> Result<EntryDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.set_entry_reminder(input))
-        })
-        .await
-    }
-
-    pub async fn add_checklist_item(
-        &self,
-        input: AddChecklistItemInput,
-    ) -> Result<ChecklistItemDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.add_checklist_item(input))
-        })
-        .await
-    }
-
-    pub async fn update_checklist_item(
-        &self,
-        input: UpdateChecklistItemInput,
-    ) -> Result<ChecklistItemDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.update_checklist_item(input))
-        })
-        .await
-    }
-
-    pub async fn create_board_label(&self, input: CreateBoardLabelInput) -> Result<LabelDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.create_board_label(input))
-        })
-        .await
-    }
-
-    pub async fn set_entry_label(&self, input: SetEntryLabelInput) -> Result<EntryDetail> {
-        self.execute(ChangeDomain::Board, move |store| {
-            Box::pin(store.set_entry_label(input))
-        })
-        .await
-    }
-}
+use crate::store::Store;
 
 impl<C> Store<C>
 where
     C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
 {
-    pub async fn board_properties(&self, board_id: i64) -> Result<BoardPropertiesDetail> {
-        let properties =
-            crate::board_properties::load_board_properties(self.db.as_ref(), board_id).await?;
-        Ok(BoardPropertiesDetail {
-            definitions: properties
-                .definitions
-                .into_iter()
-                .map(property_definition_detail)
-                .collect(),
-            values: properties
-                .values
-                .into_iter()
-                .map(|value| EntryPropertyValueDetail {
-                    entry_id: value.entry_id,
-                    property_id: value.property_id,
-                    value: property_value_detail(value.value),
-                })
-                .collect(),
-        })
-    }
-
-    pub async fn create_board_property(
-        &self,
-        input: CreateBoardPropertyInput,
-    ) -> Result<BoardPropertyDefinitionDetail> {
-        let kind = match input.kind {
-            BoardPropertyKindInput::Text => crate::board_properties::PropertyKind::Text,
-            BoardPropertyKindInput::Number => crate::board_properties::PropertyKind::Number,
-            BoardPropertyKindInput::Checkbox => crate::board_properties::PropertyKind::Checkbox,
-            BoardPropertyKindInput::Date => crate::board_properties::PropertyKind::Date,
-            BoardPropertyKindInput::Select => crate::board_properties::PropertyKind::Select,
-            BoardPropertyKindInput::Url => crate::board_properties::PropertyKind::Url,
-        };
-        crate::board_properties::create_property(self.db.as_ref(), input.board_id, input.name, kind)
-            .await
-            .map(property_definition_detail)
-    }
-
-    pub async fn create_board_property_option(
-        &self,
-        input: CreateBoardPropertyOptionInput,
-    ) -> Result<BoardPropertyOptionDetail> {
-        crate::board_properties::create_property_option(
-            self.db.as_ref(),
-            input.property_id,
-            input.name,
-            input.color,
-        )
-        .await
-        .map(property_option_detail)
-    }
-
-    pub async fn set_entry_property(
-        &self,
-        input: SetEntryPropertyInput,
-    ) -> Result<EntryPropertyValueDetail> {
-        let value = storage_property_value(input.value);
-        crate::board_properties::set_entry_property(
-            self.db.as_ref(),
-            input.entry_id,
-            input.property_id,
-            value,
-        )
-        .await
-        .map(|value| EntryPropertyValueDetail {
-            entry_id: value.entry_id,
-            property_id: value.property_id,
-            value: property_value_detail(value.value),
-        })
-    }
-
-    pub async fn clear_entry_property(&self, input: ClearEntryPropertyInput) -> Result<()> {
-        crate::board_properties::clear_entry_property(
-            self.db.as_ref(),
-            input.entry_id,
-            input.property_id,
-        )
-        .await
-    }
-
     pub async fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
         let projects = Project::find()
             .filter(project::Column::Archived.eq(false))
@@ -652,7 +141,7 @@ where
     }
 
     pub async fn get_note_links(&self, note_id: i64) -> Result<NoteLinksDetail> {
-        let links = crate::note_links::load_note_links(self.db.as_ref(), note_id).await?;
+        let links = crate::note::links::load_note_links(self.db.as_ref(), note_id).await?;
         Ok(NoteLinksDetail {
             inbound: links.inbound.into_iter().map(note_link_detail).collect(),
             outbound: links.outbound.into_iter().map(note_link_detail).collect(),
@@ -696,7 +185,7 @@ where
     ) -> Result<Vec<RelatedItemDetail>> {
         self.active_note(input.note_id).await?;
         let item = self.validate_relation_target(&input).await?;
-        Ok(crate::workspace_links::set_manual_note_link(
+        Ok(crate::workspace::links::set_manual_note_link(
             self.db.as_ref(),
             input.note_id,
             item,
@@ -716,7 +205,7 @@ where
     ) -> Result<Vec<RelatedItemDetail>> {
         self.active_note(input.note_id).await?;
         let item = self.validate_relation_target(&input).await?;
-        Ok(crate::workspace_links::set_manual_note_link(
+        Ok(crate::workspace::links::set_manual_note_link(
             self.db.as_ref(),
             input.note_id,
             item,
@@ -788,7 +277,7 @@ where
         }
         .insert(&txn)
         .await?;
-        crate::note_links::index_note_links_in_connection(
+        crate::note::links::index_note_links_in_connection(
             &txn,
             note.id,
             &input.content,
@@ -868,7 +357,7 @@ where
         let txn = self.db.as_ref().begin().await?;
         let note = active.update(&txn).await?;
         if let Some(content) = content_for_index {
-            crate::note_links::index_note_links_in_connection(
+            crate::note::links::index_note_links_in_connection(
                 &txn,
                 note.id,
                 &content,
@@ -905,28 +394,30 @@ where
         let board_id = u32::try_from(board.id)
             .with_context(|| format!("board id {} is outside the supported range", board.id))?;
         let snapshot = crate::board::load_board_snapshot(self.db.as_ref(), board_id).await?;
-        let board_item = crate::workspace_links::WorkspaceItemRef {
-            kind: crate::workspace_links::WorkspaceItemKind::Board,
+        let board_item = crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::Board,
             id: board.id,
         };
         let mut relation_items = Vec::with_capacity(snapshot.cards.len() + 1);
         relation_items.push(board_item);
         relation_items.extend(snapshot.cards.iter().map(|list| {
-            crate::workspace_links::WorkspaceItemRef {
-                kind: crate::workspace_links::WorkspaceItemKind::List,
+            crate::workspace::links::WorkspaceItemRef {
+                kind: crate::workspace::links::WorkspaceItemKind::List,
                 id: i64::from(list.id),
             }
         }));
-        let mut related_notes =
-            crate::workspace_links::load_related_notes_for_items(self.db.as_ref(), &relation_items)
-                .await?;
+        let mut related_notes = crate::workspace::links::load_related_notes_for_items(
+            self.db.as_ref(),
+            &relation_items,
+        )
+        .await?;
 
         let details = snapshot
             .cards
             .into_iter()
             .map(|list| {
-                let list_item = crate::workspace_links::WorkspaceItemRef {
-                    kind: crate::workspace_links::WorkspaceItemKind::List,
+                let list_item = crate::workspace::links::WorkspaceItemRef {
+                    kind: crate::workspace::links::WorkspaceItemKind::List,
                     id: i64::from(list.id),
                 };
                 ListDetail {
@@ -1124,9 +615,9 @@ where
             .filter(card::Column::DeletedAt.is_null())
             .count(self.db.as_ref())
             .await? as i32;
-        let list = crate::board_commands::create_board_list(
+        let list = crate::board::commands::create_board_list(
             self,
-            crate::board_commands::BoardListDraft {
+            crate::board::commands::BoardListDraft {
                 title,
                 board_id: u32::try_from(input.board_id).context("board ID is out of range")?,
                 position,
@@ -1145,7 +636,7 @@ where
 
     pub async fn rename_list(&self, input: RenameListInput) -> Result<ListDetail> {
         let list = self.active_list(input.list_id).await?;
-        crate::board_commands::rename_board_list(
+        crate::board::commands::rename_board_list(
             self,
             u32::try_from(list.id).context("list ID is out of range")?,
             required_text(input.title, "list title")?,
@@ -1168,9 +659,9 @@ where
             .filter(entry::Column::DeletedAt.is_null())
             .count(self.db.as_ref())
             .await? as i32;
-        let entry = crate::board_commands::create_board_card(
+        let entry = crate::board::commands::create_board_card(
             self,
-            crate::board_commands::BoardCardDraft {
+            crate::board::commands::BoardCardDraft {
                 title,
                 description: input.description,
                 list_id: u32::try_from(input.list_id).context("list ID is out of range")?,
@@ -1202,7 +693,7 @@ where
         let description = input
             .description
             .unwrap_or_else(|| entry.description.clone());
-        crate::board_commands::update_board_card(
+        crate::board::commands::update_board_card(
             self,
             u32::try_from(entry.id).context("entry ID is out of range")?,
             title,
@@ -1211,7 +702,7 @@ where
         )
         .await?;
         if input.clear_due_on || input.due_on.is_some() {
-            crate::board_commands::set_board_card_due_on(
+            crate::board::commands::set_board_card_due_on(
                 self,
                 u32::try_from(entry.id).context("entry ID is out of range")?,
                 if input.clear_due_on {
@@ -1235,7 +726,7 @@ where
         if input.enabled && entry.due_on.is_none() {
             bail!("a board entry needs a due date before its reminder can be enabled");
         }
-        crate::board_commands::set_board_card_reminder(
+        crate::board::commands::set_board_card_reminder(
             self,
             u32::try_from(entry.id).context("entry ID is out of range")?,
             input.enabled,
@@ -1253,7 +744,7 @@ where
             .filter(entry_checklist_item::Column::EntryId.eq(input.entry_id))
             .count(self.db.as_ref())
             .await? as i32;
-        let item = crate::board_commands::create_checklist_item(
+        let item = crate::board::commands::create_checklist_item(
             self,
             u32::try_from(input.entry_id).context("entry ID is out of range")?,
             required_text(input.title, "checklist item title")?,
@@ -1284,7 +775,7 @@ where
             .title
             .map(|title| required_text(title, "checklist item title"))
             .transpose()?;
-        crate::board_commands::update_checklist_item(
+        crate::board::commands::update_checklist_item(
             self,
             u32::try_from(item.id).context("checklist item ID is out of range")?,
             title,
@@ -1305,7 +796,7 @@ where
 
     pub async fn create_board_label(&self, input: CreateBoardLabelInput) -> Result<LabelDetail> {
         self.active_board(input.board_id).await?;
-        let label = crate::board_commands::create_label(
+        let label = crate::board::commands::create_label(
             self,
             u32::try_from(input.board_id).context("board ID is out of range")?,
             required_text(input.name, "label name")?,
@@ -1330,7 +821,7 @@ where
                 entry.board_id
             );
         }
-        crate::board_commands::set_label_assignment(
+        crate::board::commands::set_label_assignment(
             self,
             u32::try_from(input.entry_id).context("entry ID is out of range")?,
             u32::try_from(input.label_id).context("label ID is out of range")?,
@@ -1381,19 +872,20 @@ where
     async fn validate_relation_target(
         &self,
         input: &NoteWorkspaceRelationInput,
-    ) -> Result<crate::workspace_links::WorkspaceItemRef> {
+    ) -> Result<crate::workspace::links::WorkspaceItemRef> {
         let kind = match input.kind {
-            WorkspaceItemKindInput::Board => crate::workspace_links::WorkspaceItemKind::Board,
-            WorkspaceItemKindInput::List => crate::workspace_links::WorkspaceItemKind::List,
-            WorkspaceItemKindInput::Card => crate::workspace_links::WorkspaceItemKind::Card,
+            WorkspaceItemKindInput::Board => crate::workspace::links::WorkspaceItemKind::Board,
+            WorkspaceItemKindInput::List => crate::workspace::links::WorkspaceItemKind::List,
+            WorkspaceItemKindInput::Card => crate::workspace::links::WorkspaceItemKind::Card,
         };
-        let catalog = crate::workspace_links::load_workspace_link_catalog(self.db.as_ref()).await?;
+        let catalog =
+            crate::workspace::links::load_workspace_link_catalog(self.db.as_ref()).await?;
         let target = catalog
             .iter()
             .find(|entry| entry.item.kind == kind && entry.item.id == input.item_id)
             .with_context(|| format!("active {} {} was not found", kind.as_str(), input.item_id))?;
         match kind {
-            crate::workspace_links::WorkspaceItemKind::Board => {
+            crate::workspace::links::WorkspaceItemKind::Board => {
                 if input
                     .board_id
                     .is_some_and(|board_id| board_id != input.item_id)
@@ -1405,7 +897,7 @@ where
                     );
                 }
             }
-            crate::workspace_links::WorkspaceItemKind::List => {
+            crate::workspace::links::WorkspaceItemKind::List => {
                 let board_id = input
                     .board_id
                     .context("board_id is required for a list target")?;
@@ -1417,7 +909,7 @@ where
                     );
                 }
             }
-            crate::workspace_links::WorkspaceItemKind::Card => {
+            crate::workspace::links::WorkspaceItemKind::Card => {
                 let board_id = input
                     .board_id
                     .context("board_id is required for a card target")?;
@@ -1433,7 +925,7 @@ where
                     );
                 }
             }
-            crate::workspace_links::WorkspaceItemKind::Note => {
+            crate::workspace::links::WorkspaceItemKind::Note => {
                 bail!("note targets are not manual workspace relationships")
             }
         }
@@ -1442,10 +934,10 @@ where
 
     async fn related_items_for_note(&self, note_id: i64) -> Result<Vec<RelatedItemDetail>> {
         let links =
-            crate::workspace_links::load_note_workspace_links(self.db.as_ref(), note_id).await?;
+            crate::workspace::links::load_note_workspace_links(self.db.as_ref(), note_id).await?;
         let mut grouped = HashMap::<
-            crate::workspace_links::WorkspaceItemRef,
-            (crate::workspace_links::WorkspaceCatalogEntry, Vec<String>),
+            crate::workspace::links::WorkspaceItemRef,
+            (crate::workspace::links::WorkspaceCatalogEntry, Vec<String>),
         >::new();
         for reference in links.references {
             let origin = workspace_origin_label(reference.origin);
@@ -1466,15 +958,16 @@ where
 
     async fn related_items_for_workspace_item(
         &self,
-        item: crate::workspace_links::WorkspaceItemRef,
+        item: crate::workspace::links::WorkspaceItemRef,
     ) -> Result<Vec<RelatedItemDetail>> {
-        let related = crate::workspace_links::load_related_notes(self.db.as_ref(), item).await?;
-        let catalog = crate::workspace_links::load_workspace_link_catalog(self.db.as_ref()).await?;
+        let related = crate::workspace::links::load_related_notes(self.db.as_ref(), item).await?;
+        let catalog =
+            crate::workspace::links::load_workspace_link_catalog(self.db.as_ref()).await?;
         Ok(related
             .into_iter()
             .filter_map(|note| {
                 let entry = catalog.iter().find(|entry| {
-                    entry.item.kind == crate::workspace_links::WorkspaceItemKind::Note
+                    entry.item.kind == crate::workspace::links::WorkspaceItemKind::Note
                         && entry.item.id == note.note_id
                 })?;
                 Some(related_item_detail(
@@ -1635,8 +1128,8 @@ where
             })
             .collect();
         let related_items = self
-            .related_items_for_workspace_item(crate::workspace_links::WorkspaceItemRef {
-                kind: crate::workspace_links::WorkspaceItemKind::Card,
+            .related_items_for_workspace_item(crate::workspace::links::WorkspaceItemRef {
+                kind: crate::workspace::links::WorkspaceItemKind::Card,
                 id: entry.id,
             })
             .await?;
@@ -1699,8 +1192,8 @@ fn label_detail(label: board_label::Model) -> LabelDetail {
     }
 }
 
-fn property_definition_detail(
-    property: crate::board_properties::PropertyDefinition,
+pub(crate) fn property_definition_detail(
+    property: crate::board::properties::PropertyDefinition,
 ) -> BoardPropertyDefinitionDetail {
     BoardPropertyDefinitionDetail {
         id: property.id,
@@ -1716,8 +1209,8 @@ fn property_definition_detail(
     }
 }
 
-fn property_option_detail(
-    option: crate::board_properties::PropertyOption,
+pub(crate) fn property_option_detail(
+    option: crate::board::properties::PropertyOption,
 ) -> BoardPropertyOptionDetail {
     BoardPropertyOptionDetail {
         id: option.id,
@@ -1727,53 +1220,53 @@ fn property_option_detail(
     }
 }
 
-fn property_value_detail(
-    value: crate::board_properties::PropertyValue,
+pub(crate) fn property_value_detail(
+    value: crate::board::properties::PropertyValue,
 ) -> BoardPropertyValueDetail {
     match value {
-        crate::board_properties::PropertyValue::Text(value) => {
+        crate::board::properties::PropertyValue::Text(value) => {
             BoardPropertyValueDetail::Text(value)
         }
-        crate::board_properties::PropertyValue::Number(value) => {
+        crate::board::properties::PropertyValue::Number(value) => {
             BoardPropertyValueDetail::Number(value)
         }
-        crate::board_properties::PropertyValue::Checkbox(value) => {
+        crate::board::properties::PropertyValue::Checkbox(value) => {
             BoardPropertyValueDetail::Checkbox(value)
         }
-        crate::board_properties::PropertyValue::Date(value) => {
+        crate::board::properties::PropertyValue::Date(value) => {
             BoardPropertyValueDetail::Date(value)
         }
-        crate::board_properties::PropertyValue::Select(value) => {
+        crate::board::properties::PropertyValue::Select(value) => {
             BoardPropertyValueDetail::Select(value)
         }
-        crate::board_properties::PropertyValue::Url(value) => BoardPropertyValueDetail::Url(value),
+        crate::board::properties::PropertyValue::Url(value) => BoardPropertyValueDetail::Url(value),
     }
 }
 
-fn storage_property_value(
+pub(crate) fn storage_property_value(
     value: BoardPropertyValueDetail,
-) -> crate::board_properties::PropertyValue {
+) -> crate::board::properties::PropertyValue {
     match value {
         BoardPropertyValueDetail::Text(value) => {
-            crate::board_properties::PropertyValue::Text(value)
+            crate::board::properties::PropertyValue::Text(value)
         }
         BoardPropertyValueDetail::Number(value) => {
-            crate::board_properties::PropertyValue::Number(value)
+            crate::board::properties::PropertyValue::Number(value)
         }
         BoardPropertyValueDetail::Checkbox(value) => {
-            crate::board_properties::PropertyValue::Checkbox(value)
+            crate::board::properties::PropertyValue::Checkbox(value)
         }
         BoardPropertyValueDetail::Date(value) => {
-            crate::board_properties::PropertyValue::Date(value)
+            crate::board::properties::PropertyValue::Date(value)
         }
         BoardPropertyValueDetail::Select(value) => {
-            crate::board_properties::PropertyValue::Select(value)
+            crate::board::properties::PropertyValue::Select(value)
         }
-        BoardPropertyValueDetail::Url(value) => crate::board_properties::PropertyValue::Url(value),
+        BoardPropertyValueDetail::Url(value) => crate::board::properties::PropertyValue::Url(value),
     }
 }
 
-fn note_link_detail(link: crate::note_links::NoteLinkReference) -> NoteLinkDetail {
+fn note_link_detail(link: crate::note::links::NoteLinkReference) -> NoteLinkDetail {
     NoteLinkDetail {
         source_note_id: link.source_note_id,
         source_title: link.source_title,
@@ -1790,7 +1283,7 @@ fn note_link_detail(link: crate::note_links::NoteLinkReference) -> NoteLinkDetai
     }
 }
 
-fn unresolved_link_detail(link: crate::note_links::UnresolvedLinkReference) -> NoteLinkDetail {
+fn unresolved_link_detail(link: crate::note::links::UnresolvedLinkReference) -> NoteLinkDetail {
     NoteLinkDetail {
         source_note_id: link.source_note_id,
         source_title: link.source_title,
@@ -1807,16 +1300,16 @@ fn unresolved_link_detail(link: crate::note_links::UnresolvedLinkReference) -> N
     }
 }
 
-fn workspace_origin_label(origin: crate::workspace_links::WorkspaceLinkOrigin) -> &'static str {
+fn workspace_origin_label(origin: crate::workspace::links::WorkspaceLinkOrigin) -> &'static str {
     match origin {
-        crate::workspace_links::WorkspaceLinkOrigin::Manual => "manual",
-        crate::workspace_links::WorkspaceLinkOrigin::Wikilink => "wikilink",
-        crate::workspace_links::WorkspaceLinkOrigin::Embed => "embed",
+        crate::workspace::links::WorkspaceLinkOrigin::Manual => "manual",
+        crate::workspace::links::WorkspaceLinkOrigin::Wikilink => "wikilink",
+        crate::workspace::links::WorkspaceLinkOrigin::Embed => "embed",
     }
 }
 
 fn related_item_detail(
-    entry: crate::workspace_links::WorkspaceCatalogEntry,
+    entry: crate::workspace::links::WorkspaceCatalogEntry,
     origins: Vec<String>,
 ) -> RelatedItemDetail {
     RelatedItemDetail {
@@ -1829,9 +1322,9 @@ fn related_item_detail(
     }
 }
 
-fn related_note_detail(note: crate::workspace_links::RelatedNote) -> RelatedItemDetail {
-    let item = crate::workspace_links::WorkspaceItemRef {
-        kind: crate::workspace_links::WorkspaceItemKind::Note,
+fn related_note_detail(note: crate::workspace::links::RelatedNote) -> RelatedItemDetail {
+    let item = crate::workspace::links::WorkspaceItemRef {
+        kind: crate::workspace::links::WorkspaceItemKind::Note,
         id: note.note_id,
     };
     RelatedItemDetail {
@@ -1843,7 +1336,7 @@ fn related_note_detail(note: crate::workspace_links::RelatedNote) -> RelatedItem
             .as_ref()
             .map(|project| format!("{project} / {}", note.title))
             .unwrap_or_else(|| note.title.clone()),
-        stable_link: crate::workspace_links::stable_workspace_link(item, &note.title),
+        stable_link: crate::workspace::links::stable_workspace_link(item, &note.title),
         origins: note
             .origins
             .into_iter()
@@ -1920,430 +1413,4 @@ fn next_updated_at(current: i64) -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-
-    async fn store() -> Result<Store> {
-        let db = Database::connect("sqlite::memory:").await?;
-        Migrator::up(&db, None).await?;
-        Ok(Store::new(db))
-    }
-
-    #[tokio::test]
-    async fn creates_and_moves_a_complete_board_hierarchy() -> Result<()> {
-        let store = store().await?;
-        let project = store
-            .create_project(CreateProjectInput {
-                name: "Agent work".to_string(),
-            })
-            .await?;
-        let board = store
-            .create_board(CreateBoardInput {
-                title: "Delivery".to_string(),
-                project_id: Some(project.id),
-            })
-            .await?;
-        let first_list = store
-            .create_list(CreateListInput {
-                board_id: board.id,
-                title: "Ideas".to_string(),
-            })
-            .await?;
-        let second_list = store
-            .create_list(CreateListInput {
-                board_id: board.id,
-                title: "Selected".to_string(),
-            })
-            .await?;
-        let entry = store
-            .create_entry(CreateEntryInput {
-                list_id: first_list.id,
-                title: "Write MCP tests".to_string(),
-                description: "Cover the full hierarchy".to_string(),
-                due_on: Some("2026-07-24".to_string()),
-            })
-            .await?;
-        let reminder = store
-            .set_entry_reminder(SetEntryReminderInput {
-                entry_id: entry.id,
-                enabled: true,
-            })
-            .await?;
-        assert!(reminder.reminder_enabled);
-        let checklist_item = store
-            .add_checklist_item(AddChecklistItemInput {
-                entry_id: entry.id,
-                title: "Run the suite".to_string(),
-            })
-            .await?;
-        store
-            .update_checklist_item(UpdateChecklistItemInput {
-                item_id: checklist_item.id,
-                title: None,
-                checked: Some(true),
-            })
-            .await?;
-        let label = store
-            .create_board_label(CreateBoardLabelInput {
-                board_id: board.id,
-                name: "Agent".to_string(),
-                color: "blue".to_string(),
-            })
-            .await?;
-        store
-            .set_entry_label(SetEntryLabelInput {
-                entry_id: entry.id,
-                label_id: label.id,
-                assigned: true,
-            })
-            .await?;
-        store
-            .set_entry_label(SetEntryLabelInput {
-                entry_id: entry.id,
-                label_id: label.id,
-                assigned: true,
-            })
-            .await?;
-        let note = store
-            .create_note(CreateNoteInput {
-                title: "Delivery context".to_string(),
-                content: String::new(),
-                project_id: Some(project.id),
-            })
-            .await?;
-        store
-            .link_note_to_workspace_item(NoteWorkspaceRelationInput {
-                note_id: note.id,
-                kind: WorkspaceItemKindInput::Card,
-                item_id: entry.id,
-                board_id: Some(board.id),
-                list_id: Some(first_list.id),
-            })
-            .await?;
-        entry_attachment::ActiveModel {
-            entry_id: Set(entry.id),
-            file_name: Set("context.png".to_string()),
-            ..Default::default()
-        }
-        .insert(store.db.as_ref())
-        .await?;
-        let property = store
-            .create_board_property(CreateBoardPropertyInput {
-                board_id: board.id,
-                name: "Estimate".to_string(),
-                kind: BoardPropertyKindInput::Number,
-            })
-            .await?;
-        store
-            .set_entry_property(SetEntryPropertyInput {
-                entry_id: entry.id,
-                property_id: property.id,
-                value: BoardPropertyValueDetail::Number(3.5),
-            })
-            .await?;
-        let properties = store.board_properties(board.id).await?;
-        assert_eq!(properties.definitions[0].name, "Estimate");
-        assert!(matches!(
-            properties.values[0].value,
-            BoardPropertyValueDetail::Number(value) if value == 3.5
-        ));
-
-        let matches = store
-            .search_entries(SearchEntriesInput {
-                query: "MCP".to_string(),
-                project_id: Some(project.id),
-                board_id: None,
-                limit: None,
-            })
-            .await?;
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, entry.id);
-        assert_eq!(matches[0].checklist_items.len(), 1);
-        assert!(matches[0].checklist_items[0].checked);
-        assert_eq!(matches[0].labels.len(), 1);
-        assert_eq!(matches[0].labels[0].name, "Agent");
-
-        let moved = store
-            .move_entry(MoveEntryInput {
-                entry_id: entry.id,
-                list_id: second_list.id,
-            })
-            .await?;
-        assert_eq!(moved.list_title, "Selected");
-        let board_detail = store.get_board(board.id).await?;
-        let moved_entry = &board_detail.lists[1].entries[0];
-        assert_eq!(moved_entry.labels[0].name, "Agent");
-        assert!(moved_entry.checklist_items[0].checked);
-        assert_eq!(moved_entry.attachments[0].file_name, "context.png");
-        assert_eq!(moved_entry.related_items[0].id, note.id);
-        assert_eq!(
-            moved_entry.related_items[0].breadcrumb,
-            "Agent work / Delivery context"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn creates_searches_updates_and_moves_notes() -> Result<()> {
-        let store = store().await?;
-        let project = store
-            .create_project(CreateProjectInput {
-                name: "Research".to_string(),
-            })
-            .await?;
-        let created = store
-            .create_note(CreateNoteInput {
-                title: "MCP ideas".to_string(),
-                content: "# Ideas\n\nAdd note tools.".to_string(),
-                project_id: Some(project.id),
-            })
-            .await?;
-
-        let matches = store
-            .search_notes(SearchNotesInput {
-                query: "note tools".to_string(),
-                project_id: Some(project.id),
-                limit: None,
-            })
-            .await?;
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, created.id);
-
-        let updated = store
-            .update_note(UpdateNoteInput {
-                note_id: created.id,
-                title: Some("MCP roadmap".to_string()),
-                content: Some("# Roadmap\n\nNotes are supported.".to_string()),
-                is_pinned: Some(true),
-                expected_updated_at: Some(created.updated_at),
-            })
-            .await?;
-        assert_eq!(updated.title, "MCP roadmap");
-        assert!(updated.is_pinned);
-        assert!(updated.updated_at > created.updated_at);
-
-        let standalone = store
-            .move_note(MoveNoteInput {
-                note_id: created.id,
-                project_id: None,
-            })
-            .await?;
-        assert_eq!(standalone.project_id, None);
-        assert_eq!(standalone.content, "# Roadmap\n\nNotes are supported.");
-
-        let missing = store
-            .create_note(CreateNoteInput {
-                title: "Missing target".to_string(),
-                content: "See [[card:999|Unavailable card]]".to_string(),
-                project_id: None,
-            })
-            .await?;
-        let links = store.get_note_links(missing.id).await?;
-        assert_eq!(links.unresolved.len(), 1);
-        assert_eq!(links.unresolved[0].target_kind.as_deref(), Some("card"));
-        assert_eq!(links.unresolved[0].start_byte, 4);
-        assert_eq!(links.unresolved[0].end_byte, 33);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn workspace_relations_validate_hierarchy_and_reindex_card_descriptions() -> Result<()> {
-        let store = store().await?;
-        let board = store
-            .create_board(CreateBoardInput {
-                title: "Roadmap".to_string(),
-                project_id: None,
-            })
-            .await?;
-        let list = store
-            .create_list(CreateListInput {
-                board_id: board.id,
-                title: "Current".to_string(),
-            })
-            .await?;
-        let card = store
-            .create_entry(CreateEntryInput {
-                list_id: list.id,
-                title: "Research API".to_string(),
-                description: String::new(),
-                due_on: None,
-            })
-            .await?;
-        let note = store
-            .create_note(CreateNoteInput {
-                title: "API research".to_string(),
-                content: String::new(),
-                project_id: None,
-            })
-            .await?;
-        let relation = NoteWorkspaceRelationInput {
-            note_id: note.id,
-            kind: WorkspaceItemKindInput::Card,
-            item_id: card.id,
-            board_id: Some(board.id),
-            list_id: Some(list.id),
-        };
-        let related = store
-            .link_note_to_workspace_item(NoteWorkspaceRelationInput { ..relation })
-            .await?;
-        assert_eq!(related.len(), 1);
-        assert!(related[0].origins.iter().any(|origin| origin == "manual"));
-
-        let invalid = store
-            .link_note_to_workspace_item(NoteWorkspaceRelationInput {
-                board_id: Some(board.id + 1),
-                ..relation
-            })
-            .await;
-        assert!(invalid.is_err());
-
-        store
-            .update_entry(UpdateEntryInput {
-                entry_id: card.id,
-                title: None,
-                description: Some(format!("See [[note:{}|API research]]", note.id)),
-                due_on: None,
-                clear_due_on: false,
-            })
-            .await?;
-        let related = store
-            .unlink_note_from_workspace_item(NoteWorkspaceRelationInput { ..relation })
-            .await?;
-        assert_eq!(related.len(), 1);
-        assert!(related[0].origins.iter().any(|origin| origin == "wikilink"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn local_mutations_do_not_bump_and_external_mutations_bump_the_owned_domain() -> Result<()>
-    {
-        let store = store().await?;
-        let project = store
-            .mutations(MutationOrigin::LocalApp)
-            .create_project(CreateProjectInput {
-                name: "Revision".to_string(),
-            })
-            .await?;
-        let note = store
-            .mutations(MutationOrigin::LocalApp)
-            .create_note(CreateNoteInput {
-                title: "Watcher regression".to_string(),
-                content: String::new(),
-                project_id: Some(project.id),
-            })
-            .await?;
-        store
-            .db
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE note SET last_opened_at = ? WHERE id = ?",
-                [123_i64.into(), note.id.into()],
-            ))
-            .await?;
-
-        let row = change_revision_row(&store).await?;
-        assert_eq!(row.try_get::<i64>("", "revision")?, 0);
-        assert_eq!(row.try_get::<i64>("", "board_revision")?, 0);
-        assert_eq!(row.try_get::<i64>("", "note_revision")?, 0);
-
-        store
-            .mutations(MutationOrigin::ExternalAgent)
-            .move_note(MoveNoteInput {
-                note_id: note.id,
-                project_id: None,
-            })
-            .await?;
-        let row = change_revision_row(&store).await?;
-        assert_eq!(row.try_get::<i64>("", "revision")?, 1);
-        assert_eq!(row.try_get::<i64>("", "board_revision")?, 0);
-        assert_eq!(row.try_get::<i64>("", "note_revision")?, 1);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn external_commands_encode_their_revision_domains_once() -> Result<()> {
-        let store = store().await?;
-        let mutations = store.mutations(MutationOrigin::ExternalAgent);
-        let project = mutations
-            .create_project(CreateProjectInput {
-                name: "Domains".to_string(),
-            })
-            .await?;
-        assert_revisions(&store, (1, 0, 0, 0)).await?;
-
-        let board = mutations
-            .create_board(CreateBoardInput {
-                title: "Board".to_string(),
-                project_id: Some(project.id),
-            })
-            .await?;
-        assert_revisions(&store, (2, 1, 0, 0)).await?;
-
-        let list = mutations
-            .create_list(CreateListInput {
-                board_id: board.id,
-                title: "List".to_string(),
-            })
-            .await?;
-        assert_revisions(&store, (3, 2, 0, 0)).await?;
-
-        mutations
-            .create_entry(CreateEntryInput {
-                list_id: list.id,
-                title: "Linked domain".to_string(),
-                description: String::new(),
-                due_on: None,
-            })
-            .await?;
-        assert_revisions(&store, (4, 3, 1, 1)).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn failed_revision_bump_rolls_back_the_data_mutation() -> Result<()> {
-        let store = store().await?;
-        store
-            .db
-            .execute_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                "CREATE TRIGGER fail_revision_bump BEFORE UPDATE ON castle_change_revision BEGIN SELECT RAISE(ABORT, 'forced revision failure'); END",
-            ))
-            .await?;
-
-        let result = store
-            .mutations(MutationOrigin::ExternalAgent)
-            .create_project(CreateProjectInput {
-                name: "Must roll back".to_string(),
-            })
-            .await;
-
-        assert!(result.is_err());
-        assert_eq!(Project::find().count(store.db.as_ref()).await?, 0);
-        let row = change_revision_row(&store).await?;
-        assert_eq!(row.try_get::<i64>("", "revision")?, 0);
-        Ok(())
-    }
-
-    async fn change_revision_row(store: &Store) -> Result<sea_orm::QueryResult> {
-        let row = store
-            .db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT revision, board_revision, note_revision, link_revision FROM castle_change_revision WHERE id = 1",
-            ))
-            .await?
-            .context("revision row was not found")?;
-        Ok(row)
-    }
-
-    async fn assert_revisions(store: &Store, expected: (i64, i64, i64, i64)) -> Result<()> {
-        let row = change_revision_row(store).await?;
-        assert_eq!(row.try_get::<i64>("", "revision")?, expected.0);
-        assert_eq!(row.try_get::<i64>("", "board_revision")?, expected.1);
-        assert_eq!(row.try_get::<i64>("", "note_revision")?, expected.2);
-        assert_eq!(row.try_get::<i64>("", "link_revision")?, expected.3);
-        Ok(())
-    }
-}
+mod tests;

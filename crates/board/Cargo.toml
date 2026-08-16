@@ -18,6 +18,7 @@ workspace_ui = { path = "../workspace_ui" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+storage = { path = "../storage", features = ["test-support"] }
 tempfile = "3.23"
 sea-orm.workspace = true
 migration = { path = "../migration" }

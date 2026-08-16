@@ -55,11 +55,12 @@ impl AppShell {
         let runtime = cx.global::<AppServices>().runtime();
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
-            let result = runtime
-                .spawn(
-                    async move { storage::workspace_links::load_workspace_link_catalog(&db).await },
-                )
-                .await;
+            let result =
+                runtime
+                    .spawn(async move {
+                        storage::workspace::links::load_workspace_link_catalog(&db).await
+                    })
+                    .await;
             window
                 .update(|window, cx| match result {
                     Ok(Ok(catalog)) => app.update(cx, |this, cx| {
@@ -87,21 +88,21 @@ impl AppShell {
         &mut self,
         note_id: u32,
         title: String,
-        catalog: Vec<storage::workspace_links::WorkspaceCatalogEntry>,
+        catalog: Vec<storage::workspace::links::WorkspaceCatalogEntry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let note_project_id = catalog
             .iter()
             .find(|entry| {
-                entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note
+                entry.item.kind == storage::workspace::links::WorkspaceItemKind::Note
                     && entry.item.id == i64::from(note_id)
             })
             .and_then(|entry| entry.project_id);
 
         let mut lists = catalog
             .iter()
-            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::List)
+            .filter(|entry| entry.item.kind == storage::workspace::links::WorkspaceItemKind::List)
             .cloned()
             .collect::<Vec<_>>();
 
@@ -185,7 +186,7 @@ impl AppShell {
                             cx.spawn_in(window, async move |_, window| {
                                 let result = runtime
                                     .spawn(async move {
-                                        storage::workspace_links::create_card_from_note_selection(
+                                        storage::workspace::links::create_card_from_note_selection(
                                             &db,
                                             i64::from(note_id),
                                             list_id,
@@ -298,11 +299,11 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     let catalog =
-                        storage::workspace_links::load_workspace_link_catalog(&db).await?;
+                        storage::workspace::links::load_workspace_link_catalog(&db).await?;
                     let boards = catalog
                         .into_iter()
                         .filter(|entry| {
-                            entry.item.kind == storage::workspace_links::WorkspaceItemKind::Board
+                            entry.item.kind == storage::workspace::links::WorkspaceItemKind::Board
                         })
                         .collect::<Vec<_>>();
                     let mut choices = Vec::new();
@@ -314,7 +315,8 @@ impl AppShell {
                             "All cards".to_string(),
                         ));
                         let views =
-                            storage::board_properties::load_board_views(&db, board.item.id).await?;
+                            storage::board::properties::load_board_views(&db, board.item.id)
+                                .await?;
                         choices.extend(views.views.into_iter().map(|view| {
                             (board.item.id, Some(view.id), board.title.clone(), view.name)
                         }));

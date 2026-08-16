@@ -4,9 +4,14 @@ version.workspace = true
 publish = false
 edition.workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 entity = { path = "../entity" }
 migration = { path = "../migration" }
+workspace_api = { path = "../workspace_api" }
 anyhow.workspace = true
 async-trait = "0.1"
 chrono.workspace = true

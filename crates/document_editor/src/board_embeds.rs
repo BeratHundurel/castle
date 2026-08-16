@@ -30,7 +30,7 @@ pub(super) struct EmbedKey {
 #[derive(Clone)]
 pub(super) enum EmbedState {
     Loading,
-    Available(Arc<storage::board_projection::BoardViewProjection>),
+    Available(Arc<storage::board::projection::BoardViewProjection>),
     MissingBoard,
     MissingView,
     Error(SharedString),
@@ -75,7 +75,7 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
             return None;
         }
         let (board_id, view_id, fallback_title) =
-            storage::board_projection::parse_embed_config(&code.value).ok()?;
+            storage::board::projection::parse_embed_config(&code.value).ok()?;
         let position = node.position()?;
         let block = EmbedBlock {
             key: EmbedKey { board_id, view_id },
@@ -139,7 +139,7 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
 
 fn render_projection(
     editor: Entity<DocumentEditorView>,
-    projection: Arc<storage::board_projection::BoardViewProjection>,
+    projection: Arc<storage::board::projection::BoardViewProjection>,
     occurrence: usize,
     cx: &mut gpui::App,
 ) -> gpui::AnyElement {
@@ -207,21 +207,21 @@ fn render_projection(
                             let mut metadata = Vec::new();
                             if projection
                                 .visible_properties
-                                .contains(&storage::board_properties::PropertyKey::DueDate)
+                                .contains(&storage::board::properties::PropertyKey::DueDate)
                                 && let Some(due_on) = card.due_on.as_ref()
                             {
                                 metadata.push(due_on.clone());
                             }
                             if projection
                                 .visible_properties
-                                .contains(&storage::board_properties::PropertyKey::Labels)
+                                .contains(&storage::board::properties::PropertyKey::Labels)
                                 && !card.labels.is_empty()
                             {
                                 metadata.push(card.labels.join(", "));
                             }
                             if projection
                                 .visible_properties
-                                .contains(&storage::board_properties::PropertyKey::RelatedNotes)
+                                .contains(&storage::board::properties::PropertyKey::RelatedNotes)
                                 && card.related_note_count > 0
                             {
                                 metadata.push(format!("{} note(s)", card.related_note_count));
@@ -371,7 +371,7 @@ fn render_status(
 impl DocumentEditorView {
     pub(crate) fn refresh_board_embeds(&mut self, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board_projection::parse_board_view_embeds(&content)
+        let keys = storage::board::projection::parse_board_view_embeds(&content)
             .into_iter()
             .map(|embed| EmbedKey {
                 board_id: embed.board_id,
@@ -404,7 +404,7 @@ impl DocumentEditorView {
 
     pub fn refresh_board_embeds_for(&mut self, board_id: i64, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board_projection::parse_board_view_embeds(&content)
+        let keys = storage::board::projection::parse_board_view_embeds(&content)
             .into_iter()
             .filter(|embed| embed.board_id == board_id)
             .map(|embed| EmbedKey {
@@ -420,7 +420,7 @@ impl DocumentEditorView {
 
     pub fn reload_board_embeds(&mut self, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board_projection::parse_board_view_embeds(&content)
+        let keys = storage::board::projection::parse_board_view_embeds(&content)
             .into_iter()
             .map(|embed| EmbedKey {
                 board_id: embed.board_id,
@@ -453,20 +453,20 @@ impl DocumentEditorView {
                     states = async move {
                         let mut states = HashMap::new();
                         for key in keys {
-                            let state = match storage::board_projection::load_board_view_projection(
+                            let state = match storage::board::projection::load_board_view_projection(
                                 &db,
                                 key.board_id,
                                 key.view_id,
                             )
                             .await
                             {
-                                Ok(storage::board_projection::BoardViewProjectionResult::Available(
+                                Ok(storage::board::projection::BoardViewProjectionResult::Available(
                                     projection,
                                 )) => EmbedState::Available(Arc::new(projection)),
-                                Ok(storage::board_projection::BoardViewProjectionResult::MissingBoard) => {
+                                Ok(storage::board::projection::BoardViewProjectionResult::MissingBoard) => {
                                     EmbedState::MissingBoard
                                 }
-                                Ok(storage::board_projection::BoardViewProjectionResult::MissingView) => {
+                                Ok(storage::board::projection::BoardViewProjectionResult::MissingView) => {
                                     EmbedState::MissingView
                                 }
                                 Err(error) => EmbedState::Error(error.to_string().into()),

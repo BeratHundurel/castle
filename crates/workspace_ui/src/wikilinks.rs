@@ -24,8 +24,8 @@ struct WikiLinkCompletionState {
     note_id: i64,
     project_id: Option<i64>,
     enabled: bool,
-    catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
-    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
+    workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
 }
 
 impl WikiLinkCompletionProvider {
@@ -46,8 +46,8 @@ impl WikiLinkCompletionProvider {
         note_id: i64,
         project_id: Option<i64>,
         enabled: bool,
-        catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
-        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+        catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
+        workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     ) {
         *self.state.borrow_mut() = WikiLinkCompletionState {
             note_id,
@@ -61,12 +61,12 @@ impl WikiLinkCompletionProvider {
     pub fn update_for_workspace_source(
         &self,
         project_id: Option<i64>,
-        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+        workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     ) {
         let note_catalog = workspace_catalog
             .iter()
-            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
-            .map(|entry| storage::note_links::NoteLinkCatalogEntry {
+            .filter(|entry| entry.item.kind == storage::workspace::links::WorkspaceItemKind::Note)
+            .map(|entry| storage::note::links::NoteLinkCatalogEntry {
                 note_id: entry.item.id,
                 title: entry.title.clone(),
                 project_id: entry.project_id,
@@ -162,18 +162,18 @@ struct WikiLinkPreviewBlock {
 pub struct WikiLinkPreviewPlugin {
     open_target: WorkspaceNavigationHandler,
     project_id: Option<i64>,
-    catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
-    indexed_links: Arc<storage::note_links::NoteLinkSet>,
-    workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+    catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
+    indexed_links: Arc<storage::note::links::NoteLinkSet>,
+    workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
 }
 
 impl WikiLinkPreviewPlugin {
     pub fn new(
         open_target: WorkspaceNavigationHandler,
         project_id: Option<i64>,
-        catalog: Arc<Vec<storage::note_links::NoteLinkCatalogEntry>>,
-        indexed_links: Arc<storage::note_links::NoteLinkSet>,
-        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+        catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
+        indexed_links: Arc<storage::note::links::NoteLinkSet>,
+        workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     ) -> Self {
         Self {
             open_target,
@@ -187,12 +187,12 @@ impl WikiLinkPreviewPlugin {
     pub fn new_for_workspace(
         open_target: WorkspaceNavigationHandler,
         project_id: Option<i64>,
-        workspace_catalog: Arc<Vec<storage::workspace_links::WorkspaceCatalogEntry>>,
+        workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
     ) -> Self {
         let catalog = workspace_catalog
             .iter()
-            .filter(|entry| entry.item.kind == storage::workspace_links::WorkspaceItemKind::Note)
-            .map(|entry| storage::note_links::NoteLinkCatalogEntry {
+            .filter(|entry| entry.item.kind == storage::workspace::links::WorkspaceItemKind::Note)
+            .map(|entry| storage::note::links::NoteLinkCatalogEntry {
                 note_id: entry.item.id,
                 title: entry.title.clone(),
                 project_id: entry.project_id,
@@ -203,7 +203,7 @@ impl WikiLinkPreviewPlugin {
             open_target,
             project_id,
             catalog: Arc::new(catalog),
-            indexed_links: Arc::new(storage::note_links::NoteLinkSet::default()),
+            indexed_links: Arc::new(storage::note::links::NoteLinkSet::default()),
             workspace_catalog,
         }
     }
@@ -338,9 +338,9 @@ fn append_preview_node(
     node: &Node,
     block: &mut WikiLinkPreviewBlock,
     project_id: Option<i64>,
-    catalog: &[storage::note_links::NoteLinkCatalogEntry],
-    indexed_links: &storage::note_links::NoteLinkSet,
-    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
+    catalog: &[storage::note::links::NoteLinkCatalogEntry],
+    indexed_links: &storage::note::links::NoteLinkSet,
+    workspace_catalog: &[storage::workspace::links::WorkspaceCatalogEntry],
 ) {
     match node {
         Node::Text(text) => append_preview_text(
@@ -398,12 +398,12 @@ fn append_preview_text(
     text: &str,
     block: &mut WikiLinkPreviewBlock,
     project_id: Option<i64>,
-    catalog: &[storage::note_links::NoteLinkCatalogEntry],
-    indexed_links: &storage::note_links::NoteLinkSet,
-    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
+    catalog: &[storage::note::links::NoteLinkCatalogEntry],
+    indexed_links: &storage::note::links::NoteLinkSet,
+    workspace_catalog: &[storage::workspace::links::WorkspaceCatalogEntry],
 ) {
     let mut consumed = 0;
-    for link in storage::note_links::parse_wikilinks(text) {
+    for link in storage::note::links::parse_wikilinks(text) {
         block.text.push_str(&text[consumed..link.start_byte]);
         let start = block.text.len();
         block
@@ -411,7 +411,7 @@ fn append_preview_text(
             .push_str(link.display_text.as_deref().unwrap_or(&link.raw_target));
         let end = block.text.len();
         let target =
-            storage::workspace_links::resolve_stable_target(&link.raw_target, workspace_catalog)
+            storage::workspace::links::resolve_stable_target(&link.raw_target, workspace_catalog)
                 .and_then(workspace_navigation_target)
                 .map(PreviewLinkTarget::Workspace)
                 .or_else(|| {
@@ -431,8 +431,8 @@ fn append_preview_text(
 fn resolve_preview_note(
     raw_target: &str,
     project_id: Option<i64>,
-    catalog: &[storage::note_links::NoteLinkCatalogEntry],
-    indexed_links: &storage::note_links::NoteLinkSet,
+    catalog: &[storage::note::links::NoteLinkCatalogEntry],
+    indexed_links: &storage::note::links::NoteLinkSet,
 ) -> Option<i64> {
     if let Some(target) = indexed_links.outbound.iter().find(|link| {
         link.raw_target.eq_ignore_ascii_case(raw_target) && link.target_note_id.is_some()
@@ -467,34 +467,32 @@ fn resolve_preview_note(
 }
 
 fn unique_catalog_note<'a>(
-    mut candidates: impl Iterator<Item = &'a storage::note_links::NoteLinkCatalogEntry>,
+    mut candidates: impl Iterator<Item = &'a storage::note::links::NoteLinkCatalogEntry>,
 ) -> Option<i64> {
     let first = candidates.next()?.note_id;
     candidates.next().is_none().then_some(first)
 }
 
 pub fn workspace_navigation_target(
-    entry: &storage::workspace_links::WorkspaceCatalogEntry,
+    entry: &storage::workspace::links::WorkspaceCatalogEntry,
 ) -> Option<WorkspaceNavigationTarget> {
     let item_id = u32::try_from(entry.item.id).ok()?;
     match entry.item.kind {
-        storage::workspace_links::WorkspaceItemKind::Note => {
+        storage::workspace::links::WorkspaceItemKind::Note => {
             Some(WorkspaceNavigationTarget::Note {
                 note_id: item_id,
                 source_offset: None,
             })
         }
-        storage::workspace_links::WorkspaceItemKind::Board => {
+        storage::workspace::links::WorkspaceItemKind::Board => {
             Some(WorkspaceNavigationTarget::board(item_id))
         }
-        storage::workspace_links::WorkspaceItemKind::List => Some(WorkspaceNavigationTarget::list(
-            u32::try_from(entry.board_id?).ok()?,
-            item_id,
-        )),
-        storage::workspace_links::WorkspaceItemKind::Card => Some(WorkspaceNavigationTarget::card(
-            u32::try_from(entry.board_id?).ok()?,
-            item_id,
-        )),
+        storage::workspace::links::WorkspaceItemKind::List => Some(
+            WorkspaceNavigationTarget::list(u32::try_from(entry.board_id?).ok()?, item_id),
+        ),
+        storage::workspace::links::WorkspaceItemKind::Card => Some(
+            WorkspaceNavigationTarget::card(u32::try_from(entry.board_id?).ok()?, item_id),
+        ),
     }
 }
 
@@ -528,17 +526,17 @@ fn wikilink_completion_candidates(
     query: &str,
     note_id: i64,
     project_id: Option<i64>,
-    note_catalog: &[storage::note_links::NoteLinkCatalogEntry],
-    workspace_catalog: &[storage::workspace_links::WorkspaceCatalogEntry],
+    note_catalog: &[storage::note::links::NoteLinkCatalogEntry],
+    workspace_catalog: &[storage::workspace::links::WorkspaceCatalogEntry],
 ) -> Vec<WikiLinkCompletionCandidate> {
     let (selected_kind, query) = query
         .split_once(':')
         .and_then(|(prefix, query)| {
             let kind = match prefix.trim().to_ascii_lowercase().as_str() {
-                "note" => storage::workspace_links::WorkspaceItemKind::Note,
-                "board" => storage::workspace_links::WorkspaceItemKind::Board,
-                "list" => storage::workspace_links::WorkspaceItemKind::List,
-                "card" => storage::workspace_links::WorkspaceItemKind::Card,
+                "note" => storage::workspace::links::WorkspaceItemKind::Note,
+                "board" => storage::workspace::links::WorkspaceItemKind::Board,
+                "list" => storage::workspace::links::WorkspaceItemKind::List,
+                "card" => storage::workspace::links::WorkspaceItemKind::Card,
                 _ => return None,
             };
             Some((Some(kind), query.trim()))
@@ -547,7 +545,7 @@ fn wikilink_completion_candidates(
 
     let mut candidates = Vec::new();
     if selected_kind.is_none()
-        || selected_kind == Some(storage::workspace_links::WorkspaceItemKind::Note)
+        || selected_kind == Some(storage::workspace::links::WorkspaceItemKind::Note)
     {
         candidates.extend(
             wikilink_matches(query, note_id, project_id, note_catalog)
@@ -561,11 +559,11 @@ fn wikilink_completion_candidates(
         );
     }
 
-    if selected_kind != Some(storage::workspace_links::WorkspaceItemKind::Note) {
+    if selected_kind != Some(storage::workspace::links::WorkspaceItemKind::Note) {
         let normalized_query = query.to_lowercase();
         let mut workspace_matches = workspace_catalog
             .iter()
-            .filter(|entry| entry.item.kind != storage::workspace_links::WorkspaceItemKind::Note)
+            .filter(|entry| entry.item.kind != storage::workspace::links::WorkspaceItemKind::Note)
             .filter(|entry| selected_kind.is_none_or(|kind| entry.item.kind == kind))
             .filter(|entry| {
                 normalized_query.is_empty()
@@ -588,10 +586,10 @@ fn wikilink_completion_candidates(
         });
         candidates.extend(workspace_matches.into_iter().map(|entry| {
             let kind = match entry.item.kind {
-                storage::workspace_links::WorkspaceItemKind::Board => CompletionItemKind::MODULE,
-                storage::workspace_links::WorkspaceItemKind::List => CompletionItemKind::FOLDER,
-                storage::workspace_links::WorkspaceItemKind::Card => CompletionItemKind::VALUE,
-                storage::workspace_links::WorkspaceItemKind::Note => CompletionItemKind::FILE,
+                storage::workspace::links::WorkspaceItemKind::Board => CompletionItemKind::MODULE,
+                storage::workspace::links::WorkspaceItemKind::List => CompletionItemKind::FOLDER,
+                storage::workspace::links::WorkspaceItemKind::Card => CompletionItemKind::VALUE,
+                storage::workspace::links::WorkspaceItemKind::Note => CompletionItemKind::FILE,
             };
             WikiLinkCompletionCandidate {
                 label: entry.title.clone(),
@@ -610,8 +608,8 @@ fn wikilink_matches(
     query: &str,
     note_id: i64,
     project_id: Option<i64>,
-    catalog: &[storage::note_links::NoteLinkCatalogEntry],
-) -> Vec<storage::note_links::NoteLinkCatalogEntry> {
+    catalog: &[storage::note::links::NoteLinkCatalogEntry],
+) -> Vec<storage::note::links::NoteLinkCatalogEntry> {
     let query = query.to_lowercase();
     let mut matches = catalog
         .iter()
@@ -647,8 +645,8 @@ fn wikilink_matches(
 }
 
 fn wikilink_for_candidate(
-    candidate: &storage::note_links::NoteLinkCatalogEntry,
-    catalog: &[storage::note_links::NoteLinkCatalogEntry],
+    candidate: &storage::note::links::NoteLinkCatalogEntry,
+    catalog: &[storage::note::links::NoteLinkCatalogEntry],
 ) -> String {
     let normalized_title = candidate.title.trim().to_lowercase();
     let same_title = catalog
@@ -667,9 +665,9 @@ fn wikilink_for_candidate(
             return format!("[[{project_name}/{}]]", candidate.title);
         }
     }
-    storage::workspace_links::stable_workspace_link(
-        storage::workspace_links::WorkspaceItemRef {
-            kind: storage::workspace_links::WorkspaceItemKind::Note,
+    storage::workspace::links::stable_workspace_link(
+        storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Note,
             id: candidate.note_id,
         },
         candidate.title.as_ref(),
@@ -690,7 +688,7 @@ mod tests {
 
     #[test]
     fn preview_builds_a_clickable_resolved_label() {
-        let catalog = vec![storage::note_links::NoteLinkCatalogEntry {
+        let catalog = vec![storage::note::links::NoteLinkCatalogEntry {
             note_id: 7,
             title: "Roadmap".into(),
             project_id: Some(2),
@@ -707,7 +705,7 @@ mod tests {
             &mut block,
             Some(2),
             &catalog,
-            &storage::note_links::NoteLinkSet::default(),
+            &storage::note::links::NoteLinkSet::default(),
             &[],
         );
 

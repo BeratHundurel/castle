@@ -33,14 +33,14 @@ impl DocumentEditorView {
                     biased;
                     _ = cancelled => None,
                     result = async move {
-                        let links = storage::note_links::load_note_links(&db, note_id as i64).await?;
-                        let note_catalog = storage::note_links::load_note_link_catalog(&db);
-                        let workspace_links = storage::workspace_links::load_note_workspace_links(
+                        let links = storage::note::links::load_note_links(&db, note_id as i64).await?;
+                        let note_catalog = storage::note::links::load_note_link_catalog(&db);
+                        let workspace_links = storage::workspace::links::load_note_workspace_links(
                             &db,
                             note_id as i64,
                         );
                         let workspace_catalog =
-                            storage::workspace_links::load_workspace_link_catalog(&db);
+                            storage::workspace::links::load_workspace_link_catalog(&db);
                         let (note_catalog, workspace_links, workspace_catalog) =
                             tokio::try_join!(note_catalog, workspace_links, workspace_catalog)?;
                         Ok::<_, anyhow::Error>((

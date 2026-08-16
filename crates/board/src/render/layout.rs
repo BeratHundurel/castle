@@ -110,8 +110,8 @@ impl BoardView {
             .on_drop(cx.listener(|this, info: &WorkspaceDragInfo, _, cx| {
                 if let (Some(board_id), Some(note_id)) = (this.data.board_id, info.note_id()) {
                     this.link_note_to_item(
-                        storage::workspace_links::WorkspaceItemRef {
-                            kind: storage::workspace_links::WorkspaceItemKind::Board,
+                        storage::workspace::links::WorkspaceItemRef {
+                            kind: storage::workspace::links::WorkspaceItemKind::Board,
                             id: i64::from(board_id),
                         },
                         note_id,
@@ -167,7 +167,7 @@ impl BoardView {
                 )
             })
             .children(self.filters.custom.iter().filter_map(|filter| {
-                let storage::board_properties::PropertyKey::Custom(property_id) = &filter.property
+                let storage::board::properties::PropertyKey::Custom(property_id) = &filter.property
                 else {
                     return None;
                 };
@@ -188,8 +188,8 @@ impl BoardView {
             }))
             .when_some(self.data.board_id, |this, board_id| {
                 this.child(self.render_related_notes_popover(
-                    storage::workspace_links::WorkspaceItemRef {
-                        kind: storage::workspace_links::WorkspaceItemKind::Board,
+                    storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Board,
                         id: i64::from(board_id),
                     },
                     "board".into(),

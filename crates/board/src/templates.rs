@@ -50,7 +50,7 @@ impl BoardView {
                         let task =
                             cx.global::<AppServices>()
                                 .spawn_store(move |store| async move {
-                                    storage::board_templates::save_board_as_template(
+                                    storage::board::templates::save_board_as_template(
                                         &store, board_id, name,
                                     )
                                     .await

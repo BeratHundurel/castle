@@ -869,12 +869,12 @@ impl DocumentEditorView {
                 )
                 .collect()
         };
-        let board_rows =
-            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::Board, cx);
+        let board_rows = self
+            .render_workspace_link_rows(storage::workspace::links::WorkspaceItemKind::Board, cx);
         let list_rows =
-            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::List, cx);
+            self.render_workspace_link_rows(storage::workspace::links::WorkspaceItemKind::List, cx);
         let card_rows =
-            self.render_workspace_link_rows(storage::workspace_links::WorkspaceItemKind::Card, cx);
+            self.render_workspace_link_rows(storage::workspace::links::WorkspaceItemKind::Card, cx);
 
         v_flex()
             .id("document-links")
@@ -968,7 +968,7 @@ impl DocumentEditorView {
 
     fn render_workspace_link_rows(
         &self,
-        kind: storage::workspace_links::WorkspaceItemKind,
+        kind: storage::workspace::links::WorkspaceItemKind,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut seen = HashSet::new();
@@ -983,9 +983,9 @@ impl DocumentEditorView {
                 let item_id = reference.item.item.id;
                 let label = reference.item.breadcrumb();
                 let origin = match reference.origin {
-                    storage::workspace_links::WorkspaceLinkOrigin::Manual => "Linked",
-                    storage::workspace_links::WorkspaceLinkOrigin::Wikilink => "Markdown",
-                    storage::workspace_links::WorkspaceLinkOrigin::Embed => "Embed",
+                    storage::workspace::links::WorkspaceLinkOrigin::Manual => "Linked",
+                    storage::workspace::links::WorkspaceLinkOrigin::Wikilink => "Markdown",
+                    storage::workspace::links::WorkspaceLinkOrigin::Embed => "Embed",
                 };
                 Some(
                     h_flex()
@@ -1020,7 +1020,7 @@ impl DocumentEditorView {
         &self,
         id: &'static str,
         index: usize,
-        link: &storage::note_links::NoteLinkReference,
+        link: &storage::note::links::NoteLinkReference,
         inbound: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {

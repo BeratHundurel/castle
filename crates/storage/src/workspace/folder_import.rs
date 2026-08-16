@@ -288,7 +288,7 @@ pub async fn import_folder(
         })
         .await?;
     for (note_id, content, updated_at) in indexed_notes {
-        crate::note_links::index_note_links(db, note_id, &content, updated_at).await?;
+        crate::note::links::index_note_links(db, note_id, &content, updated_at).await?;
     }
     Ok(result)
 }
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(notes[0].title, "notes");
         assert_eq!(notes[0].cached_content, "second [[Missing note]]");
         assert!(!notes[0].file_managed_by_app);
-        let links = crate::note_links::load_note_links(&db, notes[0].id).await?;
+        let links = crate::note::links::load_note_links(&db, notes[0].id).await?;
         assert_eq!(links.unresolved.len(), 1);
 
         Ok(())

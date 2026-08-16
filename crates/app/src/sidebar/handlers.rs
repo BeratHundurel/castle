@@ -26,9 +26,9 @@ impl SidebarView {
             .map(|board| board.title.as_ref())
             .unwrap_or("Board");
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace_links::stable_workspace_link(
-                storage::workspace_links::WorkspaceItemRef {
-                    kind: storage::workspace_links::WorkspaceItemKind::Board,
+            storage::workspace::links::stable_workspace_link(
+                storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Board,
                     id: i64::from(action.0),
                 },
                 title,
@@ -51,9 +51,9 @@ impl SidebarView {
             .map(|note| note.title.as_ref())
             .unwrap_or("Note");
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace_links::stable_workspace_link(
-                storage::workspace_links::WorkspaceItemRef {
-                    kind: storage::workspace_links::WorkspaceItemKind::Note,
+            storage::workspace::links::stable_workspace_link(
+                storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Note,
                     id: i64::from(action.0),
                 },
                 title,

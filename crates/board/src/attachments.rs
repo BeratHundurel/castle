@@ -77,7 +77,7 @@ impl BoardView {
             let copied_for_cleanup = copied.clone();
             let persistence = runtime
                 .spawn(async move {
-                    storage::board_commands::create_attachments(
+                    storage::board::commands::create_attachments(
                         &db,
                         entry_id,
                         copied.into_iter().map(|image| image.file_name).collect(),
@@ -199,7 +199,7 @@ impl BoardView {
         cx.spawn_in(window, async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_commands::delete_attachment(&db, attachment_id).await
+                    storage::board::commands::delete_attachment(&db, attachment_id).await
                 })
                 .await;
 

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use storage::board_properties::{
+use storage::board::properties::{
     BoardViewConfig, DueDatePreset, FilterOperand, FilterOperator, PropertyKey, ViewFilter,
 };
 

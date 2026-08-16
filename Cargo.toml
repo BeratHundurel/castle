@@ -6,6 +6,7 @@ members = [
     "crates/board",
     "crates/document_editor",
     "crates/workspace_ui",
+    "crates/workspace_api",
     "crates/storage",
     "crates/test_support",
     "crates/migration",

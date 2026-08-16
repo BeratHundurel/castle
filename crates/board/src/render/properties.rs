@@ -1,5 +1,5 @@
 use super::*;
-use storage::board_properties::{
+use storage::board::properties::{
     FilterOperand, FilterOperator, PropertyDefinition, PropertyKey, PropertyKind, PropertyValue,
     SortDirection,
 };
@@ -12,7 +12,7 @@ impl BoardView {
     ) -> AnyElement {
         let mut rows = Vec::new();
         for key in &self.properties.active_view_config.visible_properties {
-            if key == &storage::board_properties::PropertyKey::RelatedNotes {
+            if key == &storage::board::properties::PropertyKey::RelatedNotes {
                 if !entry.related_notes.is_empty() {
                     rows.push(
                         h_flex()
@@ -26,7 +26,7 @@ impl BoardView {
                 }
                 continue;
             }
-            let storage::board_properties::PropertyKey::Custom(property_id) = key else {
+            let storage::board::properties::PropertyKey::Custom(property_id) = key else {
                 continue;
             };
             let Some(property) = self

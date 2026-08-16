@@ -124,8 +124,8 @@ impl BoardView {
             .on_drop(cx.listener(move |this, info: &WorkspaceDragInfo, _, cx| {
                 if let Some(note_id) = info.note_id() {
                     this.link_note_to_item(
-                        storage::workspace_links::WorkspaceItemRef {
-                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                        storage::workspace::links::WorkspaceItemRef {
+                            kind: storage::workspace::links::WorkspaceItemKind::List,
                             id: i64::from(card_id),
                         },
                         note_id,
@@ -155,8 +155,8 @@ impl BoardView {
                 h_flex()
                     .gap_0p5()
                     .child(self.render_related_notes_popover(
-                        storage::workspace_links::WorkspaceItemRef {
-                            kind: storage::workspace_links::WorkspaceItemKind::List,
+                        storage::workspace::links::WorkspaceItemRef {
+                            kind: storage::workspace::links::WorkspaceItemKind::List,
                             id: i64::from(card_id),
                         },
                         SharedString::from(format!("list-{card_id}")),
@@ -249,12 +249,12 @@ impl BoardView {
             .properties
             .active_view_config
             .visible_properties
-            .contains(&storage::board_properties::PropertyKey::Labels);
+            .contains(&storage::board::properties::PropertyKey::Labels);
         let show_due_date = self
             .properties
             .active_view_config
             .visible_properties
-            .contains(&storage::board_properties::PropertyKey::DueDate);
+            .contains(&storage::board::properties::PropertyKey::DueDate);
         let compact = self.properties.active_view_config.compact_cards;
 
         div()
@@ -269,8 +269,8 @@ impl BoardView {
             .on_drop(cx.listener(move |this, info: &WorkspaceDragInfo, _, cx| {
                 if let Some(note_id) = info.note_id() {
                     this.link_note_to_item(
-                        storage::workspace_links::WorkspaceItemRef {
-                            kind: storage::workspace_links::WorkspaceItemKind::Card,
+                        storage::workspace::links::WorkspaceItemRef {
+                            kind: storage::workspace::links::WorkspaceItemKind::Card,
                             id: i64::from(entry_id),
                         },
                         note_id,

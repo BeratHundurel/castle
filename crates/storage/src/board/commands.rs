@@ -110,7 +110,7 @@ async fn insert_card(
         .await?;
         checklist_items.push(ChecklistItemRecord::from(item));
     }
-    crate::workspace_links::index_entry_workspace_links_in_connection(
+    crate::workspace::links::index_entry_workspace_links_in_connection(
         db,
         card.id,
         &draft.description,
@@ -215,7 +215,7 @@ pub async fn update_board_card(
     }
     .update(&txn)
     .await?;
-    crate::workspace_links::index_entry_workspace_links_in_connection(
+    crate::workspace::links::index_entry_workspace_links_in_connection(
         &txn,
         i64::from(card_id),
         &description,

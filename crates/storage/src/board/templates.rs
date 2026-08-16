@@ -362,7 +362,7 @@ pub async fn create_board_from_template(
     let snapshot = crate::board::load_board_snapshot(db, board.id).await?;
     let indexed_at = Utc::now().timestamp();
     for entry in snapshot.cards.into_iter().flat_map(|list| list.entries) {
-        crate::workspace_links::index_entry_workspace_links(
+        crate::workspace::links::index_entry_workspace_links(
             db,
             i64::from(entry.id),
             &entry.description,

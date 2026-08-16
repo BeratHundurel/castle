@@ -21,7 +21,7 @@ impl BoardView {
                 .catalog
                 .iter()
                 .find(|candidate| {
-                    candidate.item.kind == storage::workspace_links::WorkspaceItemKind::Card
+                    candidate.item.kind == storage::workspace::links::WorkspaceItemKind::Card
                         && candidate.item.id == i64::from(entry.id)
                 })
                 .and_then(|candidate| candidate.project_id)

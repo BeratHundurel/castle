@@ -301,13 +301,13 @@ pub(crate) async fn load_saved_view_identities(
 }
 
 pub fn workspace_relation_signature(content: &str) -> Vec<String> {
-    let mut signature = crate::note_links::parse_wikilinks(content)
+    let mut signature = crate::note::links::parse_wikilinks(content)
         .into_iter()
         .filter(|link| is_workspace_target(&link.raw_target))
         .map(|link| format!("wikilink:{}", link.raw_target.trim().to_ascii_lowercase()))
         .collect::<std::collections::BTreeSet<_>>();
     signature.extend(
-        crate::board_projection::parse_board_view_embeds(content)
+        crate::board::projection::parse_board_view_embeds(content)
             .into_iter()
             .map(|embed| {
                 format!(
@@ -637,12 +637,12 @@ pub(crate) async fn index_note_workspace_links_in_connection(
     indexed_at: i64,
 ) -> Result<()> {
     let catalog = load_workspace_link_catalog(db).await?;
-    let mut requested_targets = crate::note_links::parse_wikilinks(content)
+    let mut requested_targets = crate::note::links::parse_wikilinks(content)
         .iter()
         .filter_map(|link| parse_workspace_target(&link.raw_target))
         .collect::<Vec<_>>();
     requested_targets.extend(
-        crate::board_projection::parse_board_view_embeds(content)
+        crate::board::projection::parse_board_view_embeds(content)
             .into_iter()
             .map(|embed| WorkspaceItemRef {
                 kind: WorkspaceItemKind::Board,
@@ -674,11 +674,11 @@ pub(crate) async fn index_note_workspace_links_with_catalog(
 ) -> Result<()> {
     let source = catalog_entry(catalog, WorkspaceItemKind::Note, note_id)
         .with_context(|| format!("active note {note_id} was not found"))?;
-    let parsed = crate::note_links::parse_wikilinks(content)
+    let parsed = crate::note::links::parse_wikilinks(content)
         .into_iter()
         .filter(|link| is_workspace_target(&link.raw_target))
         .collect::<Vec<_>>();
-    let embeds = crate::board_projection::parse_board_view_embeds(content)
+    let embeds = crate::board::projection::parse_board_view_embeds(content)
         .into_iter()
         .filter_map(|embed| {
             let board = WorkspaceItemRef {
@@ -758,7 +758,7 @@ pub async fn index_entry_workspace_links_in_connection(
 ) -> Result<()> {
     let catalog = load_workspace_link_catalog(db).await?;
     let aliases = NoteAlias::find().all(db).await?;
-    let parsed = crate::note_links::parse_wikilinks(description);
+    let parsed = crate::note::links::parse_wikilinks(description);
     let stable_targets = parsed
         .iter()
         .filter_map(|link| parse_workspace_target(&link.raw_target))
@@ -788,7 +788,7 @@ pub(crate) async fn index_entry_workspace_links_with_catalog(
 ) -> Result<()> {
     let source = catalog_entry(catalog, WorkspaceItemKind::Card, entry_id)
         .with_context(|| format!("active card {entry_id} was not found"))?;
-    let parsed = crate::note_links::parse_wikilinks(description);
+    let parsed = crate::note::links::parse_wikilinks(description);
     WorkspaceLink::delete_many()
         .filter(workspace_link::Column::SourceEntryId.eq(entry_id))
         .filter(workspace_link::Column::Origin.eq(ORIGIN_ENTRY_WIKILINK))
@@ -1098,7 +1098,7 @@ pub async fn repair_workspace_link_index_batch(
     limit: u64,
 ) -> Result<WorkspaceLinkRepairBatch> {
     let limit = limit.max(1);
-    let note_catalog = crate::note_links::load_note_link_catalog(db).await?;
+    let note_catalog = crate::note::links::load_note_link_catalog(db).await?;
     let workspace_catalog = load_workspace_link_catalog(db).await?;
     let aliases = NoteAlias::find().all(db).await?;
     let existing_items = load_all_existing_workspace_items(db).await?;
@@ -1126,13 +1126,13 @@ pub async fn repair_workspace_link_index_batch(
         let content = row.try_get::<String>("", "cached_content")?;
         let updated_at = row.try_get::<i64>("", "updated_at")?;
         let txn = db.begin().await?;
-        crate::note_links::index_note_links_with_catalog(
+        crate::note::links::index_note_links_with_catalog(
             &txn,
             note_id,
             project_id,
             &content,
             updated_at,
-            crate::note_links::NoteIndexCatalogs {
+            crate::note::links::NoteIndexCatalogs {
                 note_links: &note_catalog,
                 aliases: &aliases,
                 workspace: &workspace_catalog,

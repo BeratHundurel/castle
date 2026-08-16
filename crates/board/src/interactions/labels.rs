@@ -10,7 +10,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_commands::create_label(&store, board_id, name, color).await
+                storage::board::commands::create_label(&store, board_id, name, color).await
             });
 
         cx.spawn(async move |this, cx| {
@@ -78,7 +78,7 @@ impl BoardView {
             "Could not rename label",
             false,
             move |store| async move {
-                storage::board_commands::rename_label(&store, label_id, name).await
+                storage::board::commands::rename_label(&store, label_id, name).await
             },
         );
     }
@@ -130,7 +130,7 @@ impl BoardView {
             "Could not update card label",
             false,
             move |store| async move {
-                storage::board_commands::set_label_assignment(&store, entry_id, label_id, assigned)
+                storage::board::commands::set_label_assignment(&store, entry_id, label_id, assigned)
                     .await
             },
         );
@@ -152,7 +152,7 @@ impl BoardView {
             "Could not delete label",
             false,
             move |store| async move {
-                storage::board_commands::delete_label(&store, label_id).await
+                storage::board::commands::delete_label(&store, label_id).await
             },
         );
     }

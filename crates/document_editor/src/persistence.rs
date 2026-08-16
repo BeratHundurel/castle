@@ -32,7 +32,7 @@ impl DocumentEditorView {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
-                    result = storage::documents::load_document(&query_db, note_id) => Some(result),
+                    result = storage::note::documents::load_document(&query_db, note_id) => Some(result),
                 }
             });
             let model = match load.await {
@@ -96,7 +96,7 @@ impl DocumentEditorView {
                         let update_content = content.clone();
                         let _ = runtime
                             .spawn(async move {
-                                storage::documents::persist_document_content(
+                                storage::note::documents::persist_document_content(
                                     &update_db,
                                     note_id,
                                     update_content,
@@ -130,7 +130,7 @@ impl DocumentEditorView {
                         let update_db = db.clone();
                         let _ = runtime
                             .spawn(async move {
-                                storage::documents::mark_document_missing(&update_db, note_id).await
+                                storage::note::documents::mark_document_missing(&update_db, note_id).await
                             })
                             .await;
                     }
@@ -156,7 +156,7 @@ impl DocumentEditorView {
 
     pub(super) fn load_model(
         &mut self,
-        model: storage::documents::DocumentRecord,
+        model: storage::note::documents::DocumentRecord,
         content: String,
         missing: bool,
         is_loading: bool,
@@ -164,7 +164,7 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) {
         self.inspector_links.relation_signature =
-            storage::workspace_links::workspace_relation_signature(&content);
+            storage::workspace::links::workspace_relation_signature(&content);
         self.title = model.title.into();
         self.inspector_links.project_id = model.project_id;
         self.persistence.current_path = model.file_path.map(PathBuf::from);
@@ -309,7 +309,7 @@ impl DocumentEditorView {
                         let save_db = db.clone();
                         match runtime
                             .spawn(async move {
-                                storage::documents::persist_document_content(
+                                storage::note::documents::persist_document_content(
                                     &save_db,
                                     note_id,
                                     persisted_content.to_string(),
@@ -330,7 +330,7 @@ impl DocumentEditorView {
                 let persisted_content = content.clone();
                 match runtime
                     .spawn(async move {
-                        storage::documents::persist_document_content(
+                        storage::note::documents::persist_document_content(
                             &db,
                             note_id,
                             persisted_content.to_string(),
@@ -350,7 +350,7 @@ impl DocumentEditorView {
                 Ok(_) => {
                     this.update(cx, |this, cx| {
                         let workspace_relation_signature =
-                            storage::workspace_links::workspace_relation_signature(&content);
+                            storage::workspace::links::workspace_relation_signature(&content);
                         let workspace_links_changed =
                             this.inspector_links.relation_signature != workspace_relation_signature;
                         this.inspector_links.relation_signature = workspace_relation_signature;
@@ -510,7 +510,7 @@ impl DocumentEditorView {
                     let persisted_content = content.clone();
                     match runtime
                         .spawn(async move {
-                            storage::documents::persist_document_to_path(
+                            storage::note::documents::persist_document_to_path(
                                 &db,
                                 note_id,
                                 path_string,
@@ -551,7 +551,7 @@ impl DocumentEditorView {
                         this.persistence.file_managed_by_app = file_managed_by_app;
                         this.persistence.is_loading = false;
                         let workspace_relation_signature =
-                            storage::workspace_links::workspace_relation_signature(&content);
+                            storage::workspace::links::workspace_relation_signature(&content);
                         let workspace_links_changed =
                             this.inspector_links.relation_signature != workspace_relation_signature;
                         this.inspector_links.relation_signature = workspace_relation_signature;

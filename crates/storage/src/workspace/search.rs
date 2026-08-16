@@ -330,7 +330,7 @@ pub async fn search_workspace(
         });
     }
 
-    let workspace_catalog = crate::workspace_links::load_workspace_link_catalog(db)
+    let workspace_catalog = crate::workspace::links::load_workspace_link_catalog(db)
         .await
         .map_err(|error| DbErr::Custom(error.to_string()))?;
 
@@ -348,14 +348,14 @@ pub async fn search_workspace(
             SearchResultKind::Card => workspace_catalog
                 .iter()
                 .find(|entry| {
-                    entry.item.kind == crate::workspace_links::WorkspaceItemKind::List
+                    entry.item.kind == crate::workspace::links::WorkspaceItemKind::List
                         && entry.item.id == row.item_id
                 })
                 .and_then(|entry| entry.board_title.clone()),
             SearchResultKind::Entry => workspace_catalog
                 .iter()
                 .find(|entry| {
-                    entry.item.kind == crate::workspace_links::WorkspaceItemKind::Card
+                    entry.item.kind == crate::workspace::links::WorkspaceItemKind::Card
                         && entry.item.id == row.item_id
                 })
                 .and_then(|entry| {

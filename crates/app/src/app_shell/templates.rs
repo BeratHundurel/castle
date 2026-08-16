@@ -11,7 +11,7 @@ use gpui_component::{
     scroll::ScrollableElement as _,
     v_flex,
 };
-use storage::board_templates::{BoardTemplate, BoardTemplateId};
+use storage::board::templates::{BoardTemplate, BoardTemplateId};
 
 use super::AppShell;
 use crate::AppServices;
@@ -43,7 +43,7 @@ impl AppShell {
             return;
         }
 
-        let templates = storage::board_templates::built_in_templates();
+        let templates = storage::board::templates::built_in_templates();
         let Some(selected_key) = templates
             .iter()
             .find(|template| template.id == BoardTemplateId::BuiltIn("kanban"))
@@ -124,7 +124,7 @@ impl AppShell {
         let runtime = cx.global::<AppServices>().runtime();
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .spawn(async move { storage::board_templates::load_custom_templates(&db).await })
+                .spawn(async move { storage::board::templates::load_custom_templates(&db).await })
                 .await;
             this.update(cx, |this, cx| {
                 let Some(picker) = this.board_template_picker.as_mut() else {
@@ -504,7 +504,7 @@ impl AppShell {
         cx.spawn_in(window, async move |_, window| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_templates::create_board_from_template(
+                    storage::board::templates::create_board_from_template(
                         &db,
                         project_id,
                         title,
@@ -581,7 +581,7 @@ impl AppShell {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .spawn(async move {
-                    storage::board_templates::delete_custom_template(&db, template_id).await
+                    storage::board::templates::delete_custom_template(&db, template_id).await
                 })
                 .await;
             this.update(cx, |this, cx| {

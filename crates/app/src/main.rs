@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let store = Store::connect(StoreOptions::new(paths.database_url)).await?;
 
     let first_run_workspace = if is_fresh_database {
-        storage::onboarding::seed_fresh_workspace(&store, &paths.data_dir).await?
+        storage::workspace::onboarding::seed_fresh_workspace(&store, &paths.data_dir).await?
     } else {
         None
     };

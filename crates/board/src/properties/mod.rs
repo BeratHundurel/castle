@@ -4,7 +4,7 @@ use gpui_component::{
     ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, calendar::Date,
     dialog::DialogButtonProps,
 };
-use storage::board_properties::{
+use storage::board::properties::{
     BoardViewConfig, FilterOperand, FilterOperator, PropertyKey, PropertyKind, PropertyValue,
     SortDirection, ViewFilter, ViewSort,
 };
@@ -252,7 +252,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::create_property(&store, i64::from(board_id), name, kind)
+                storage::board::properties::create_property(&store, i64::from(board_id), name, kind)
                     .await
             });
         cx.spawn(async move |this, cx| {
@@ -310,7 +310,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::rename_property(&store, property_id, name).await
+                storage::board::properties::rename_property(&store, property_id, name).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -379,7 +379,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::reorder_properties(
+                storage::board::properties::reorder_properties(
                     &store,
                     i64::from(board_id),
                     &ordered_ids,
@@ -462,7 +462,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::delete_property(&store, property_id).await
+                storage::board::properties::delete_property(&store, property_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -521,7 +521,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::create_property_option(&store, property_id, name, color)
+                storage::board::properties::create_property_option(&store, property_id, name, color)
                     .await
             });
         cx.spawn(async move |this, cx| {
@@ -588,7 +588,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::rename_property_option(&store, option_id, name).await
+                storage::board::properties::rename_property_option(&store, option_id, name).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -640,7 +640,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::update_property_option_color(&store, option_id, color)
+                storage::board::properties::update_property_option_color(&store, option_id, color)
                     .await
             });
         cx.spawn(async move |this, cx| {
@@ -704,7 +704,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::reorder_property_options(
+                storage::board::properties::reorder_property_options(
                     &store,
                     property_id,
                     &ordered_ids,
@@ -795,7 +795,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::delete_property_option(&store, option_id).await
+                storage::board::properties::delete_property_option(&store, option_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -865,7 +865,7 @@ impl BoardView {
                 }
                 match value {
                     Some(value) => {
-                        storage::board_properties::set_entry_property(
+                        storage::board::properties::set_entry_property(
                             &store,
                             entry_id,
                             property_id,
@@ -874,7 +874,7 @@ impl BoardView {
                         .await?;
                     }
                     None => {
-                        storage::board_properties::clear_entry_property(
+                        storage::board::properties::clear_entry_property(
                             &store,
                             entry_id,
                             property_id,
@@ -936,7 +936,7 @@ impl BoardView {
                 self.properties
                     .data
                     .values
-                    .push(storage::board_properties::EntryProperty {
+                    .push(storage::board::properties::EntryProperty {
                         entry_id,
                         property_id,
                         value,
@@ -1059,7 +1059,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::set_selected_board_view(
+                storage::board::properties::set_selected_board_view(
                     &store,
                     i64::from(board_id),
                     view_id,
@@ -1114,7 +1114,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::rename_board_view(&store, view_id, name).await
+                storage::board::properties::rename_board_view(&store, view_id, name).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1162,14 +1162,14 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                let view = storage::board_properties::create_board_view(
+                let view = storage::board::properties::create_board_view(
                     &store,
                     i64::from(board_id),
                     name,
                     config,
                 )
                 .await?;
-                storage::board_properties::set_selected_board_view(
+                storage::board::properties::set_selected_board_view(
                     &store,
                     i64::from(board_id),
                     Some(view.id),
@@ -1213,7 +1213,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::update_board_view(&store, view_id, config).await
+                storage::board::properties::update_board_view(&store, view_id, config).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1249,7 +1249,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::set_default_board_view(&store, view_id).await
+                storage::board::properties::set_default_board_view(&store, view_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1270,7 +1270,7 @@ impl BoardView {
         let task = cx
             .global::<AppServices>()
             .spawn_store(move |store| async move {
-                storage::board_properties::delete_board_view(&store, view_id).await
+                storage::board::properties::delete_board_view(&store, view_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;

@@ -2,7 +2,7 @@ use std::{sync::Arc, sync::OnceLock, time::Duration};
 
 use chrono::Local;
 use storage::Store;
-use storage::reminders::DueReminder;
+use storage::note::reminders::DueReminder;
 use tokio::sync::Notify;
 
 use ::board::{NotificationAvailability, NotificationGateway};
@@ -101,9 +101,10 @@ pub(crate) fn show_test_notification() -> anyhow::Result<()> {
 async fn deliver_due_reminders(store: &Store) -> anyhow::Result<()> {
     let db = store.clone();
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    for reminder in storage::reminders::load_due_reminders(&db, &today).await? {
+    for reminder in storage::note::reminders::load_due_reminders(&db, &today).await? {
         show_system_notification(&reminder)?;
-        storage::reminders::mark_reminder_notified(&db, reminder.entry_id, reminder.due_on).await?;
+        storage::note::reminders::mark_reminder_notified(&db, reminder.entry_id, reminder.due_on)
+            .await?;
     }
 
     Ok(())
