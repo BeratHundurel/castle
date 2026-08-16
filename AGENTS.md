@@ -11,11 +11,6 @@ Use 'cargo clippy --fix --allow-dirty' for related files when it is applicable t
 - Don't use unwrap.
 - Don't comment obvious logic.
 
-## Code Organization
-
-- Show care about code organization and structure.
-- We should avoid having a one big crate. So when it's time to split up, do it.
-
 ## Code Quality
 
 - Avoid workarounds or hacks. Instead, find a better solution or implement the feature properly.
