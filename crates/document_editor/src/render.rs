@@ -7,7 +7,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     clipboard::Clipboard,
     h_flex,
-    input::{self, Input, InputState, RopeExt as _},
+    input::{self, Editor, EditorState, Input, RopeExt as _},
     scroll::ScrollableElement,
     text::{TextView, TextViewStyle},
     tooltip::Tooltip,
@@ -64,17 +64,16 @@ impl DocumentEditorView {
         } else {
             "DocumentSource"
         };
-        // The menu builder runs while InputState is mutably leased by its mouse handler.
+        // The menu builder runs while the editor state is mutably leased by its mouse handler.
         let has_selection = !self.editor.read(cx).selected_range().is_empty();
         let can_format = matches!(self.kind, DocumentKind::Markdown | DocumentKind::Json);
-        let input = Input::new(&self.editor)
+        let input = Editor::new(&self.editor)
             .h_full()
             .w_full()
             .p_0()
             .border_0()
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(cx.theme().mono_font_size)
-            .focus_bordered(false)
             .context_menu(move |menu, _, cx| {
                 let has_paste = cx.read_from_clipboard().is_some();
 
@@ -264,6 +263,7 @@ impl DocumentEditorView {
         let horizontal_padding = markdown_preview_horizontal_padding(preview_width);
         let mermaid_width =
             (preview_width.as_f32() - horizontal_padding.as_f32() * 2. - 32.).max(1.);
+        let mermaid_snapshots = self.mermaid.render_snapshots(mermaid_width);
         let local_image_plugin = super::attachments::LocalImagePlugin::new(
             cx.global::<AppServices>().data_dir(),
             self.persistence.current_path.as_deref(),
@@ -306,7 +306,7 @@ impl DocumentEditorView {
             .plugin(super::mermaid::MermaidPlugin::new(
                 editor_entity.clone(),
                 0,
-                mermaid_width,
+                mermaid_snapshots,
             ))
             .style(preview_style)
             .code_block_actions(|code_block, _window, _cx| {
@@ -339,7 +339,7 @@ impl DocumentEditorView {
                                 .plugin(super::mermaid::MermaidPlugin::new(
                                     editor_entity.clone(),
                                     section_offsets.get(index).copied().unwrap_or_default(),
-                                    mermaid_width,
+                                    mermaid_snapshots.clone(),
                                 ))
                                 .style(preview_style.clone())
                                 .code_block_actions(|code_block, _window, _cx| {
@@ -1279,7 +1279,7 @@ fn vim_overlay(
 }
 
 pub(super) fn vim_selection_bounds(
-    editor: &InputState,
+    editor: &EditorState,
     range: Range<usize>,
     source_bounds: Bounds<Pixels>,
 ) -> Vec<Bounds<Pixels>> {
@@ -1355,7 +1355,7 @@ fn vim_selection_tail_width(content_left: Pixels, end_x: Pixels) -> Option<Pixel
     (width > px(0.5)).then_some(width)
 }
 
-pub(super) fn vim_cursor_bounds(editor: &InputState, cursor: usize) -> Option<Bounds<Pixels>> {
+pub(super) fn vim_cursor_bounds(editor: &EditorState, cursor: usize) -> Option<Bounds<Pixels>> {
     let caret = editor.range_to_bounds(&(cursor..cursor))?;
     let line_height = editor.line_height().unwrap_or(caret.size.height);
     let character = match editor.text().char_at(cursor) {

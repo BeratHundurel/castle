@@ -202,7 +202,7 @@ mod tests {
         cx.update(|window, cx| {
             view.update(cx, |editor, cx| {
                 editor.editor.update(cx, |input, cx| {
-                    assert!(input.handle_action_for_context_menu(
+                    assert!(input.route_overlay_action(
                         Box::new(Enter {
                             secondary: false,
                             shift: false,

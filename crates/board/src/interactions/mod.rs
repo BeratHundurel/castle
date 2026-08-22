@@ -6,7 +6,7 @@ use gpui_component::{
     dialog::{
         DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
     },
-    input::Input,
+    input::{Editor, Input},
     v_flex,
 };
 

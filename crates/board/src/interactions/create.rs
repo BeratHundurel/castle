@@ -358,7 +358,7 @@ impl BoardView {
                         .gap_2()
                         .mb_3()
                         .child(Input::new(&dialog_title_input))
-                        .child(Input::new(&dialog_description_input)),
+                        .child(Editor::new(&dialog_description_input).h(gpui::rems(6.))),
                 )
                 .child(
                     DialogFooter::new()

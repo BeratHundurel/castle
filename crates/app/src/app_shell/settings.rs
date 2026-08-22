@@ -329,7 +329,7 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                                 ("hover".into(), "On hover".into()),
                                 ("always".into(), "Always".into()),
                             ],
-                            |cx: &App| scrollbar_show_key(cx.theme().scrollbar_show),
+                            |cx: &App| scrollbar_show_key(cx.theme().scrollbar_mode),
                             |value: SharedString, cx: &mut App| {
                                 AppSettings::set_scrollbar_show(value, cx);
                             },
@@ -499,7 +499,7 @@ fn setting_pages(app: gpui::Entity<AppShell>, cx: &mut App) -> Vec<SettingPage> 
                                 gpui_component::button::Button::new("settings-about-version")
                                     .label(env!("CARGO_PKG_VERSION"))
                                     .outline()
-                                    .with_size(options.size)
+                                    .with_size(options.size())
                                     .tab_stop(false),
                             )
                             .into_any_element()
@@ -553,7 +553,7 @@ fn mcp_setup_item(app: Entity<AppShell>) -> SettingItem {
                 Button::new("settings-mcp-toggle")
                     .label(label)
                     .outline()
-                    .with_size(options.size)
+                    .with_size(options.size())
                     .disabled(disabled)
                     .on_click({
                         let app = app.clone();
@@ -663,7 +663,9 @@ fn searchable_select_field(
         let selected_index = selected_index(&picker_options, &selected_value);
         let state_key = SharedString::from(format!(
             "settings-{id}-{}-{}-{}",
-            render_options.page_ix, render_options.group_ix, render_options.item_ix
+            render_options.page_ix(),
+            render_options.group_ix(),
+            render_options.item_ix()
         ));
 
         let state = window.use_keyed_state(state_key, cx, |window, cx| {
@@ -694,7 +696,7 @@ fn searchable_select_field(
 
         div().w(px(SETTINGS_PICKER_WIDTH)).max_w_full().child(
             Select::new(&select)
-                .with_size(render_options.size)
+                .with_size(render_options.size())
                 .search_placeholder(search_placeholder)
                 .menu_max_h(rems(18.))
                 .w_full(),

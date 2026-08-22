@@ -457,7 +457,68 @@ mod tests {
     use super::*;
     use migration::{Migrator, MigratorTrait as _};
     use sea_orm::Database;
-    use std::{path::PathBuf, sync::Arc};
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    #[gpui::test]
+    fn app_shell_renders_mermaid_and_board_markdown_preview(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let (db, note_id, note_title) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let seeded =
+                    storage::workspace::onboarding::seed_fresh_workspace(&db, directory.path())
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("fresh workspace should be seeded"))?;
+                Ok::<_, anyhow::Error>((db, seeded.docs_note.id, seeded.docs_note.title))
+            })
+            .expect("preview test database should initialize");
+
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            let mut settings = crate::app_settings::AppSettings::load(directory.path());
+            settings.set_first_run_note(note_id, note_title);
+            cx.set_global(settings);
+            crate::app_settings::AppSettings::set_markdown_editor_mode("preview".into(), cx);
+            cx.set_global(crate::AppServices::new(
+                Arc::new(db),
+                directory.path().to_path_buf(),
+            ));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("preview test window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let note_view =
+            shell.read_with(cx, |shell, _| shell.tabs.note_views.get(&note_id).cloned());
+        let note_view = note_view.expect("seeded note should be open");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui::size(px(1_200.), px(800.)));
+
+        let mut loaded = false;
+        for _ in 0..150 {
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let _ = window.draw(cx);
+            });
+            loaded = note_view.read_with(&cx, |editor, _| editor.kind() == DocumentKind::Markdown);
+            if loaded {
+                cx.executor().advance_clock(Duration::from_millis(200));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(loaded, "seeded Markdown note should finish loading");
+    }
 
     #[gpui::test]
     fn tab_strip_stays_before_title_bar_actions(cx: &mut gpui::TestAppContext) {

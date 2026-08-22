@@ -20,7 +20,7 @@ use gpui::{
 use gpui_component::{
     Theme,
     highlighter::Language,
-    input::{InputEvent, InputState, RopeExt as _, TabSize},
+    input::{EditorState, InputEvent, InputState, RopeExt as _, TabSize},
 };
 use std::{
     cell::Cell,
@@ -150,7 +150,7 @@ pub struct DocumentEditorView {
     note_id: u32,
     title: SharedString,
     focus_handle: FocusHandle,
-    editor: Entity<InputState>,
+    editor: Entity<EditorState>,
     kind: DocumentKind,
     mode: EditorMode,
     vim_state: VimSessionState,
@@ -186,8 +186,8 @@ impl DocumentEditorView {
         let input_completion_provider = std::rc::Rc::new(wikilink_completion_provider.clone());
 
         let editor = cx.new(|cx| {
-            let mut editor = InputState::new(window, cx)
-                .code_editor(Language::Plain)
+            let mut editor = EditorState::new(window, cx)
+                .language(Language::Plain)
                 .scroll_beyond_last_line(Some(1))
                 .line_number(line_numbers)
                 .indent_guides(false)
@@ -199,7 +199,7 @@ impl DocumentEditorView {
                 .searchable(true)
                 .placeholder("Start typing...")
                 .default_value("");
-            editor.lsp.completion_provider = Some(input_completion_provider);
+            editor.lsp_mut().completion_provider = Some(input_completion_provider);
             editor
         });
 

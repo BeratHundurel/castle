@@ -41,7 +41,7 @@ impl BoardView {
                             .child("Description"),
                     )
                     .child(
-                        Input::new(&self.entry_editing.description_input)
+                        Editor::new(&self.entry_editing.description_input)
                             .w_full()
                             .min_h(px(180.))
                             .bg(theme.secondary)

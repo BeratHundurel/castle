@@ -5,7 +5,7 @@ use std::{
 };
 
 use gpui::{App, Global, SharedString, px};
-use gpui_component::{Theme, ThemeRegistry, scroll::ScrollbarShow};
+use gpui_component::{Theme, ThemeRegistry, scroll::ScrollbarMode};
 use serde::{Deserialize, Serialize};
 
 use self::persistence::{SettingsPersistence, SettingsWriteRequest};
@@ -489,7 +489,7 @@ fn apply_radius(radius: f64, cx: &mut App) {
 }
 
 fn apply_scrollbar_show(value: &str, cx: &mut App) {
-    Theme::global_mut(cx).scrollbar_show = scrollbar_show_from_key(value);
+    Theme::global_mut(cx).scrollbar_mode = scrollbar_show_from_key(value);
 }
 
 fn apply_editor_font_family(font_family: &str, cx: &mut App) {
@@ -500,19 +500,19 @@ fn apply_editor_font_size(font_size: f64, cx: &mut App) {
     Theme::global_mut(cx).mono_font_size = px(font_size as f32);
 }
 
-pub fn scrollbar_show_key(show: ScrollbarShow) -> SharedString {
+pub fn scrollbar_show_key(show: ScrollbarMode) -> SharedString {
     match show {
-        ScrollbarShow::Scrolling => "scrolling".into(),
-        ScrollbarShow::Hover => "hover".into(),
-        ScrollbarShow::Always => "always".into(),
+        ScrollbarMode::Scrolling => "scrolling".into(),
+        ScrollbarMode::Hover => "hover".into(),
+        ScrollbarMode::Always => "always".into(),
     }
 }
 
-fn scrollbar_show_from_key(value: &str) -> ScrollbarShow {
+fn scrollbar_show_from_key(value: &str) -> ScrollbarMode {
     match value {
-        "hover" => ScrollbarShow::Hover,
-        "always" => ScrollbarShow::Always,
-        _ => ScrollbarShow::Scrolling,
+        "hover" => ScrollbarMode::Hover,
+        "always" => ScrollbarMode::Always,
+        _ => ScrollbarMode::Scrolling,
     }
 }
 

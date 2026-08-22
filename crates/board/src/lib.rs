@@ -25,7 +25,7 @@ use dto::*;
 use gpui::*;
 use gpui_component::calendar::Date;
 use gpui_component::date_picker::{DatePickerEvent, DatePickerState};
-use gpui_component::input::{InputEvent, InputState};
+use gpui_component::input::{EditorState, InputEvent, InputState};
 
 pub use notifications::{NotificationAvailability, NotificationGateway};
 
@@ -153,9 +153,9 @@ struct EntryEditingState {
     dialog: EntryDialog,
     new_list_input: Entity<InputState>,
     dialog_title_input: Entity<InputState>,
-    dialog_description_input: Entity<InputState>,
+    dialog_description_input: Entity<EditorState>,
     title_input: Entity<InputState>,
-    description_input: Entity<InputState>,
+    description_input: Entity<EditorState>,
     due_date_picker: Entity<DatePickerState>,
     new_label_input: Entity<InputState>,
     rename_label_input: Entity<InputState>,
@@ -223,26 +223,28 @@ impl BoardView {
 
         let dialog_completion_provider = entry_completion_provider.clone();
         let dialog_description_input = cx.new(|cx| {
-            let mut input = InputState::new(window, cx)
+            let mut input = EditorState::new(window, cx)
+                .language("text")
+                .line_number(false)
+                .indent_guides(false)
                 .placeholder("Card description")
-                .multi_line(true)
-                .auto_grow(3, 24)
                 .soft_wrap(true)
                 .searchable(true);
-            input.lsp.completion_provider = Some(dialog_completion_provider);
+            input.lsp_mut().completion_provider = Some(dialog_completion_provider);
             input
         });
 
         let entry_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Card title"));
 
         let entry_description_input = cx.new(|cx| {
-            let mut input = InputState::new(window, cx)
+            let mut input = EditorState::new(window, cx)
+                .language("text")
+                .line_number(false)
+                .indent_guides(false)
                 .placeholder("Card description")
-                .multi_line(true)
-                .auto_grow(4, 24)
                 .soft_wrap(true)
                 .searchable(true);
-            input.lsp.completion_provider = Some(entry_completion_provider);
+            input.lsp_mut().completion_provider = Some(entry_completion_provider);
             input
         });
         let due_date_picker = cx.new(|cx| DatePickerState::new(window, cx));

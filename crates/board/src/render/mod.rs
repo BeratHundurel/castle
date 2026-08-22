@@ -6,7 +6,7 @@ use gpui_component::{
     checkbox::Checkbox,
     date_picker::DatePicker,
     h_flex,
-    input::Input,
+    input::{Editor, Input},
     menu::DropdownMenu as _,
     notification::Notification,
     popover::Popover,

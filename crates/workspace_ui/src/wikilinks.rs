@@ -1,12 +1,12 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    Context, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _,
-    Styled as _, StyledText, Task, UnderlineStyle, Window, div, prelude::FluentBuilder as _,
+    App, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _, Styled as _,
+    StyledText, Task, UnderlineStyle, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     ActiveTheme as _,
-    input::{CompletionProvider, InputState, Rope, RopeExt as _},
+    input::{CompletionProvider, Rope, RopeExt as _},
     text::{MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node},
 };
 use lsp_types::{
@@ -90,7 +90,7 @@ impl CompletionProvider for WikiLinkCompletionProvider {
         offset: usize,
         _: lsp_types::CompletionContext,
         _: &mut Window,
-        _: &mut Context<InputState>,
+        _: &mut App,
     ) -> Task<anyhow::Result<CompletionResponse>> {
         let content = text.to_string();
         let Some((replace_range, query)) = wikilink_query_at_cursor(&content, offset) else {
@@ -132,7 +132,7 @@ impl CompletionProvider for WikiLinkCompletionProvider {
         Task::ready(Ok(CompletionResponse::Array(items)))
     }
 
-    fn is_completion_trigger(&self, _: usize, _: &str, _: &mut Context<InputState>) -> bool {
+    fn is_completion_trigger(&self, _: usize, _: &str, _: &mut App) -> bool {
         true
     }
 }

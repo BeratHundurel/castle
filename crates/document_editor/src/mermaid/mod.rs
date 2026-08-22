@@ -1,12 +1,13 @@
 use self::renderer::{MermaidTheme, is_supported_diagram, render_to_svg};
 use gpui::{
-    App, AppContext as _, ClipboardItem, Context, Entity, ImageSource, InteractiveElement as _,
-    IntoElement, ParentElement as _, ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, Window, div, img, point, px,
+    App, AppContext as _, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle,
+    ImageSource, InteractiveElement as _, IntoElement, ParentElement as _, ParsedSvg, RenderImage,
+    SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Task, Window, accesskit::Role, div, img, point,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
+    ActiveTheme as _, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     scroll::ScrollableElement as _,
@@ -87,9 +88,17 @@ struct Presentation {
     zoom: f32,
     fit_to_width: bool,
     available_width: f32,
-    scroll_handle: ScrollHandle,
     copied_generation: u64,
     zoom_generation: u64,
+    focus_handles: Option<MermaidFocusHandles>,
+}
+
+#[derive(Clone)]
+struct MermaidFocusHandles {
+    zoom_out: FocusHandle,
+    reset: FocusHandle,
+    zoom_in: FocusHandle,
+    fit: FocusHandle,
 }
 
 impl Default for Presentation {
@@ -99,10 +108,24 @@ impl Default for Presentation {
             zoom: 1.0,
             fit_to_width: false,
             available_width: 0.0,
-            scroll_handle: ScrollHandle::new(),
             copied_generation: 0,
             zoom_generation: 0,
+            focus_handles: None,
         }
+    }
+}
+
+impl Presentation {
+    fn with_focus_handles(mut self, cx: &mut Context<DocumentEditorView>) -> Self {
+        if self.focus_handles.is_none() {
+            self.focus_handles = Some(MermaidFocusHandles {
+                zoom_out: cx.focus_handle(),
+                reset: cx.focus_handle(),
+                zoom_in: cx.focus_handle(),
+                fit: cx.focus_handle(),
+            });
+        }
+        self
     }
 }
 
@@ -112,9 +135,14 @@ struct PresentationSnapshot {
     zoom: f32,
     fit_to_width: bool,
     available_width: f32,
-    scroll_handle: ScrollHandle,
     copied: bool,
+    focus_handles: Option<MermaidFocusHandles>,
 }
+
+#[derive(Clone)]
+pub(super) struct MermaidRenderSnapshots(
+    Arc<HashMap<usize, (CacheSnapshot, PresentationSnapshot)>>,
+);
 
 enum RenderRequest {
     Layout {
@@ -193,9 +221,21 @@ impl MermaidState {
                 zoom: desired_zoom,
                 fit_to_width: presentation.fit_to_width,
                 available_width,
-                scroll_handle: presentation.scroll_handle.clone(),
                 copied: presentation.copied_generation != 0,
+                focus_handles: presentation.focus_handles.clone(),
             },
+        ))
+    }
+
+    pub(super) fn render_snapshots(&self, available_width: f32) -> MermaidRenderSnapshots {
+        MermaidRenderSnapshots(Arc::new(
+            self.keys_by_occurrence
+                .keys()
+                .filter_map(|occurrence| {
+                    self.snapshot(*occurrence, available_width)
+                        .map(|snapshot| (*occurrence, snapshot))
+                })
+                .collect(),
         ))
     }
 
@@ -269,7 +309,7 @@ impl MermaidState {
 pub(super) struct MermaidPlugin {
     editor: Entity<DocumentEditorView>,
     section_offset: usize,
-    available_width: f32,
+    snapshots: MermaidRenderSnapshots,
 }
 
 #[derive(Clone)]
@@ -282,12 +322,12 @@ impl MermaidPlugin {
     pub(super) fn new(
         editor: Entity<DocumentEditorView>,
         section_offset: usize,
-        available_width: f32,
+        snapshots: MermaidRenderSnapshots,
     ) -> Self {
         Self {
             editor,
             section_offset,
-            available_width,
+            snapshots,
         }
     }
 }
@@ -350,7 +390,7 @@ impl gpui_component::text::MarkdownPlugin for MermaidPlugin {
         render_block(
             self.editor.clone(),
             block.clone(),
-            self.available_width,
+            self.snapshots.0.get(&block.occurrence).cloned(),
             window,
             cx,
         )
@@ -534,14 +574,10 @@ fn display_zoom(
 fn render_block(
     editor: Entity<DocumentEditorView>,
     block: MermaidBlock,
-    available_width: f32,
-    _window: &mut Window,
+    snapshot: Option<(CacheSnapshot, PresentationSnapshot)>,
+    window: &mut Window,
     cx: &mut App,
 ) -> gpui::AnyElement {
-    let snapshot = editor
-        .read(cx)
-        .mermaid
-        .snapshot(block.occurrence, available_width);
     let Some((cache, presentation)) = snapshot else {
         return render_source(&block.source, Some("Rendering…"), cx);
     };
@@ -551,72 +587,90 @@ fn render_block(
     } else {
         "Copy"
     };
+    let scroll_handle = window
+        .use_keyed_state(("mermaid-scroll-state", block.occurrence), cx, |_, _| {
+            ScrollHandle::new()
+        })
+        .read(cx)
+        .clone();
     let zoom_controls = (!presentation.showing_code).then(|| {
         let occurrence = block.occurrence;
         let available_width = presentation.available_width;
         h_flex()
             .gap_0p5()
-            .child(
-                Button::new(("zoom-out-mermaid", occurrence))
-                    .label("−")
-                    .tooltip("Zoom out")
-                    .ghost()
-                    .xsmall()
-                    .disabled(presentation.zoom <= MIN_ZOOM)
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_, _, cx| {
-                            editor.update(cx, |this, cx| {
-                                this.zoom_mermaid(occurrence, -ZOOM_STEP, cx)
-                            });
-                        }
-                    }),
-            )
-            .child(
-                Button::new(("reset-mermaid-zoom", occurrence))
-                    .label(format!("{}%", (presentation.zoom * 100.0).round() as u32))
-                    .tooltip("Reset to 100%")
-                    .ghost()
-                    .xsmall()
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_, _, cx| {
-                            editor.update(cx, |this, cx| this.reset_mermaid_zoom(occurrence, cx));
-                        }
-                    }),
-            )
-            .child(
-                Button::new(("zoom-in-mermaid", occurrence))
-                    .label("+")
-                    .tooltip("Zoom in")
-                    .ghost()
-                    .xsmall()
-                    .disabled(presentation.zoom >= MAX_ZOOM)
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_, _, cx| {
-                            editor.update(cx, |this, cx| {
-                                this.zoom_mermaid(occurrence, ZOOM_STEP, cx)
-                            });
-                        }
-                    }),
-            )
-            .child(
-                Button::new(("fit-mermaid-zoom", occurrence))
-                    .label("Fit")
-                    .tooltip("Fit diagram to width")
-                    .ghost()
-                    .xsmall()
-                    .selected(presentation.fit_to_width)
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_, _, cx| {
-                            editor.update(cx, |this, cx| {
-                                this.fit_mermaid_to_width(occurrence, available_width, cx)
-                            });
-                        }
-                    }),
-            )
+            .child(mermaid_zoom_control(
+                ("zoom-out-mermaid", occurrence),
+                ("−", "Zoom out"),
+                presentation.zoom > MIN_ZOOM,
+                false,
+                presentation
+                    .focus_handles
+                    .as_ref()
+                    .map(|handles| handles.zoom_out.clone()),
+                cx,
+                {
+                    let editor = editor.clone();
+                    move |_, _, cx| {
+                        editor.update(cx, |this, cx| this.zoom_mermaid(occurrence, -ZOOM_STEP, cx));
+                    }
+                },
+            ))
+            .child(mermaid_zoom_control(
+                ("reset-mermaid-zoom", occurrence),
+                (
+                    format!("{}%", (presentation.zoom * 100.0).round() as u32),
+                    "Reset to 100%",
+                ),
+                true,
+                false,
+                presentation
+                    .focus_handles
+                    .as_ref()
+                    .map(|handles| handles.reset.clone()),
+                cx,
+                {
+                    let editor = editor.clone();
+                    move |_, _, cx| {
+                        editor.update(cx, |this, cx| this.reset_mermaid_zoom(occurrence, cx));
+                    }
+                },
+            ))
+            .child(mermaid_zoom_control(
+                ("zoom-in-mermaid", occurrence),
+                ("+", "Zoom in"),
+                presentation.zoom < MAX_ZOOM,
+                false,
+                presentation
+                    .focus_handles
+                    .as_ref()
+                    .map(|handles| handles.zoom_in.clone()),
+                cx,
+                {
+                    let editor = editor.clone();
+                    move |_, _, cx| {
+                        editor.update(cx, |this, cx| this.zoom_mermaid(occurrence, ZOOM_STEP, cx));
+                    }
+                },
+            ))
+            .child(mermaid_zoom_control(
+                ("fit-mermaid-zoom", occurrence),
+                ("Fit", "Fit diagram to width"),
+                true,
+                presentation.fit_to_width,
+                presentation
+                    .focus_handles
+                    .as_ref()
+                    .map(|handles| handles.fit.clone()),
+                cx,
+                {
+                    let editor = editor.clone();
+                    move |_, _, cx| {
+                        editor.update(cx, |this, cx| {
+                            this.fit_mermaid_to_width(occurrence, available_width, cx)
+                        });
+                    }
+                },
+            ))
     });
     let header = h_flex()
         .h_9()
@@ -684,7 +738,16 @@ fn render_block(
         match cache {
             CacheSnapshot::Loading(fallback) => fallback.map_or_else(
                 || render_source(&block.source, Some("Rendering…"), cx),
-                |raster| render_image_body(editor.clone(), &block, raster, &presentation, cx),
+                |raster| {
+                    render_image_body(
+                        editor.clone(),
+                        &block,
+                        raster,
+                        &presentation,
+                        &scroll_handle,
+                        cx,
+                    )
+                },
             ),
             CacheSnapshot::Failed { message, fallback } => {
                 let error = v_flex()
@@ -708,18 +771,29 @@ fn render_block(
                             }),
                     );
                 let content = if let Some(raster) = fallback {
-                    render_image_body(editor.clone(), &block, raster, &presentation, cx)
+                    render_image_body(
+                        editor.clone(),
+                        &block,
+                        raster,
+                        &presentation,
+                        &scroll_handle,
+                        cx,
+                    )
                 } else {
                     render_source(&block.source, None, cx)
                 };
                 v_flex().child(content).child(error).into_any_element()
             }
-            CacheSnapshot::Ready { raster } => {
-                render_image_body(editor.clone(), &block, raster, &presentation, cx)
-            }
+            CacheSnapshot::Ready { raster } => render_image_body(
+                editor.clone(),
+                &block,
+                raster,
+                &presentation,
+                &scroll_handle,
+                cx,
+            ),
         }
     };
-
     v_flex()
         .id(("mermaid-diagram", block.occurrence))
         .w_full()
@@ -731,6 +805,47 @@ fn render_block(
         .overflow_hidden()
         .child(header)
         .child(body)
+        .into_any_element()
+}
+
+fn mermaid_zoom_control(
+    id: impl Into<ElementId>,
+    content: (impl Into<SharedString>, &'static str),
+    enabled: bool,
+    selected: bool,
+    focus_handle: Option<FocusHandle>,
+    cx: &App,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> gpui::AnyElement {
+    let (label, aria_label) = content;
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(aria_label)
+        .h_5()
+        .min_w_5()
+        .px_1()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded(cx.theme().radius)
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .when(selected, |this| {
+            this.bg(cx.theme().primary.opacity(0.14))
+                .text_color(cx.theme().primary)
+        })
+        .when_some(enabled.then_some(focus_handle).flatten(), |this, handle| {
+            this.track_focus(&handle.tab_stop(true))
+        })
+        .when(enabled, |this| {
+            this.cursor_pointer()
+                .hover(|style| style.bg(cx.theme().secondary.opacity(0.5)))
+                .on_click(on_click)
+        })
+        .when(!enabled, |this| this.opacity(0.4))
+        .child(label.into())
         .into_any_element()
 }
 
@@ -761,6 +876,7 @@ fn render_image_body(
     block: &MermaidBlock,
     raster: Raster,
     presentation: &PresentationSnapshot,
+    scroll_handle: &ScrollHandle,
     cx: &App,
 ) -> gpui::AnyElement {
     let display_width = raster.natural_width * presentation.zoom;
@@ -774,10 +890,10 @@ fn render_image_body(
         .relative()
         .w_full()
         .overflow_x_scroll()
-        .track_scroll(&presentation.scroll_handle)
+        .track_scroll(scroll_handle)
         .on_scroll_wheel({
             let editor = editor.clone();
-            let scroll_handle = presentation.scroll_handle.clone();
+            let scroll_handle = scroll_handle.clone();
             move |event: &ScrollWheelEvent, window, cx| {
                 if !(event.modifiers.control || event.modifiers.platform) {
                     let delta = event.delta.pixel_delta(window.line_height());
@@ -821,7 +937,7 @@ fn render_image_body(
     v_flex()
         .relative()
         .child(scroll)
-        .horizontal_scrollbar(&presentation.scroll_handle)
+        .horizontal_scrollbar(scroll_handle)
         .into_any_element()
 }
 
@@ -879,9 +995,9 @@ impl DocumentEditorView {
                         zoom: presentation.zoom,
                         fit_to_width: presentation.fit_to_width,
                         available_width: presentation.available_width,
-                        scroll_handle: presentation.scroll_handle.clone(),
                         copied_generation: 0,
                         zoom_generation: presentation.zoom_generation,
+                        focus_handles: presentation.focus_handles.clone(),
                     });
             }
         }
@@ -927,7 +1043,8 @@ impl DocumentEditorView {
             let presentation = presentation_buckets
                 .get_mut(&(descriptor.source.clone(), descriptor.scale))
                 .and_then(VecDeque::pop_front)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .with_focus_handles(cx);
             self.mermaid
                 .presentations
                 .insert(descriptor.range.start, presentation);
