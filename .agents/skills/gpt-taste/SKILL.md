@@ -5,7 +5,7 @@ description: Create expressive, premium native GPUI interfaces and purposeful mo
 
 # Expressive Native UX and Motion
 
-Create memorable native application interfaces without sacrificing clarity, keyboard access, or responsiveness. This skill applies to Rust, GPUI, and GPUI Components. Do not prescribe React, HTML, CSS, Tailwind, GSAP, browser scrolling, marketing-page frameworks, or web assets.
+Create memorable native application interfaces without sacrificing clarity, keyboard access, or responsiveness. This skill applies to Rust, GPUI, and GPUI Components.
 
 Read the `gpui` skill and relevant references before implementing framework behavior. Verify APIs in `/docs` and existing project code.
 

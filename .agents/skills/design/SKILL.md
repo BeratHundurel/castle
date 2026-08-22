@@ -1,13 +1,13 @@
 ---
-name: design-taste-frontend
-description: Design and implement distinctive native desktop interfaces for Castle using Rust, GPUI, and GPUI Components. Use for new application surfaces, interaction design, visual systems, and polished native UI work where browser, HTML, CSS, React, Tailwind, and web-page conventions do not apply.
+name: design
+description: Design and implement distinctive native desktop interfaces for Castle using Rust, GPUI, and GPUI Components. Use for new application surfaces, interaction design, visual systems, and polished native UI work.
 ---
 
 # Anti-Slop Native Application Design
 
-Design Castle as a native productivity application. Treat the window, focus system, keyboard model, persistent data, and application state as parts of the design. Do not apply landing-page, browser, DOM, responsive-web, SEO, or scroll-storytelling advice.
+Design Castle as a native productivity application. Treat the window, focus system, keyboard model, persistent data, and application state as parts of the design.
 
-Before editing GPUI code, read the `gpui` skill and the references relevant to the task. Use `/docs` as read-only reference for GPUI Components. Inspect existing application patterns before inventing an API or component.
+Before editing GPUI code, read the `gpui` skill and the references relevant to the task.
 
 ## 1. Read the product context
 
@@ -26,40 +26,17 @@ Consider:
 
 Ask one clarifying question only when two plausible interpretations would produce materially different workflows. Otherwise proceed with the strongest inference.
 
-## 2. Set three design dials
-
-Use these values to reason about the surface. Do not expose them as user settings unless requested.
-
-- `DESIGN_VARIANCE`: 1 is strictly conventional; 10 is highly expressive.
-- `MOTION_INTENSITY`: 1 is nearly static; 10 is choreographed and physical.
-- `VISUAL_DENSITY`: 1 is sparse; 10 is information-dense.
-
-Castle defaults:
-
-| Surface | Variance | Motion | Density |
-|---|---:|---:|---:|
-| Note editor | 4 | 3 | 5 |
-| Kanban board | 5 | 5 | 7 |
-| Home or overview | 6 | 4 | 5 |
-| Command palette | 3 | 4 | 8 |
-| Settings | 3 | 2 | 6 |
-| Empty or onboarding state | 7 | 4 | 3 |
-
-Raise variance for a meaningful product identity, not decoration. Raise density when comparison and scanning matter. Raise motion only when it clarifies feedback, continuity, or spatial change.
-
-## 3. Use the native foundation
+## 2. Use the native foundation
 
 - Build with Rust, GPUI, and the existing GPUI Components dependency.
 - Prefer existing project components and variants before creating a new component.
 - Prefer `h_flex()` and `v_flex()` for normal composition.
 - Use GPUI `Styled` methods and project theme tokens instead of hardcoded one-off values.
-- Use `px()`, `rems()`, `relative()`, min/max constraints, flex growth, shrink rules, and overflow deliberately.
 - Adapt composition from actual window bounds and available space. Do not copy browser breakpoint tables.
 - Use render order, parent-child composition, and absolute positioning for stacking. Do not assume a general CSS-like `z-index` API exists.
-- Verify every imported component or method in the repository, `/docs`, or the GPUI skill references. Do not hallucinate APIs.
 - Keep application state in entities and update through the appropriate context. Call `cx.notify()` when a state change requires rendering.
 
-## 4. Build a coherent visual system
+## 3. Build a coherent visual system
 
 ### Typography
 
@@ -94,7 +71,7 @@ Raise variance for a meaningful product identity, not decoration. Raise density 
 - Do not draw decorative SVGs or introduce a second icon family without a concrete gap in the current set.
 - Use illustrations or imagery only when they help onboarding, empty states, attachments, or content comprehension. Working surfaces do not require decorative hero art.
 
-## 5. Compose native application surfaces
+## 4. Compose native application surfaces
 
 ### Window shell and navigation
 
@@ -104,39 +81,7 @@ Raise variance for a meaningful product identity, not decoration. Raise density 
 - Put infrequent actions in menus, command palette entries, or contextual controls.
 - Ensure narrow windows degrade intentionally: collapse secondary labels, allow controlled scrolling, or move actions into overflow. Never let controls silently overlap or disappear.
 
-### Kanban board
-
-- Make column identity, card hierarchy, and drag targets distinct at a glance.
-- Treat dragging as a complete state machine: idle, picked up, valid target, invalid target, autoscroll edge, committed, and cancelled.
-- Keep card metadata subordinate to the task title. Show only fields useful for board-level decisions.
-- Preserve usable column width and deliberate horizontal scrolling in narrow windows.
-- Provide equivalent keyboard actions for essential card movement when feasible.
-
-### Note editor
-
-- Give content the visual priority. Keep editor chrome quiet until needed.
-- Make title, body, metadata, and save state clearly distinct without excessive boxes.
-- Preserve selection, cursor, and focus visibility in every theme.
-- Avoid layout shifts while saving, loading attachments, or showing validation.
-- Make destructive or irreversible actions explicit and recoverable where possible.
-
-### Command palette and search
-
-- Optimize for keyboard-first operation, fast scanning, and stable result rows.
-- Keep query focus reliable when the palette opens.
-- Distinguish selected, hovered, disabled, and unavailable results.
-- Show shortcuts consistently and align them as metadata, not primary content.
-- Preserve selection while asynchronous results update when the underlying item still exists.
-
-### Settings and dialogs
-
-- Group settings by user intent, not internal subsystem.
-- Keep labels close to their controls and explain only non-obvious consequences.
-- Use dialogs for focused decisions, confirmations, and short tasks. Prefer inline editing or side panels for ongoing work.
-- Focus the first safe control on open, trap focus when appropriate, and restore focus on close.
-- Default destructive confirmations to the safe action.
-
-## 6. Design every interaction state
+## 5. Design every interaction state
 
 For each interactive component, cover the states that apply:
 
@@ -157,7 +102,7 @@ Requirements:
 - Make empty states explain the next useful action without marketing copy.
 - Match skeleton/loading geometry to the final layout when a delay is perceptible.
 
-## 7. Use motion with restraint
+## 6. Use motion with restraint
 
 Native motion must communicate one of four things: feedback, spatial continuity, hierarchy, or state change.
 
@@ -169,7 +114,7 @@ Native motion must communicate one of four things: feedback, spatial continuity,
 - Use only animation APIs present in the existing GPUI stack. Do not add GSAP, web animation libraries, or browser event concepts.
 - Avoid animation that requires expensive relayout on every frame. Preserve input responsiveness first.
 
-## 8. Accessibility and native behavior
+## 7. Accessibility and native behavior
 
 - Ensure complete mouse and keyboard operation for core workflows.
 - Make Tab order follow visual and task order.
@@ -181,17 +126,13 @@ Native motion must communicate one of four things: feedback, spatial continuity,
 - Verify text and controls at different font sizes, display scales, and window sizes.
 - Use native text and components where possible so selection, input, and platform behavior remain reliable.
 
-## 9. Protect performance and entity safety
+## 8. Protect performance and entity safety
 
 - Keep render methods deterministic and cheap. Compute reusable or expensive data outside hot render paths.
-- Use virtualized or scroll-aware components for large note, search, or board collections.
 - Avoid rebuilding unrelated subtrees for high-frequency pointer or drag updates.
 - Keep subscriptions alive for the intended lifetime and avoid event loops.
-- Never await SeaORM or SQLx work directly inside `cx.spawn` or `cx.spawn_in`.
-- Run database work through the active Tokio runtime, then apply the result to GPUI entities on the foreground executor.
-- Do not move SQLx futures to GPUI's background executor.
 
-## 10. Redesign workflow
+## 9. Redesign workflow
 
 When changing an existing surface:
 
@@ -205,7 +146,7 @@ When changing an existing surface:
 
 Do not silently change persistence behavior, shortcuts, focus order, drag semantics, command names, or destructive-action guarantees as part of a visual redesign.
 
-## 11. Native anti-patterns
+## 10. Native anti-patterns
 
 Avoid these defaults unless the product context justifies them:
 
@@ -221,9 +162,8 @@ Avoid these defaults unless the product context justifies them:
 - Animation added only to make the interface feel impressive.
 - Raw RGB values where semantic theme tokens already exist.
 - Fixed dimensions that fail when the window narrows or display scale changes.
-- Web concepts such as DOM elements, HTML semantics, CSS selectors, media queries, browser breakpoints, viewport units, Tailwind classes, React hooks, SEO, or web performance metrics.
 
-## 12. Pre-flight check
+## 11. Pre-flight check
 
 Before finishing, verify:
 
