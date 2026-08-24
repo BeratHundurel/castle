@@ -142,7 +142,6 @@ When changing an existing surface:
 4. Reuse existing components and tokens before adding new primitives.
 5. Implement the complete state cycle, not only the ideal screenshot state.
 6. Verify behavior at narrow, typical, and wide window sizes in light and dark themes where supported.
-7. Run focused tests, then `cargo check` and `cargo clippy --fix --allow-dirty` when applicable.
 
 Do not silently change persistence behavior, shortcuts, focus order, drag semantics, command names, or destructive-action guarantees as part of a visual redesign.
 

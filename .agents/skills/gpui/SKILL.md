@@ -3,6 +3,19 @@ name: gpui
 description: GPUI framework knowledge covering actions/keybindings, async/background tasks, context management (App/Window/Context<T>/AsyncApp), custom elements (low-level Element trait), entity state management, event system, focus handling, global state, layout/styling (flexbox/CSS-like), and testing. Use when working with any GPUI framework concept, building GPUI applications, or needing guidance on GPUI-specific APIs and patterns.
 ---
 
+## Castle Conventions
+
+For application work, use GPUI Component's semantic controls and Actions rather than custom clickable `div`s or duplicate command mutations. A desktop command should share its implementation across toolbar, menu, context menu, and shortcut.
+
+- Give repeated or retained interactive elements stable domain-based `ElementId`s. Never derive them from mutable labels, list indexes, or render-time generation.
+- Keep `render` declarative and side-effect-free. Do not recreate retained entities, subscriptions, focus handles, or expensive data per frame. Use `RenderOnce` for value-like presentation and `Entity<T>` only when behavior must persist.
+- Use `cx.theme()` and rem-scale helpers such as `gap_2`, `p_2`, and `text_sm`; use raw colors, radii, or `px(...)` only for an intentional physical/platform boundary, measured geometry, or token definition.
+- Make focus, keyboard, disabled, overlay, and accessibility behavior explicit. Use one scroll owner per panel; allow shrinkable flex children with `min_w_0()`/`min_h_0()` and keep content insets inside that owner.
+- Represent async work with loading, success, and failure states; retain usable data while refreshing and discard results whose request or revision is stale.
+- Never block the foreground executor. Run SeaORM and SQLx work on the current Tokio runtime, not in `cx.spawn`, `cx.spawn_in`, or GPUI's background executor; apply completed results to entities on the foreground executor.
+
+For UI behavior, test the lowest proving layer: pure state or geometry tests, then GPUI context tests, then `VisualTestContext` interaction or layout tests. Cover pointer and keyboard paths, stable identity, focus, disabled behavior, and relevant empty, loading, and failure states.
+
 ## Navigation
 
 Load the relevant reference file based on the task:

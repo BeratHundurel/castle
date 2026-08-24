@@ -5,9 +5,9 @@ description: Create expressive, premium native GPUI interfaces and purposeful mo
 
 # Expressive Native UX and Motion
 
-Create memorable native application interfaces without sacrificing clarity, keyboard access, or responsiveness. This skill applies to Rust, GPUI, and GPUI Components.
+Create memorable native application interfaces without sacrificing clarity, keyboard access, or responsiveness. This skill is an enhancement layer for Rust, GPUI, and GPUI Components, not the baseline UI guide.
 
-Read the `gpui` skill and relevant references before implementing framework behavior. Verify APIs in `/docs` and existing project code.
+Read `design` for baseline native UI quality and `gpui` for framework behavior. Verify APIs in the Cargo-locked dependency source and existing project code.
 
 ## 1. Establish the interaction concept
 
@@ -35,16 +35,7 @@ Use one dominant composition and keep supporting regions quieter:
 
 Avoid defaulting to three equal cards, a permanent sidebar for every view, centered empty space, or symmetrical panels that imply equal importance when tasks are not equal.
 
-## 3. Typography and hierarchy
-
-- Keep primary workspace titles concise and normally within one or two lines.
-- Use width, weight, tone, and spacing before extreme font size.
-- Keep supporting copy subordinate to the task and remove decorative meta-labels.
-- Align counts and timestamps for scanning.
-- Make selected, dirty, overdue, failed, and disabled states distinct without shouting.
-- Preserve content width and editor readability at wide window sizes.
-
-## 4. Direct-manipulation motion
+## 3. Direct-manipulation motion
 
 Motion is valid only for feedback, spatial continuity, hierarchy, or state transition.
 
@@ -59,7 +50,7 @@ Use short, interruptible transitions. Do not make users wait for animation. Avoi
 
 Use only GPUI animation capabilities already present in the dependency graph. Verify their real signatures before use. Never add a browser animation library.
 
-## 5. Native interaction patterns
+## 4. Native interaction patterns
 
 - **Command palette:** keyboard-first search, stable result selection, action shortcuts, and clear unavailable states.
 - **Contextual toolbar:** reveal actions near selection while keeping a keyboard-accessible command path.
@@ -67,44 +58,11 @@ Use only GPUI animation capabilities already present in the dependency graph. Ve
 - **Inline disclosure:** expand metadata or editing controls in place when the task is brief and reversible.
 - **Inspector panel:** use for persistent properties that users compare while navigating content.
 - **Undo toast:** show transient confirmation for reversible actions; keep errors until resolved or dismissed.
-- **Skeleton geometry:** mirror the final shape for perceptible loading; avoid generic spinners for large content regions.
-- **Empty composition:** provide one clear next action and a restrained visual cue tied to the real workflow.
 
-## 6. Visual material
-
-- Use semantic theme tokens throughout.
-- Choose one accent and one radius logic for the surface.
-- Use cards only where containment, selection, or drag behavior needs a boundary.
-- Prefer border, tone, spacing, and overlap over heavy shadows.
-- Keep decorative textures and imagery out of high-frequency work areas.
-- Use the existing icon family with consistent sizing and optical alignment.
-- Never use emojis as interface icons.
-
-## 7. Focus and input integrity
-
-- Track focus on every keyboard-interactive region.
-- Use actions, key bindings, and key contexts for commands.
-- Make hover, pressed, focused, selected, and disabled states independently legible.
-- Do not hide essential actions until hover without another discoverable route.
-- Stop pointer-event propagation only where nested behaviors genuinely conflict.
-- Preserve focus and selection through async updates whenever the underlying item remains valid.
-
-## 8. Performance rules
-
-- Keep high-frequency drag and pointer updates local and cheap.
-- Avoid rebuilding full board or search result trees for a single hover change.
-- Virtualize large collections where an existing component supports it.
-- Keep stable `ElementId` values for stateful elements.
-- Run SeaORM and SQLx work on Tokio, never directly inside GPUI foreground tasks or on GPUI's background executor.
-
-## 9. Pre-flight
+## 5. Pre-flight
 
 - [ ] The composition reflects the primary user task.
 - [ ] Each animation has a stated functional reason.
 - [ ] Interactions remain usable with reduced motion.
-- [ ] Mouse, keyboard, focus, and drag states are complete.
-- [ ] Narrow and wide window behavior is intentional.
-- [ ] Theme tokens, spacing, iconography, and radii are coherent.
 - [ ] Transitions are interruptible and never delay the user.
-- [ ] No web-stack concepts or APIs were introduced.
-- [ ] Relevant Rust checks pass.
+- [ ] The baseline `design` and `gpui` conventions remain intact.
