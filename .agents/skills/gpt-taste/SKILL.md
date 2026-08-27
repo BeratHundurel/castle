@@ -7,7 +7,7 @@ description: Create expressive, premium native GPUI interfaces and purposeful mo
 
 Create memorable native application interfaces without sacrificing clarity, keyboard access, or responsiveness. This skill is an enhancement layer for Rust, GPUI, and GPUI Components, not the baseline UI guide.
 
-Read `design` for baseline native UI quality and `gpui` for framework behavior. Verify APIs in the Cargo-locked dependency source and existing project code.
+Read `design` for baseline native UI quality and `gpui` for framework behavior.
 
 ## 1. Establish the interaction concept
 
@@ -33,11 +33,11 @@ Use one dominant composition and keep supporting regions quieter:
 - **Progressive inspector:** advanced properties appear only for the selected item.
 - **Stacked history:** recent or recoverable items overlap or group to communicate time and reversibility.
 
-Avoid defaulting to three equal cards, a permanent sidebar for every view, centered empty space, or symmetrical panels that imply equal importance when tasks are not equal.
+Avoid compositions that create empty center space without a functional reason or give equal visual weight to regions with unequal task importance.
 
 ## 3. Direct-manipulation motion
 
-Motion is valid only for feedback, spatial continuity, hierarchy, or state transition.
+Apply `design`'s motion constraints to these direct-manipulation patterns:
 
 - **Drag lift:** distinguish the picked-up card from its origin and show the valid destination before commit.
 - **Reorder continuity:** move neighboring items predictably so the destination remains understandable.
@@ -45,10 +45,6 @@ Motion is valid only for feedback, spatial continuity, hierarchy, or state trans
 - **Selection continuity:** keep selection visually anchored while results or columns update.
 - **Save feedback:** transition between dirty, saving, saved, and failed without changing layout width.
 - **Destructive action:** favor reversible removal with a clear undo period over theatrical confirmation motion.
-
-Use short, interruptible transitions. Do not make users wait for animation. Avoid perpetual motion, ornamental parallax, cursor trails, scroll hijacking, and animation that changes layout on every frame.
-
-Use only GPUI animation capabilities already present in the dependency graph. Verify their real signatures before use. Never add a browser animation library.
 
 ## 4. Native interaction patterns
 
@@ -58,11 +54,3 @@ Use only GPUI animation capabilities already present in the dependency graph. Ve
 - **Inline disclosure:** expand metadata or editing controls in place when the task is brief and reversible.
 - **Inspector panel:** use for persistent properties that users compare while navigating content.
 - **Undo toast:** show transient confirmation for reversible actions; keep errors until resolved or dismissed.
-
-## 5. Pre-flight
-
-- [ ] The composition reflects the primary user task.
-- [ ] Each animation has a stated functional reason.
-- [ ] Interactions remain usable with reduced motion.
-- [ ] Transitions are interruptible and never delay the user.
-- [ ] The baseline `design` and `gpui` conventions remain intact.

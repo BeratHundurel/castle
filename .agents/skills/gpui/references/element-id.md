@@ -84,12 +84,16 @@ impl RenderOnce for Button {
 Button::new("save-btn").label("Save")
 Button::new("cancel-btn").label("Cancel")
 
-// Use index-based IDs in lists
-for (i, item) in items.iter().enumerate() {
-    div().id(i)  // unique within this parent
+// Use stable domain IDs in retained or reorderable lists
+for item in items {
+    div().id(item.id)
 }
 
 // Use descriptive IDs for debugging
 Input::new("search-input")
 Select::new("country-select")
 ```
+
+Numeric and index-based IDs remain valid API inputs, but use a list index only
+when identity is intentionally positional, the collection cannot reorder, and
+no retained interaction state must follow an item across renders.
