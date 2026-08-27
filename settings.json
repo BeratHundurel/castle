@@ -1,27 +1,26 @@
 {
-  "theme_name": "Tokyo Night",
+  "theme_name": "Ayu Dark",
   "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
-  "show_sidebar": false,
+  "show_sidebar": true,
+  "sidebar_width": 297.6000061035156,
   "scrollbar_show": "scrolling",
   "editor_font_family": "IBM Plex Mono",
-  "markdown_font_size": 14.0,
+  "editor_font_size": 14.0,
   "markdown_preview_font_size": 14.0,
   "markdown_editor_mode": "source",
-  "markdown_status_line_visible": false,
-  "markdown_line_numbers": false,
-  "markdown_soft_wrap": true,
-  "markdown_outline_visible": true,
+  "editor_status_line_visible": true,
+  "editor_line_numbers": false,
+  "editor_soft_wrap": true,
+  "editor_vim_mode": false,
+  "document_outline_visible": false,
   "close_to_tray": true,
   "tray_shortcut": "Ctrl+Alt+Space",
   "tab_session": {
     "tabs": [
       {
-        "kind": "note",
-        "note_id": 39,
-        "project_id": 1,
-        "title": "The Bug"
+        "kind": "chooser"
       }
     ],
     "active_tab_index": 0,
