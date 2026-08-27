@@ -3,7 +3,7 @@ use super::*;
 impl BoardView {
     pub(super) fn render_entry_description(
         &self,
-        selected_entry: Option<(&str, &BoardCardDTO)>,
+        selected_entry: Option<(&str, &BoardCardState)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -27,10 +27,10 @@ impl BoardView {
                 .and_then(|candidate| candidate.project_id)
         });
         let open_target =
-            workspace_ui::weak_navigation_handler(cx.entity().downgrade(), |_, target, cx| {
+            workspace::weak_navigation_handler(cx.entity().downgrade(), |_, target, cx| {
                 cx.emit(crate::BoardViewEvent::OpenWorkspaceTarget(target))
             });
-        let wikilink_plugin = workspace_ui::WikiLinkPreviewPlugin::new_for_workspace(
+        let wikilink_plugin = workspace::WikiLinkPreviewPlugin::new_for_workspace(
             open_target,
             source_project_id,
             self.related_notes.catalog.clone(),

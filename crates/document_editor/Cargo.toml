@@ -22,9 +22,9 @@ lol_html = "2.9"
 dprint-plugin-json = "0.22.1"
 dprint-plugin-markdown = "0.22.1"
 storage = { path = "../storage" }
-app_services = { path = "../app_services" }
-app_settings = { path = "../app_settings" }
-workspace_ui = { path = "../workspace_ui" }
+runtime = { path = "../runtime" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

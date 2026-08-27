@@ -10,10 +10,10 @@ use std::fs;
 use std::sync::Arc;
 use storage::{Store, StoreOptions};
 
-use app::{
-    AppServices, app_paths::AppPaths, app_settings::AppSettings, app_shell::AppShell, keymap,
-    system_notifications, tray,
-};
+use app::{app_paths::AppPaths, keymap, system_notifications, tray};
+use runtime::AppRuntime;
+use settings::AppSettings;
+use shell::{AppShell, ShellIntegration};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -48,11 +48,11 @@ async fn main() -> Result<()> {
         None
     };
 
-    let mut app_settings = AppSettings::load(&paths.data_dir);
-    let services = AppServices::new(store.clone(), paths.data_dir);
+    let mut settings = AppSettings::load(&paths.data_dir);
+    let app_runtime = AppRuntime::new(store.clone(), paths.data_dir);
 
     if let Some(first_run_workspace) = first_run_workspace {
-        app_settings.set_first_run_note(
+        settings.set_first_run_note(
             first_run_workspace.docs_note.id,
             first_run_workspace.docs_note.title,
         );
@@ -68,9 +68,9 @@ async fn main() -> Result<()> {
         init_http_client(cx);
         init_themes(cx);
 
-        app_settings.apply_to_theme(cx);
-        cx.set_global(app_settings.clone());
-        cx.set_global(services);
+        settings.apply_to_theme(cx);
+        cx.set_global(settings.clone());
+        cx.set_global(app_runtime);
         system_notifications::install_board_gateway(cx);
 
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
@@ -82,7 +82,12 @@ async fn main() -> Result<()> {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = AppShell::view(window, cx);
+                    let integration = ShellIntegration::new(
+                        app::tray::update_shortcut,
+                        |cx| app::keymap::shortcuts(cx).to_vec(),
+                        Arc::new(app::mcp_registration::McpAgentAccess),
+                    );
+                    let view = AppShell::view(window, integration, cx);
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )

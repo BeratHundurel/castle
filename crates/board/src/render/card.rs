@@ -19,22 +19,25 @@ fn accepts_list_header_drop(value: &dyn std::any::Any) -> bool {
 impl BoardView {
     pub(super) fn render_card(
         &self,
-        card: &crate::dto::BoardListDTO,
+        card: &crate::model::BoardListState,
         board_id: u32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
+
         let card_id = card.id;
         let card_drag_info =
             CardDragInfo::new(card_id, board_id, card.title.clone(), card.entries.len());
         let cards_are_filterable =
             self.filters.is_active() || self.properties.active_view_config.sort.is_some();
+
         let mut entries = Vec::new();
         let mut matching_entries = card
             .entries
             .iter()
             .filter(|entry| self.entry_matches_filters(entry))
             .collect::<Vec<_>>();
+
         if self.properties.active_view_config.sort.is_some() {
             matching_entries
                 .sort_by(|left, right| self.compare_entries_for_active_sort(left, right));
@@ -52,9 +55,9 @@ impl BoardView {
         v_flex()
             .id(card.id as usize)
             .w_80()
-            .min_w_auto()
-            .max_h_3_4()
+            .min_w_80()
             .h_auto()
+            .max_h_3_4()
             .gap_2()
             .p_2()
             .bg(theme.secondary)
@@ -100,7 +103,7 @@ impl BoardView {
 
     pub(super) fn render_card_header(
         &self,
-        card: &crate::dto::BoardListDTO,
+        card: &crate::model::BoardListState,
         card_drag_info: CardDragInfo,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -108,7 +111,7 @@ impl BoardView {
         let card_id = card.id;
 
         h_flex()
-            .id("card-list-title")
+            .id(format!("card-list-title-{}", card_id))
             .p_1()
             .justify_between()
             .font_weight(FontWeight::MEDIUM)
@@ -237,7 +240,7 @@ impl BoardView {
 
     pub(super) fn render_entry_card(
         &self,
-        entry: &BoardCardDTO,
+        entry: &BoardCardState,
         board_id: u32,
         card_id: u32,
         drag_enabled: bool,
@@ -370,8 +373,9 @@ impl BoardView {
 
         h_flex()
             .id("add-list-button")
-            .gap_2()
             .w_80()
+            .min_w_80()
+            .gap_2()
             .p_2()
             .bg(theme.info.opacity(0.12))
             .text_color(theme.info)
@@ -460,7 +464,7 @@ impl BoardView {
 mod tests {
     use super::{accepts_entry_card_drop, accepts_list_header_drop};
     use gpui_component::IconName;
-    use workspace_ui::{WorkspaceDragInfo, WorkspaceDragKind};
+    use workspace::{WorkspaceDragInfo, WorkspaceDragKind};
 
     fn workspace_drag(kind: WorkspaceDragKind) -> WorkspaceDragInfo {
         WorkspaceDragInfo::new(

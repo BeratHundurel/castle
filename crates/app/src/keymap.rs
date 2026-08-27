@@ -1,29 +1,23 @@
-use gpui::{App, AsKeystroke as _, Global, KeyBinding, Keystroke, SharedString};
+use gpui::{App, AsKeystroke as _, Global, KeyBinding, SharedString};
+use settings::ShortcutReference;
 
-use crate::app_shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
-use crate::command_palette::{
+use command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
-use crate::document_editor::action::{
+use document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
     MarkdownFormat, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious,
     OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
     ToggleDocumentPreview, VimKey, VimKeyAction,
 };
-
-#[derive(Clone)]
-pub(crate) struct ShortcutReference {
-    pub(crate) action: SharedString,
-    pub(crate) context: SharedString,
-    pub(crate) keystrokes: Vec<Keystroke>,
-}
+use shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 
 struct ShortcutRegistry(Vec<ShortcutReference>);
 
 impl Global for ShortcutRegistry {}
 
-pub(crate) fn shortcuts(cx: &App) -> &[ShortcutReference] {
+pub fn shortcuts(cx: &App) -> &[ShortcutReference] {
     &cx.global::<ShortcutRegistry>().0
 }
 

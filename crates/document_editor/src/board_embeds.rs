@@ -17,7 +17,7 @@ use gpui_component::{
     v_flex,
 };
 
-use app_services::AppServices;
+use runtime::AppRuntime;
 
 use super::DocumentEditorView;
 
@@ -179,7 +179,7 @@ fn render_projection(
                             .on_click(move |_, _, cx| {
                                 editor.update(cx, |_, cx| {
                                     cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(
-                                        workspace_ui::WorkspaceNavigationTarget::board(board_id),
+                                        workspace::WorkspaceNavigationTarget::board(board_id),
                                     ));
                                 });
                             }),
@@ -253,7 +253,7 @@ fn render_projection(
                                             {
                                                 editor.update(cx, |_, cx| {
                                             cx.emit(super::DocumentEditorEvent::OpenWorkspaceTarget(
-                                                workspace_ui::WorkspaceNavigationTarget::card(
+                                                workspace::WorkspaceNavigationTarget::card(
                                                     board_id, card_id,
                                                 ),
                                             ));
@@ -442,8 +442,8 @@ impl DocumentEditorView {
         );
         self.embeds.loading_keys = keys.clone();
         let generation = self.embeds.request.begin();
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let db = cx.global::<AppRuntime>().store();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {

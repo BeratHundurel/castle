@@ -1,0 +1,22 @@
+[package]
+name = "workspace"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[features]
+default = []
+test-support = []
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+anyhow.workspace = true
+lsp-types.workspace = true
+storage = { path = "../storage" }
+runtime = { path = "../runtime" }
+settings = { path = "../settings" }
+serde.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

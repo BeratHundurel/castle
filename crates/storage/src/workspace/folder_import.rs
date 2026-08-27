@@ -10,7 +10,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
 };
 
-const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+pub(super) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DOCUMENTS: usize = 5_000;
 
@@ -59,7 +59,7 @@ pub struct FolderImportResult {
     pub created_project: bool,
 }
 
-fn has_supported_extension(path: &Path) -> bool {
+pub(super) fn has_supported_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {

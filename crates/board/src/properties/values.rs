@@ -19,7 +19,7 @@ impl BoardView {
         self.properties.update_revisions.insert(key, revision);
         let persisted_revisions = self.properties.persisted_revisions.clone();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 let mut persisted_revisions = persisted_revisions.lock().await;
                 if persisted_revisions

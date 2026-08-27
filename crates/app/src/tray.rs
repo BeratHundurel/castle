@@ -9,7 +9,7 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem},
 };
 
-use crate::app_settings::AppSettings;
+use settings::AppSettings;
 
 struct TrayController {
     window: AnyWindowHandle,
@@ -82,7 +82,7 @@ pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn update_shortcut(shortcut: &str, cx: &mut App) {
+pub fn update_shortcut(shortcut: &str, cx: &mut App) {
     let Ok(new_hotkey) = shortcut.parse::<HotKey>() else {
         return;
     };

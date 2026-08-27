@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
-use super::types::EditorMode;
+use super::document_state::EditorMode;
 use super::{DocumentEditorView, DocumentKind};
 
 impl DocumentEditorView {

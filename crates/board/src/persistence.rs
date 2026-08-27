@@ -1,9 +1,9 @@
 use gpui::{Context, SharedString};
 use std::{future::Future, sync::Arc};
 
-use app_services::AppServices;
+use runtime::AppRuntime;
 
-use super::{BoardView, BoardViewEvent, dto::*};
+use super::{BoardView, BoardViewEvent, model::*};
 
 impl BoardView {
     pub(crate) fn emit_data_committed(&self, cx: &mut Context<Self>, links_changed: bool) {
@@ -28,7 +28,7 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let task = cx.global::<AppServices>().spawn_store(mutation);
+        let task = cx.global::<AppRuntime>().spawn_store(mutation);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -87,11 +87,11 @@ impl BoardView {
         let generation = self.mutation.load_request.begin();
         self.mutation.loaded_generation = None;
         let local_mutation_generation = self.mutation.local_generation;
-        let app_db = cx.global::<AppServices>();
+        let app_db = cx.global::<AppRuntime>();
         let store = app_db.store();
         let db = store.clone();
         let board_layout_persistence = cx.global::<super::BoardServices>().layout_persistence();
-        let runtime = app_db.runtime();
+        let runtime = app_db.tokio_handle();
 
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -250,17 +250,17 @@ impl BoardView {
 pub(super) async fn load_board_data(
     store: impl Into<storage::Store>,
     board_id: u32,
-) -> anyhow::Result<(Vec<BoardListDTO>, Vec<BoardLabelDTO>)> {
+) -> anyhow::Result<(Vec<BoardListState>, Vec<BoardLabel>)> {
     let store = store.into();
     let db = store.clone();
     let snapshot = storage::board::load_board_snapshot(&db, board_id).await?;
     Ok((
-        snapshot.cards.into_iter().map(BoardListDTO::from).collect(),
         snapshot
-            .labels
+            .cards
             .into_iter()
-            .map(BoardLabelDTO::from)
+            .map(BoardListState::from)
             .collect(),
+        snapshot.labels.into_iter().map(BoardLabel::from).collect(),
     ))
 }
 
@@ -268,13 +268,13 @@ pub(super) async fn load_board_data(
 mod tests {
     use super::load_board_data;
     use anyhow::Result;
-    use app_services::AppServices;
     use entity::{
         board, board::Entity as Board, board_label, board_label::Entity as BoardLabel, card,
         card::Entity as Card, entry, entry::Entity as Entry, entry_attachment,
         entry_checklist_item, entry_label, entry_label::Entity as EntryLabel,
     };
     use migration::{Migrator, MigratorTrait};
+    use runtime::AppRuntime;
     use sea_orm::{
         ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
         DbBackend, EntityTrait, QueryFilter, Statement,
@@ -440,7 +440,7 @@ mod tests {
             })
             .expect("board restore setup should succeed");
 
-        let db = AppServices::new(Arc::new(db), PathBuf::new());
+        let db = AppRuntime::new(Arc::new(db), PathBuf::new());
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
@@ -520,7 +520,7 @@ mod tests {
             })
             .expect("board move race setup should succeed");
 
-        let app_db = AppServices::new(db.clone(), PathBuf::new());
+        let app_db = AppRuntime::new(db.clone(), PathBuf::new());
         let board_services = crate::BoardServices::new(runtime.handle().clone());
         let position_persistence = board_services.layout_persistence();
         let window = cx.update(|cx| {
@@ -860,7 +860,7 @@ mod tests {
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
-            cx.set_global(AppServices::new(db, PathBuf::new()));
+            cx.set_global(AppRuntime::new(db, PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
                 view.update(cx, |board, cx| board.load_board(board_id, cx));

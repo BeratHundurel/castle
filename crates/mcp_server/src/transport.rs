@@ -31,7 +31,7 @@ pub(crate) struct EmptyInput {}
 
 #[cfg(test)]
 mod tests {
-    use workspace_api::{BoardPropertyValueDetail, CreateEntryInput, ProjectSummary};
+    use storage::workspace::api::{BoardPropertyValueDetail, CreateEntryInput, ProjectSummary};
 
     use super::*;
 

@@ -23,7 +23,7 @@ impl BoardView {
                     kind: storage::workspace::trash::TrashItemKind::Entry,
                     id: entry_id,
                 },
-                app_services::now_ts(),
+                storage::time::unix_timestamp_seconds(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())
@@ -108,7 +108,7 @@ impl BoardView {
                     kind: storage::workspace::trash::TrashItemKind::List,
                     id: card_id,
                 },
-                app_services::now_ts(),
+                storage::time::unix_timestamp_seconds(),
             )
             .await?;
             Ok::<(), anyhow::Error>(())

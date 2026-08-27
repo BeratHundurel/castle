@@ -14,7 +14,7 @@ impl BoardView {
             .map(|property| OPTION_COLORS[property.options.len() % OPTION_COLORS.len()].to_string())
             .unwrap_or_else(|| "blue".to_string());
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::create_property_option(&store, property_id, name, color)
                     .await
@@ -81,7 +81,7 @@ impl BoardView {
             return;
         };
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::rename_property_option(&store, option_id, name).await
             });
@@ -133,7 +133,7 @@ impl BoardView {
             .unwrap_or(0);
         let color = OPTION_COLORS[(index + 1) % OPTION_COLORS.len()].to_string();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::update_property_option_color(&store, option_id, color)
                     .await
@@ -197,7 +197,7 @@ impl BoardView {
             .map(|option| option.id)
             .collect::<Vec<_>>();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::reorder_property_options(
                     &store,
@@ -288,7 +288,7 @@ impl BoardView {
 
     fn delete_property_option(&mut self, option_id: i64, cx: &mut Context<Self>) {
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::delete_property_option(&store, option_id).await
             });

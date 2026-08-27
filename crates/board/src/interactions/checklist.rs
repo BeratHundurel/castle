@@ -31,7 +31,7 @@ impl BoardView {
         self.entry_editing.next_checklist_item_position = position.saturating_add(1);
 
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::create_checklist_item(&store, entry_id, title, position)
                     .await
@@ -49,7 +49,7 @@ impl BoardView {
                     else {
                         return;
                     };
-                    entry.checklist_items.push(ChecklistItemDTO::from(inserted));
+                    entry.checklist_items.push(ChecklistItem::from(inserted));
                     this.mutation.mutation_error = None;
                     this.emit_data_committed(cx, false);
                     cx.notify();

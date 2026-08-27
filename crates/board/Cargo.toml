@@ -13,8 +13,8 @@ serde.workspace = true
 image.workspace = true
 chrono.workspace = true
 storage = { path = "../storage" }
-app_services = { path = "../app_services" }
-workspace_ui = { path = "../workspace_ui" }
+runtime = { path = "../runtime" }
+workspace = { path = "../workspace" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

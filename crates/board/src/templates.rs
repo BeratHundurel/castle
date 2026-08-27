@@ -11,7 +11,7 @@ use gpui_component::{
 };
 
 use super::BoardView;
-use app_services::AppServices;
+use runtime::AppRuntime;
 
 impl BoardView {
     pub(super) fn show_save_template_dialog(
@@ -47,14 +47,14 @@ impl BoardView {
                             return false;
                         }
 
-                        let task =
-                            cx.global::<AppServices>()
-                                .spawn_store(move |store| async move {
-                                    storage::board::templates::save_board_as_template(
-                                        &store, board_id, name,
-                                    )
-                                    .await
-                                });
+                        let task = cx
+                            .global::<AppRuntime>()
+                            .spawn_store(move |store| async move {
+                                storage::board::templates::save_board_as_template(
+                                    &store, board_id, name,
+                                )
+                                .await
+                            });
                         board_view.update(cx, |_, cx| {
                             cx.spawn_in(window, async move |_, window| {
                                 let result = task.await;

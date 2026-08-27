@@ -16,14 +16,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub mod contracts;
+pub mod file_import;
 pub mod folder_import;
 pub mod home;
 pub mod links;
 pub mod onboarding;
 mod operations;
-mod properties;
 pub mod search;
 pub mod trash;
+
+pub use contracts as api;
 
 static WORKSPACE_LOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 

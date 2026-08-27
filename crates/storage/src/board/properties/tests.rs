@@ -136,6 +136,26 @@ async fn saved_view_crud_preserves_one_default() -> Result<()> {
 }
 
 #[tokio::test]
+async fn non_default_saved_view_can_be_deleted() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let (board, _) = board_with_entry(&db, "Views").await?;
+    let default_view =
+        create_board_view(&db, board.id, "Default".into(), Default::default()).await?;
+    let removable_view =
+        create_board_view(&db, board.id, "Overdue".into(), Default::default()).await?;
+    set_default_board_view(&db, default_view.id).await?;
+
+    delete_board_view(&db, removable_view.id).await?;
+
+    let views = load_board_views(&db, board.id).await?;
+    assert_eq!(views.views.len(), 1);
+    assert_eq!(views.views[0].id, default_view.id);
+    assert!(views.views[0].is_default);
+    Ok(())
+}
+
+#[tokio::test]
 async fn selected_board_view_is_restored_independently_from_default() -> Result<()> {
     let db = Database::connect("sqlite::memory:").await?;
     Migrator::up(&db, None).await?;

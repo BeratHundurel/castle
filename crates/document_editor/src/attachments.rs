@@ -13,7 +13,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use app_services::AppServices;
+use runtime::AppRuntime;
 
 use super::{DocumentEditorView, DocumentKind};
 
@@ -161,7 +161,7 @@ impl DocumentEditorView {
         cx.stop_propagation();
 
         let attachment_dir = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .data_dir()
             .join("attachments")
             .join(self.note_id.to_string());

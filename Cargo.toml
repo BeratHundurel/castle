@@ -1,12 +1,13 @@
 [workspace]
 members = [
     "crates/app",
-    "crates/app_services",
-    "crates/app_settings",
+    "crates/runtime",
+    "crates/settings",
+    "crates/shell",
     "crates/board",
+    "crates/command_palette",
     "crates/document_editor",
-    "crates/workspace_ui",
-    "crates/workspace_api",
+    "crates/workspace",
     "crates/storage",
     "crates/test_support",
     "crates/migration",

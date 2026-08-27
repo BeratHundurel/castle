@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use settings::{AgentAccess, AgentAccessAvailability};
 use toml_edit::{DocumentMut, Item, Table, value};
 
 const MCP_SERVER_NAME: &str = "castle";
@@ -16,6 +17,36 @@ pub enum RegistrationStatus {
     Enabled,
     Available,
     ServerUnavailable,
+}
+
+pub struct McpAgentAccess;
+
+impl AgentAccess for McpAgentAccess {
+    fn status(&self) -> std::result::Result<AgentAccessAvailability, String> {
+        status()
+            .map(agent_access_availability)
+            .map_err(|error| error.to_string())
+    }
+
+    fn set_enabled(&self, enabled: bool) -> std::result::Result<AgentAccessAvailability, String> {
+        let result = if enabled {
+            register_installed()
+        } else {
+            unregister()
+        };
+        result
+            .and_then(|()| status())
+            .map(agent_access_availability)
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn agent_access_availability(status: RegistrationStatus) -> AgentAccessAvailability {
+    match status {
+        RegistrationStatus::Enabled => AgentAccessAvailability::Enabled,
+        RegistrationStatus::Available => AgentAccessAvailability::Available,
+        RegistrationStatus::ServerUnavailable => AgentAccessAvailability::ServerUnavailable,
+    }
 }
 
 pub fn register_installed() -> Result<()> {

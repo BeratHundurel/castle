@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use app_services::AppServices;
 use gpui::{Context, Task};
+use runtime::AppRuntime;
 
-pub use workspace_ui::{
+pub use workspace::{
     WikiLinkCompletionProvider, WikiLinkPreviewPlugin, workspace_navigation_target,
 };
 
@@ -15,7 +15,7 @@ impl DocumentEditorView {
         generation: u64,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         Self::load_note_links_with_runtime(note_id, generation, runtime, cx)
     }
 
@@ -25,7 +25,7 @@ impl DocumentEditorView {
         runtime: tokio::runtime::Handle,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppServices>().store();
+        let db = cx.global::<AppRuntime>().store();
         cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let load = runtime.spawn(async move {
@@ -93,7 +93,7 @@ impl DocumentEditorView {
     }
 
     pub fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         self.refresh_note_links_with_runtime(runtime, cx);
     }
 
@@ -123,12 +123,12 @@ impl DocumentEditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_settings::AppSettings;
     use entity::note;
     use gpui::{AppContext as _, EntityInputHandler as _};
     use gpui_component::input::{Enter, Position};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use settings::AppSettings;
     use std::{path::PathBuf, sync::Arc};
 
     #[gpui::test]
@@ -168,7 +168,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
-            cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(source_id, window, cx);
                 editor_view = Some(view.clone());

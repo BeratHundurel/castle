@@ -35,14 +35,14 @@ impl BoardView {
         let title = trimmed_title.to_string();
         let description = description.to_string();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::update_board_card(
                     &store,
                     entry_id,
                     title,
                     description,
-                    app_services::now_ts(),
+                    storage::time::unix_timestamp_seconds(),
                 )
                 .await
             });

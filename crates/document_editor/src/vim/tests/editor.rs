@@ -1,10 +1,10 @@
 use super::super::*;
-use app_services::AppServices;
-use app_settings::AppSettings;
 use entity::note;
 use gpui_component::input::InputEvent;
 use migration::{Migrator, MigratorTrait};
+use runtime::AppRuntime;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+use settings::AppSettings;
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
 
 fn with_vim_editor(
@@ -47,7 +47,7 @@ fn with_vim_editor(
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
         cx.bind_keys(crate::action::vim_key_bindings());
-        cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
+        cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);
             editor_view = Some(view.clone());
@@ -594,7 +594,7 @@ fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::T
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
         cx.bind_keys(crate::action::vim_key_bindings());
-        cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
+        cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);
             editor_view = Some(view.clone());
@@ -804,8 +804,8 @@ fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::T
             .analysis
             .source_bounds
             .expect("source bounds should be available after drawing");
-        let selection = crate::render::vim_selection_bounds(input, range, source_bounds);
-        let cursor = crate::render::vim_cursor_bounds(input, input.cursor())
+        let selection = crate::view::vim_selection_bounds(input, range, source_bounds);
+        let cursor = crate::view::vim_cursor_bounds(input, input.cursor())
             .expect("Visual cursor should have bounds");
         assert_eq!(selection.len(), 1);
         assert!(selection[0].size.width > cursor.size.width * 4.);

@@ -1,8 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use anyhow::Result;
-use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
-use workspace_api::{
+use crate::workspace::api::{
     AddChecklistItemInput, BoardPropertyDefinitionDetail, BoardPropertyOptionDetail, BoardSummary,
     ChecklistItemDetail, ClearEntryPropertyInput, CreateBoardInput, CreateBoardLabelInput,
     CreateBoardPropertyInput, CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput,
@@ -12,6 +10,8 @@ use workspace_api::{
     SetEntryLabelInput, SetEntryPropertyInput, SetEntryReminderInput, UpdateChecklistItemInput,
     UpdateEntryInput, UpdateNoteInput,
 };
+use anyhow::Result;
+use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 
 use crate::store::Store;
 

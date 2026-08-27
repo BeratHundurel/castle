@@ -1,0 +1,23 @@
+[package]
+name = "command_palette"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+serde.workspace = true
+storage = { path = "../storage" }
+runtime = { path = "../runtime" }
+settings = { path = "../settings" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tokio.workspace = true
+tempfile = "3.23"
+sea-orm.workspace = true
+migration = { path = "../migration" }
+entity = { path = "../entity" }
+test_support = { path = "../test_support" }
+storage = { path = "../storage", features = ["test-support"] }

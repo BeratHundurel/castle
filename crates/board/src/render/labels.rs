@@ -3,7 +3,7 @@ use super::*;
 impl BoardView {
     pub(super) fn render_entry_labels(
         &self,
-        selected_entry: Option<(&str, &BoardCardDTO)>,
+        selected_entry: Option<(&str, &BoardCardState)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry_id = selected_entry.map(|(_, entry)| entry.id);
@@ -52,61 +52,46 @@ impl BoardView {
 
         if self.entry_editing.dialog.managing_labels {
             return v_flex()
-                .min_h(px(132.))
-                .p_3()
                 .gap_3()
-                .rounded(cx.theme().radius)
-                .border_1()
-                .border_color(cx.theme().border.opacity(0.4))
-                .bg(cx.theme().secondary.opacity(0.1))
                 .child(header)
                 .child(self.render_label_manager(entry_id, cx));
         }
 
-        v_flex()
-            .min_h(px(132.))
-            .p_3()
-            .gap_3()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border.opacity(0.4))
-            .bg(cx.theme().secondary.opacity(0.1))
-            .child(header)
-            .when_else(
-                assigned_label_count > 0,
-                |this| {
-                    this.child(
-                        h_flex().gap_2().flex_wrap().children(
-                            selected_entry
-                                .into_iter()
-                                .flat_map(|(_, entry)| entry.labels.iter())
-                                .map(|label| self.render_label_chip(label, cx)),
+        v_flex().gap_3().child(header).when_else(
+            assigned_label_count > 0,
+            |this| {
+                this.child(
+                    h_flex().gap_2().flex_wrap().children(
+                        selected_entry
+                            .into_iter()
+                            .flat_map(|(_, entry)| entry.labels.iter())
+                            .map(|label| self.render_label_chip(label, cx)),
+                    ),
+                )
+            },
+            |this| {
+                this.child(
+                    v_flex()
+                        .gap_1()
+                        .min_h(px(52.))
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(cx.theme().popover_foreground)
+                                .child("No labels yet"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .line_height(relative(1.35))
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Add labels to scan this card faster."),
                         ),
-                    )
-                },
-                |this| {
-                    this.child(
-                        v_flex()
-                            .gap_1()
-                            .min_h(px(52.))
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(cx.theme().popover_foreground)
-                                    .child("No labels yet"),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .line_height(relative(1.35))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Add labels to scan this card faster."),
-                            ),
-                    )
-                },
-            )
+                )
+            },
+        )
     }
 
     pub(super) fn render_label_manager(

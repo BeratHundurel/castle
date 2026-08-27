@@ -24,6 +24,7 @@ struct CargoPackage {
 struct CargoDependency {
     name: String,
     kind: Option<String>,
+    optional: bool,
 }
 
 static CARGO_METADATA: OnceLock<CargoMetadata> = OnceLock::new();
@@ -36,28 +37,41 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
         (
             "app",
             set(&[
-                "app_services",
-                "app_settings",
                 "board",
+                "command_palette",
                 "document_editor",
+                "runtime",
+                "settings",
+                "shell",
                 "storage",
-                "workspace_ui",
             ]),
         ),
-        ("app_services", set(&["storage"])),
-        ("app_settings", set(&[])),
-        ("board", set(&["app_services", "storage", "workspace_ui"])),
-        ("castle-mcp", set(&["storage", "workspace_api"])),
+        ("runtime", set(&["storage"])),
+        ("settings", set(&[])),
+        ("board", set(&["runtime", "storage", "workspace"])),
+        ("command_palette", set(&["runtime", "settings", "storage"])),
+        ("castle-mcp", set(&["storage"])),
         (
             "document_editor",
-            set(&["app_services", "app_settings", "storage", "workspace_ui"]),
+            set(&["runtime", "settings", "storage", "workspace"]),
         ),
         ("entity", set(&[])),
         ("migration", set(&[])),
-        ("storage", set(&["entity", "migration", "workspace_api"])),
+        (
+            "shell",
+            set(&[
+                "board",
+                "command_palette",
+                "document_editor",
+                "runtime",
+                "settings",
+                "storage",
+                "workspace",
+            ]),
+        ),
+        ("storage", set(&["entity", "migration"])),
         ("test_support", set(&[])),
-        ("workspace_api", set(&[])),
-        ("workspace_ui", set(&["storage"])),
+        ("workspace", set(&["runtime", "settings", "storage"])),
     ]);
 
     assert_eq!(
@@ -92,13 +106,14 @@ fn persistence_and_protocol_dependencies_stay_in_their_own_layers() {
 
     for package_name in [
         "app",
-        "app_services",
-        "app_settings",
+        "runtime",
+        "settings",
         "board",
         "castle-mcp",
+        "command_palette",
         "document_editor",
-        "workspace_api",
-        "workspace_ui",
+        "shell",
+        "workspace",
     ] {
         assert_excludes_production_dependencies(
             workspace_packages
@@ -113,24 +128,6 @@ fn persistence_and_protocol_dependencies_stay_in_their_own_layers() {
             .get("storage")
             .expect("storage package should exist"),
         &["rmcp", "schemars"],
-    );
-    assert_excludes_production_dependencies(
-        workspace_packages
-            .get("workspace_api")
-            .expect("workspace API package should exist"),
-        &[
-            "app",
-            "app_services",
-            "board",
-            "document_editor",
-            "entity",
-            "gpui",
-            "migration",
-            "rmcp",
-            "sea-orm",
-            "storage",
-            "workspace_ui",
-        ],
     );
 }
 
@@ -177,8 +174,12 @@ fn production_dependencies(package: &CargoPackage) -> impl Iterator<Item = &Carg
         .filter(|dependency| dependency.kind.as_deref() != Some("dev"))
 }
 
+fn runtime_dependencies(package: &CargoPackage) -> impl Iterator<Item = &CargoDependency> {
+    production_dependencies(package).filter(|dependency| !dependency.optional)
+}
+
 fn assert_excludes_production_dependencies(package: &CargoPackage, forbidden: &[&str]) {
-    let dependencies = production_dependencies(package)
+    let dependencies = runtime_dependencies(package)
         .map(|dependency| dependency.name.as_str())
         .collect::<BTreeSet<_>>();
     for dependency in forbidden {

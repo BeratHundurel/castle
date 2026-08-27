@@ -110,7 +110,7 @@ impl BoardView {
             return;
         };
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::set_selected_board_view(
                     &store,
@@ -165,7 +165,7 @@ impl BoardView {
             return;
         };
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::rename_board_view(&store, view_id, name).await
             });
@@ -213,7 +213,7 @@ impl BoardView {
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 let view = storage::board::properties::create_board_view(
                     &store,
@@ -264,7 +264,7 @@ impl BoardView {
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::update_board_view(&store, view_id, config).await
             });
@@ -300,7 +300,7 @@ impl BoardView {
 
     pub(crate) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::set_default_board_view(&store, view_id).await
             });
@@ -321,23 +321,33 @@ impl BoardView {
 
     pub(crate) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::properties::delete_board_view(&store, view_id).await
             });
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| {
-                if matches!(result, Ok(Ok(()))) {
+            this.update(cx, |this, cx| match result {
+                Ok(Ok(())) => {
                     this.properties
                         .saved_views
                         .retain(|view| view.id != view_id);
+                    this.properties.update_error = None;
                     this.emit_data_committed(cx, false);
                     if this.properties.active_view_id == Some(view_id) {
                         this.select_saved_view(None, cx);
                     } else {
                         cx.notify();
                     }
+                }
+                Ok(Err(error)) => {
+                    this.properties.update_error =
+                        Some(format!("Could not delete view: {error}").into());
+                    cx.notify();
+                }
+                Err(error) => {
+                    this.set_property_task_error(error, cx);
+                    cx.notify();
                 }
             })
             .ok();

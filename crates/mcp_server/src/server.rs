@@ -2,8 +2,7 @@ use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     tool, tool_router,
 };
-use storage::{MutationOrigin, Store};
-use workspace_api::{
+use storage::workspace::api::{
     AddChecklistItemInput, BoardDetail, BoardInput, BoardPropertiesDetail,
     BoardPropertyDefinitionDetail, BoardPropertyOptionDetail, BoardSummary, ChecklistItemDetail,
     ClearEntryPropertyInput, CreateBoardInput, CreateBoardLabelInput, CreateBoardPropertyInput,
@@ -15,6 +14,7 @@ use workspace_api::{
     SearchNotesInput, SetEntryLabelInput, SetEntryPropertyInput, SetEntryReminderInput,
     UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkspaceRelationsInput,
 };
+use storage::{MutationOrigin, Store};
 
 use crate::transport::{EmptyInput, ToolResponse};
 

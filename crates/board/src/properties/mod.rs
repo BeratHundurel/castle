@@ -1,23 +1,34 @@
 use chrono::NaiveDate;
-use gpui::{Context, Styled, Window};
+use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
-    ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, calendar::Date,
+    ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, WindowExt as _,
+    button::{Button, ButtonVariant, ButtonVariants},
+    calendar::Date,
+    checkbox::Checkbox,
+    date_picker::DatePicker,
     dialog::DialogButtonProps,
+    h_flex,
+    input::Input,
+    menu::DropdownMenu as _,
+    popover::Popover,
+    scroll::ScrollableElement as _,
+    v_flex,
 };
 use storage::board::properties::{
     BoardViewConfig, FilterOperand, FilterOperator, PropertyKey, PropertyKind, PropertyValue,
     SortDirection, ViewFilter, ViewSort,
 };
 
-use app_services::AppServices;
+use runtime::AppRuntime;
 
-use super::BoardView;
+use super::{BoardView, action::*, model::BoardCardState};
 
 mod definitions;
 mod editing;
 mod filters;
 mod options;
 mod values;
+mod view;
 mod views;
 
 const OPTION_COLORS: [&str; 6] = ["blue", "green", "amber", "red", "purple", "slate"];

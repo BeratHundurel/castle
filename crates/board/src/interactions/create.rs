@@ -18,15 +18,15 @@ impl BoardView {
         self.duplicate_entry(source, cx);
     }
 
-    pub(crate) fn duplicate_entry(&mut self, source: BoardCardDTO, cx: &mut Context<Self>) {
+    pub(crate) fn duplicate_entry(&mut self, source: BoardCardState, cx: &mut Context<Self>) {
         let board_id = self.data.board_id;
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::duplicate_board_card(
                     &store,
                     board_card_draft(source),
-                    app_services::now_ts(),
+                    storage::time::unix_timestamp_seconds(),
                 )
                 .await
             });
@@ -75,12 +75,12 @@ impl BoardView {
         };
         let board_id = self.data.board_id;
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::duplicate_board_list(
                     &store,
                     board_list_draft(source),
-                    app_services::now_ts(),
+                    storage::time::unix_timestamp_seconds(),
                 )
                 .await
             });
@@ -146,7 +146,12 @@ impl BoardView {
         u32::MAX.saturating_sub(self.entry_editing.next_temporary_card_id)
     }
 
-    pub(crate) fn add_entry(&mut self, cx: &mut Context<Self>, entry: BoardCardDTO, temp_id: u32) {
+    pub(crate) fn add_entry(
+        &mut self,
+        cx: &mut Context<Self>,
+        entry: BoardCardState,
+        temp_id: u32,
+    ) {
         let card_id = entry.card_id;
 
         if let Some(card) = self
@@ -160,12 +165,12 @@ impl BoardView {
         }
 
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::create_board_card(
                     &store,
                     board_card_draft(entry),
-                    app_services::now_ts(),
+                    storage::time::unix_timestamp_seconds(),
                 )
                 .await
             });
@@ -216,14 +221,14 @@ impl BoardView {
         .detach();
     }
 
-    pub(crate) fn add_card(&mut self, cx: &mut Context<Self>, card: BoardListDTO, temp_id: u32) {
+    pub(crate) fn add_card(&mut self, cx: &mut Context<Self>, card: BoardListState, temp_id: u32) {
         let board_id = card.board_id;
 
         self.data.lists.push(card.clone());
         cx.notify();
 
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::create_board_list(&store, board_list_draft(card)).await
             });
@@ -302,7 +307,7 @@ impl BoardView {
                             };
 
                             let entry_id = this.next_entry_id();
-                            let entry = BoardCardDTO {
+                            let entry = BoardCardState {
                                 id: entry_id,
                                 title: this.entry_editing.dialog_title_input.read(cx).value(),
                                 description: this
@@ -358,7 +363,7 @@ impl BoardView {
                         .gap_2()
                         .mb_3()
                         .child(Input::new(&dialog_title_input))
-                        .child(Editor::new(&dialog_description_input).h(gpui::rems(6.))),
+                        .child(Textarea::new(&dialog_description_input).h(gpui::rems(6.))),
                 )
                 .child(
                     DialogFooter::new()
@@ -379,7 +384,72 @@ impl BoardView {
     }
 }
 
-fn board_card_draft(card: BoardCardDTO) -> storage::board::commands::BoardCardDraft {
+#[cfg(test)]
+mod tests {
+    use crate::dialog_description_input;
+    use gpui::{
+        AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled,
+        TestAppContext, VisualTestContext, Window, div,
+    };
+    use gpui_component::{
+        input::{Input, InputState, Textarea, TextareaState},
+        v_flex,
+    };
+
+    struct DescriptionInputHarness {
+        title: Entity<InputState>,
+        description: Entity<TextareaState>,
+    }
+
+    impl Render for DescriptionInputHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                v_flex()
+                    .gap_2()
+                    .child(Input::new(&self.title))
+                    .child(Textarea::new(&self.description).h(gpui::rems(6.))),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn card_description_starts_on_the_same_line_as_the_title(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let mut inputs = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let title = cx.new(|cx| InputState::new(window, cx).default_value("Card title"));
+            let description =
+                cx.new(|cx| dialog_description_input(window, cx).default_value("Card description"));
+            inputs = Some((title.clone(), description.clone()));
+            DescriptionInputHarness { title, description }
+        });
+        let (title, description) =
+            inputs.expect("the title and description inputs must be created");
+
+        VisualTestContext::update(cx, |window, cx| {
+            _ = window.draw(cx);
+        });
+
+        cx.read(|cx| {
+            let title_start = title
+                .read(cx)
+                .range_to_bounds(&(0..1))
+                .expect("the title text must be laid out")
+                .left();
+            let description_start = description
+                .read(cx)
+                .range_to_bounds(&(0..1))
+                .expect("the description text must be laid out")
+                .left();
+            assert_eq!(
+                description_start, title_start,
+                "the description and title text should share the same left edge"
+            );
+        });
+    }
+}
+
+fn board_card_draft(card: BoardCardState) -> storage::board::commands::BoardCardDraft {
     storage::board::commands::BoardCardDraft {
         title: card.title.to_string(),
         description: card.description.to_string(),
@@ -399,7 +469,7 @@ fn board_card_draft(card: BoardCardDTO) -> storage::board::commands::BoardCardDr
     }
 }
 
-fn board_list_draft(list: BoardListDTO) -> storage::board::commands::BoardListDraft {
+fn board_list_draft(list: BoardListState) -> storage::board::commands::BoardListDraft {
     storage::board::commands::BoardListDraft {
         title: list.title.to_string(),
         board_id: list.board_id,

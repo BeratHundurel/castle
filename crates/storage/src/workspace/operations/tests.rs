@@ -1,7 +1,9 @@
 use super::*;
+use crate::workspace::api::{
+    BoardPropertyKindInput, CreateBoardPropertyInput, SetEntryPropertyInput,
+};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
-use workspace_api::{BoardPropertyKindInput, CreateBoardPropertyInput, SetEntryPropertyInput};
 
 use crate::MutationOrigin;
 

@@ -1,4 +1,3 @@
-use app_services::AppServices;
 use gpui::{Context, ParentElement, SharedString, Styled, Window};
 use gpui_component::{
     WindowExt,
@@ -6,21 +5,23 @@ use gpui_component::{
     dialog::{
         DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
     },
-    input::{Editor, Input},
+    input::{Input, Textarea},
     v_flex,
 };
+use runtime::AppRuntime;
 
-use super::{BoardView, BoardViewEvent, drag::*, dto::*};
+use super::{BoardView, BoardViewEvent, drag::*, model::*};
 
 mod checklist;
 mod create;
 mod entry_detail;
+mod handlers;
 mod labels;
 mod move_card;
 mod move_entry;
 
 fn move_entry_to_list_end_in_memory(
-    cards: &mut [BoardListDTO],
+    cards: &mut [BoardListState],
     entry_id: u32,
     target_card_id: u32,
 ) -> bool {
@@ -49,7 +50,7 @@ fn move_entry_to_list_end_in_memory(
     true
 }
 
-fn normalize_entry_positions(cards: &mut [BoardListDTO]) -> Vec<(u32, u32, i32)> {
+fn normalize_entry_positions(cards: &mut [BoardListState]) -> Vec<(u32, u32, i32)> {
     cards
         .iter_mut()
         .flat_map(|card| {
@@ -76,13 +77,13 @@ mod tests {
     use storage::board::positions::{BoardLayoutPersistence, BoardLayoutSnapshot};
 
     use super::{
-        BoardCardDTO, BoardLabelDTO, BoardListDTO, ChecklistItemDTO,
+        BoardCardState, BoardLabel, BoardListState, ChecklistItem,
         move_entry_to_list_end_in_memory, normalize_entry_positions,
     };
     use crate::persistence::load_board_data;
 
-    fn test_entry(id: u32, card_id: u32, position: i32, title: &str) -> BoardCardDTO {
-        BoardCardDTO {
+    fn test_entry(id: u32, card_id: u32, position: i32, title: &str) -> BoardCardState {
+        BoardCardState {
             id,
             title: SharedString::from(title),
             description: SharedString::from(format!("{title} description")),
@@ -97,8 +98,8 @@ mod tests {
         }
     }
 
-    fn test_card(id: u32, title: &str, entries: Vec<BoardCardDTO>) -> BoardListDTO {
-        BoardListDTO {
+    fn test_card(id: u32, title: &str, entries: Vec<BoardCardState>) -> BoardListState {
+        BoardListState {
             id,
             title: SharedString::from(title),
             board_id: 1,
@@ -110,13 +111,13 @@ mod tests {
     #[test]
     fn moves_entry_to_destination_end_and_normalizes_positions() {
         let mut moved_entry = test_entry(10, 1, 4, "First");
-        moved_entry.labels.push(BoardLabelDTO {
+        moved_entry.labels.push(BoardLabel {
             id: 40,
             board_id: 1,
             name: SharedString::from("Urgent"),
             color: SharedString::from("red"),
         });
-        moved_entry.checklist_items.push(ChecklistItemDTO {
+        moved_entry.checklist_items.push(ChecklistItem {
             id: 50,
             entry_id: 10,
             title: SharedString::from("Verify"),

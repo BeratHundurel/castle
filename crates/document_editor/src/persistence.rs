@@ -6,14 +6,17 @@ use std::{
     path::PathBuf,
 };
 
-use app_services::AppServices;
+use runtime::AppRuntime;
 
-use super::outline::DocumentOutline;
-use super::types::{DocumentKind, DocumentStats, SaveState};
-use super::util::{
+use super::file_paths::{
     suggested_save_as_file_name, suggested_save_as_file_name_with_extension, unique_note_path,
 };
+use super::outline::DocumentOutline;
 use super::{AUTO_SAVE_IDLE_DELAY, DocumentEditorEvent, DocumentEditorView};
+use super::{
+    DocumentKind,
+    document_state::{DocumentStats, SaveState},
+};
 
 impl DocumentEditorView {
     pub(super) fn load_note_async(
@@ -21,8 +24,8 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppServices>().store();
-        let runtime = cx.global::<AppServices>().runtime();
+        let db = cx.global::<AppRuntime>().store();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |this, window| {
@@ -251,7 +254,7 @@ impl DocumentEditorView {
     pub(super) fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         let epoch = self.persistence.auto_save_epoch;
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
 
         self.persistence.auto_save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
@@ -282,7 +285,7 @@ impl DocumentEditorView {
             };
 
             let db = this
-                .read_with(cx, |_, cx| cx.global::<AppServices>().store())
+                .read_with(cx, |_, cx| cx.global::<AppRuntime>().store())
                 .ok();
 
             let Some(db) = db else {
@@ -384,7 +387,7 @@ impl DocumentEditorView {
             .unwrap_or_else(|| {
                 (
                     unique_note_path(
-                        cx.global::<AppServices>().data_dir().join("notes"),
+                        cx.global::<AppRuntime>().data_dir().join("notes"),
                         self.title.as_ref(),
                     ),
                     true,
@@ -444,7 +447,7 @@ impl DocumentEditorView {
             .current_path
             .as_ref()
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-            .unwrap_or_else(|| cx.global::<AppServices>().data_dir().join("notes"));
+            .unwrap_or_else(|| cx.global::<AppRuntime>().data_dir().join("notes"));
 
         let receiver = cx.prompt_for_new_path(&start_dir, Some(&file_name));
         let view = cx.entity();
@@ -485,9 +488,9 @@ impl DocumentEditorView {
 
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
-        let db = cx.global::<AppServices>().store();
+        let db = cx.global::<AppRuntime>().store();
         let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         let saved_path = path.clone();
         let path_string = path.display().to_string();
 

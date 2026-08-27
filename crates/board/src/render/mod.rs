@@ -1,5 +1,5 @@
 use chrono::{Local, NaiveDate};
-use gpui::{StyledImage as _, prelude::FluentBuilder, *};
+use gpui::{prelude::FluentBuilder, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants},
@@ -11,12 +11,10 @@ use gpui_component::{
     notification::Notification,
     popover::Popover,
     scroll::ScrollableElement as _,
-    spinner::Spinner,
     text::{TextView, TextViewStyle},
     v_flex,
 };
 
-mod attachments;
 mod card;
 mod checklist;
 mod description;
@@ -25,22 +23,21 @@ mod labels;
 mod layout;
 mod metadata;
 mod overlay;
-mod properties;
-mod related_notes;
 
 use super::BoardView;
 use super::action::*;
 use super::color_contrast::accessible_text_colors;
 use super::drag::*;
-use super::dto::BoardCardDTO;
 use super::due_date::{DueDateStatus, due_date_status};
 use super::filters::DueDateFilter;
-use workspace_ui::WorkspaceDragInfo;
+use super::model::BoardCardState;
+use workspace::WorkspaceDragInfo;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let board = div()
             .id("board-view")
+            .track_focus(&self.focus_handle)
             .relative()
             .size_full()
             .overflow_hidden()

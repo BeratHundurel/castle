@@ -2,7 +2,7 @@ use super::*;
 use std::cmp::Ordering;
 
 impl BoardView {
-    pub(crate) fn selected_entry(&self) -> Option<(&str, &BoardCardDTO)> {
+    pub(crate) fn selected_entry(&self) -> Option<(&str, &BoardCardState)> {
         let entry_id = self.entry_editing.dialog.entry_id?;
 
         self.data.lists.iter().find_map(|card| {
@@ -13,7 +13,7 @@ impl BoardView {
         })
     }
 
-    pub(super) fn entry_matches_filters(&self, entry: &BoardCardDTO) -> bool {
+    pub(super) fn entry_matches_filters(&self, entry: &BoardCardState) -> bool {
         storage::board::projection::entry_matches_view(
             entry,
             &self.properties.active_view_config,
@@ -25,8 +25,8 @@ impl BoardView {
 
     pub(super) fn compare_entries_for_active_sort(
         &self,
-        left: &BoardCardDTO,
-        right: &BoardCardDTO,
+        left: &BoardCardState,
+        right: &BoardCardState,
     ) -> Ordering {
         self.properties
             .active_view_config
@@ -43,7 +43,7 @@ impl BoardView {
             })
     }
 
-    pub(super) fn label_marker_color(&self, color: &str, cx: &Context<Self>) -> Hsla {
+    pub(crate) fn label_marker_color(&self, color: &str, cx: &Context<Self>) -> Hsla {
         match color {
             "green" => cx.theme().green,
             "amber" => cx.theme().yellow,
@@ -56,7 +56,7 @@ impl BoardView {
 
     pub(super) fn render_label_chip(
         &self,
-        label: &crate::dto::BoardLabelDTO,
+        label: &crate::model::BoardLabel,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let marker = self.label_marker_color(label.color.as_ref(), cx);
@@ -82,7 +82,7 @@ impl BoardView {
 
     pub(super) fn render_card_label_chips(
         &self,
-        entry: &BoardCardDTO,
+        entry: &BoardCardState,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         h_flex()
@@ -103,7 +103,7 @@ impl BoardView {
 
     pub(super) fn render_card_metadata(
         &self,
-        entry: &BoardCardDTO,
+        entry: &BoardCardState,
         show_due_date: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -153,7 +153,7 @@ impl BoardView {
         self.render_card_date_pill(label, background, cx)
     }
 
-    pub(super) fn render_card_date_pill(
+    pub(crate) fn render_card_date_pill(
         &self,
         label: impl Into<SharedString>,
         background: Hsla,
@@ -185,7 +185,7 @@ impl BoardView {
 
     pub(super) fn render_card_checklist_progress(
         &self,
-        entry: &BoardCardDTO,
+        entry: &BoardCardState,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let completed = entry

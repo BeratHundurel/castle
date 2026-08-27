@@ -1,0 +1,29 @@
+[package]
+name = "shell"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+chrono.workspace = true
+storage = { path = "../storage" }
+runtime = { path = "../runtime" }
+settings = { path = "../settings" }
+board = { path = "../board" }
+command_palette = { path = "../command_palette" }
+document_editor = { path = "../document_editor" }
+workspace = { path = "../workspace" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+storage = { path = "../storage", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
+tempfile = "3.23"
+sea-orm.workspace = true
+migration = { path = "../migration" }
+entity = { path = "../entity" }

@@ -8,7 +8,7 @@ impl BoardView {
 
         let color = self.entry_editing.selected_label_color.to_string();
         let task = cx
-            .global::<AppServices>()
+            .global::<AppRuntime>()
             .spawn_store(move |store| async move {
                 storage::board::commands::create_label(&store, board_id, name, color).await
             });
@@ -19,7 +19,7 @@ impl BoardView {
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) if this.data.board_id == Some(board_id) => {
                     this.mutation.mutation_error = None;
-                    this.data.labels.push(BoardLabelDTO::from(inserted));
+                    this.data.labels.push(BoardLabel::from(inserted));
                     cx.emit(BoardViewEvent::DataCommitted {
                         board_id,
                         links_changed: false,

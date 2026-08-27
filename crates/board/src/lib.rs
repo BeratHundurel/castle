@@ -2,17 +2,18 @@ mod action;
 mod attachments;
 mod color_contrast;
 mod drag;
-mod dto;
 mod due_date;
 mod entry_dialog;
 mod filters;
-mod handlers;
 mod interactions;
+mod model;
 mod notifications;
 mod persistence;
 mod properties;
 mod related_notes;
 mod render;
+mod state;
+mod template_picker;
 mod templates;
 
 use std::{
@@ -21,16 +22,18 @@ use std::{
     sync::Arc,
 };
 
-use dto::*;
 use gpui::*;
 use gpui_component::calendar::Date;
 use gpui_component::date_picker::{DatePickerEvent, DatePickerState};
-use gpui_component::input::{EditorState, InputEvent, InputState};
+use gpui_component::input::{EditorState, InputEvent, InputState, TextareaState};
+use model::*;
+use state::*;
 
 pub use notifications::{NotificationAvailability, NotificationGateway};
+pub use template_picker::{BoardTemplatePicker, BoardTemplatePickerEvent};
 
-use app_services::AppServices;
 use entry_dialog::EntryDialog;
+use runtime::AppRuntime;
 
 #[derive(Clone)]
 struct BoardServices {
@@ -66,14 +69,14 @@ impl Global for BoardServices {}
 
 pub fn init(cx: &mut App) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         cx.set_global(BoardServices::new(runtime));
     }
 }
 
 pub fn init_with_notification_gateway(cx: &mut App, gateway: Arc<dyn NotificationGateway>) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<AppServices>().runtime();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
         cx.set_global(BoardServices::with_notifications(
             runtime,
             notifications::BoardNotifications::new(gateway),
@@ -81,101 +84,8 @@ pub fn init_with_notification_gateway(cx: &mut App, gateway: Arc<dyn Notificatio
     }
 }
 
-struct BoardDataState {
-    board_id: Option<u32>,
-    lists: Vec<BoardListDTO>,
-    labels: Vec<BoardLabelDTO>,
-}
-
-struct RelatedNotesState {
-    picker: related_notes::RelatedNotePickerState,
-    by_item: HashMap<
-        storage::workspace::links::WorkspaceItemRef,
-        Vec<storage::workspace::links::RelatedNote>,
-    >,
-    catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
-    completion_provider: workspace_ui::WikiLinkCompletionProvider,
-    error: Option<SharedString>,
-}
-
-struct BoardMutationState {
-    load_error: Option<SharedString>,
-    mutation_error: Option<SharedString>,
-    load_request: workspace_ui::RequestTracker,
-    layout_commit_task: Option<Task<()>>,
-    loaded_generation: Option<u64>,
-    local_generation: u64,
-}
-
-struct BoardPropertiesState {
-    data: storage::board::properties::BoardProperties,
-    values: HashMap<(i64, i64), storage::board::properties::PropertyValue>,
-    saved_views: Vec<storage::board::properties::BoardView>,
-    active_view_id: Option<i64>,
-    active_view_config: storage::board::properties::BoardViewConfig,
-    view_config_dirty: bool,
-    view_load_warnings: Vec<SharedString>,
-    update_error: Option<SharedString>,
-    field_errors: HashMap<(i64, i64), SharedString>,
-    saving_values: HashSet<(i64, i64)>,
-    property_panel_open: bool,
-    property_form_open: bool,
-    fields_panel_open: bool,
-    view_panel_open: bool,
-    new_view_form_open: bool,
-    sort_panel_open: bool,
-    new_property_kind: storage::board::properties::PropertyKind,
-    new_property_input: Entity<InputState>,
-    rename_property_input: Entity<InputState>,
-    renaming_property_id: Option<i64>,
-    new_property_option_input: Entity<InputState>,
-    rename_property_option_input: Entity<InputState>,
-    renaming_property_option_id: Option<i64>,
-    adding_property_option_id: Option<i64>,
-    property_value_input: Entity<InputState>,
-    property_date_picker: Entity<DatePickerState>,
-    editing_property_id: Option<i64>,
-    property_select_search_input: Entity<InputState>,
-    selecting_property_id: Option<i64>,
-    new_view_input: Entity<InputState>,
-    rename_view_input: Entity<InputState>,
-    renaming_view_id: Option<i64>,
-    filter_value_input: Entity<InputState>,
-    editing_filter_property_id: Option<i64>,
-    next_update_revision: u64,
-    update_revisions: HashMap<(i64, i64), u64>,
-    persisted_revisions: Arc<tokio::sync::Mutex<HashMap<(i64, i64), u64>>>,
-}
-
-struct EntryEditingState {
-    adding_list: bool,
-    open: bool,
-    dialog: EntryDialog,
-    new_list_input: Entity<InputState>,
-    dialog_title_input: Entity<InputState>,
-    dialog_description_input: Entity<EditorState>,
-    title_input: Entity<InputState>,
-    description_input: Entity<EditorState>,
-    due_date_picker: Entity<DatePickerState>,
-    new_label_input: Entity<InputState>,
-    rename_label_input: Entity<InputState>,
-    new_checklist_item_input: Entity<InputState>,
-    rename_checklist_item_input: Entity<InputState>,
-    rename_list_input: Entity<InputState>,
-    renaming_list_id: Option<u32>,
-    pending_list_id: Option<u32>,
-    renaming_label_id: Option<u32>,
-    renaming_checklist_item_id: Option<u32>,
-    selected_label_color: SharedString,
-    next_temporary_list_id: u32,
-    next_temporary_card_id: u32,
-    next_checklist_item_position: i32,
-    next_due_date_update_revision: u64,
-    persisted_due_date_revisions: Arc<tokio::sync::Mutex<HashMap<u32, u64>>>,
-    attachment_preview_paths: HashMap<u32, PathBuf>,
-}
-
 pub struct BoardView {
+    focus_handle: FocusHandle,
     data: BoardDataState,
     properties: BoardPropertiesState,
     related_notes: RelatedNotesState,
@@ -184,7 +94,8 @@ pub struct BoardView {
     filters: filters::BoardFilters,
     filter_panel_open: bool,
     board_scroll_handle: ScrollHandle,
-    pending_reveal_target: Option<workspace_ui::WorkspaceNavigationTarget>,
+    filter_scroll_handle: ScrollHandle,
+    pending_reveal_target: Option<workspace::WorkspaceNavigationTarget>,
     revealed_list_id: Option<u32>,
 }
 
@@ -192,7 +103,7 @@ pub struct BoardView {
 pub enum BoardViewEvent {
     LoadFinished(u32),
     OpenNote(u32),
-    OpenWorkspaceTarget(workspace_ui::WorkspaceNavigationTarget),
+    OpenWorkspaceTarget(workspace::WorkspaceNavigationTarget),
     NavigationUnavailable(String),
     DataCommitted {
         board_id: u32,
@@ -207,6 +118,30 @@ pub enum BoardViewEvent {
 
 impl EventEmitter<BoardViewEvent> for BoardView {}
 
+fn description_editor(window: &mut Window, cx: &mut Context<EditorState>) -> EditorState {
+    EditorState::new(window, cx)
+        .language("text")
+        .line_number(false)
+        .folding(false)
+        .indent_guides(false)
+        .placeholder("Card description")
+        .soft_wrap(true)
+        .searchable(true)
+}
+
+fn dialog_description_input(window: &mut Window, cx: &mut Context<TextareaState>) -> TextareaState {
+    TextareaState::new(window, cx)
+        .placeholder("Card description")
+        .soft_wrap(true)
+        .searchable(true)
+}
+
+impl Focusable for BoardView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl BoardView {
     pub fn view(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, cx))
@@ -214,36 +149,19 @@ impl BoardView {
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         init(cx);
-        let entry_wikilink_completion_provider = workspace_ui::WikiLinkCompletionProvider::new(-1);
+        let entry_wikilink_completion_provider = workspace::WikiLinkCompletionProvider::new(-1);
         let entry_completion_provider =
             std::rc::Rc::new(entry_wikilink_completion_provider.clone());
         let new_list_input = cx.new(|cx| InputState::new(window, cx).placeholder("List name..."));
 
         let dialog_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Card title"));
 
-        let dialog_completion_provider = entry_completion_provider.clone();
-        let dialog_description_input = cx.new(|cx| {
-            let mut input = EditorState::new(window, cx)
-                .language("text")
-                .line_number(false)
-                .indent_guides(false)
-                .placeholder("Card description")
-                .soft_wrap(true)
-                .searchable(true);
-            input.lsp_mut().completion_provider = Some(dialog_completion_provider);
-            input
-        });
+        let dialog_description_input = cx.new(|cx| dialog_description_input(window, cx));
 
         let entry_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Card title"));
 
         let entry_description_input = cx.new(|cx| {
-            let mut input = EditorState::new(window, cx)
-                .language("text")
-                .line_number(false)
-                .indent_guides(false)
-                .placeholder("Card description")
-                .soft_wrap(true)
-                .searchable(true);
+            let mut input = description_editor(window, cx);
             input.lsp_mut().completion_provider = Some(entry_completion_provider);
             input
         });
@@ -310,7 +228,7 @@ impl BoardView {
                         this.entry_editing.adding_list = false;
                         this.add_card(
                             cx,
-                            BoardListDTO {
+                            BoardListState {
                                 id: card_id,
                                 title: SharedString::from(name),
                                 board_id,
@@ -574,6 +492,7 @@ impl BoardView {
         .detach();
 
         Self {
+            focus_handle: cx.focus_handle(),
             data: BoardDataState {
                 board_id: None,
                 lists: vec![],
@@ -634,7 +553,7 @@ impl BoardView {
             mutation: BoardMutationState {
                 load_error: None,
                 mutation_error: None,
-                load_request: workspace_ui::RequestTracker::default(),
+                load_request: workspace::RequestTracker::default(),
                 layout_commit_task: None,
                 loaded_generation: None,
                 local_generation: 0,
@@ -669,6 +588,7 @@ impl BoardView {
             filters: filters::BoardFilters::default(),
             filter_panel_open: false,
             board_scroll_handle: ScrollHandle::new(),
+            filter_scroll_handle: ScrollHandle::new(),
             pending_reveal_target: None,
             revealed_list_id: None,
         }
@@ -676,7 +596,7 @@ impl BoardView {
 
     pub fn queue_reveal_target(
         &mut self,
-        target: workspace_ui::WorkspaceNavigationTarget,
+        target: workspace::WorkspaceNavigationTarget,
         cx: &mut Context<Self>,
     ) {
         self.pending_reveal_target = Some(target);
@@ -687,7 +607,7 @@ impl BoardView {
         let Some(target) = self.pending_reveal_target else {
             return true;
         };
-        let workspace_ui::WorkspaceNavigationTarget::Board {
+        let workspace::WorkspaceNavigationTarget::Board {
             board_id,
             list_id,
             card_id,

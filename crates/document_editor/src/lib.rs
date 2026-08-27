@@ -1,16 +1,17 @@
 pub mod action;
+mod action_handlers;
 mod attachments;
 mod board_embeds;
+mod document_state;
 mod emmet;
+mod file_paths;
 mod formatting;
-mod handlers;
 pub mod links;
 mod mermaid;
 mod outline;
 mod persistence;
-mod render;
-pub mod types;
-mod util;
+mod state;
+mod view;
 mod vim;
 
 use gpui::{
@@ -30,14 +31,15 @@ use std::{
     time::Duration,
 };
 
-use app_settings::AppSettings;
+use document_state::*;
 use outline::{DocumentOutline, JsonOutline, MarkdownOutline, OutlineRow};
-use types::*;
+use settings::AppSettings;
+pub use state::*;
 use vim::VimState;
 
-pub use types::DocumentStats;
-pub use types::{DEFAULT_NOTE, DocumentKind, SaveState};
-pub use util::unique_note_path;
+pub use document_state::{DEFAULT_NOTE, DocumentStats, SaveState};
+pub use file_paths::unique_note_path;
+pub use workspace::DocumentKind;
 
 const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);
@@ -50,101 +52,6 @@ const OUTLINE_MIN_WIDTH: Pixels = px(176.);
 const OUTLINE_MAX_WIDTH: Pixels = px(480.);
 const EDITOR_MIN_WIDTH_WITH_OUTLINE: Pixels = px(360.);
 const OUTLINE_INDENT_STEP: Pixels = px(8.);
-
-struct DocumentAnalysis {
-    stats: DocumentStats,
-    outline: DocumentOutline,
-    mermaids: Vec<mermaid::MermaidDescriptor>,
-}
-
-#[derive(Clone, Copy)]
-struct OutlineSourceHighlight {
-    generation: u64,
-    source_offset: usize,
-}
-
-#[derive(Clone, Debug)]
-pub enum DocumentEditorEvent {
-    PathChanged,
-    Saved(u32),
-    WorkspaceLinksChanged,
-    OpenNote {
-        note_id: u32,
-        source_offset: Option<usize>,
-    },
-    OpenWorkspaceTarget(workspace_ui::WorkspaceNavigationTarget),
-    CreateCardFromSelection {
-        note_id: u32,
-        title: String,
-    },
-    InsertBoardView {
-        note_id: u32,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum DocumentInspectorTab {
-    #[default]
-    Outline,
-    Links,
-}
-
-struct PersistenceState {
-    current_path: Option<PathBuf>,
-    file_managed_by_app: bool,
-    save_state: SaveState,
-    load_error: Option<SharedString>,
-    is_loading: bool,
-    suppress_editor_events: bool,
-    auto_save_epoch: u64,
-    load_task: Option<Task<()>>,
-    auto_save_task: Option<Task<()>>,
-    format_task: Option<Task<()>>,
-}
-
-struct AnalysisState {
-    stats: DocumentStats,
-    request: workspace_ui::RequestTracker,
-    source_bounds: Option<Bounds<Pixels>>,
-    outline: DocumentOutline,
-    outline_rows: Arc<Vec<OutlineRow>>,
-    outline_visible: bool,
-    outline_rendered: bool,
-    outline_transition_epoch: usize,
-    outline_selected: Option<usize>,
-    outline_navigation_generation: u64,
-    outline_source_highlight: Option<OutlineSourceHighlight>,
-    outline_source_highlight_task: Option<Task<()>>,
-    preview_list_state: gpui::ListState,
-    preview_font_size_bits: Cell<u64>,
-    outline_scroll_handle: UniformListScrollHandle,
-    outline_focus_handle: FocusHandle,
-}
-
-struct InspectorLinksState {
-    tab: DocumentInspectorTab,
-    note_links: Arc<storage::note::links::NoteLinkSet>,
-    note_catalog: Arc<Vec<storage::note::links::NoteLinkCatalogEntry>>,
-    workspace_links: Arc<storage::workspace::links::NoteWorkspaceLinks>,
-    workspace_catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
-    relation_signature: Vec<String>,
-    project_id: Option<i64>,
-    completion_provider: links::WikiLinkCompletionProvider,
-    loading: bool,
-    error: Option<SharedString>,
-    request: workspace_ui::RequestTracker,
-}
-
-struct EmbedStateGroup {
-    states: Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
-    request: workspace_ui::RequestTracker,
-    loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
-}
-
-struct VimSessionState {
-    state: VimState,
-    search_active: bool,
-}
 
 pub struct DocumentEditorView {
     note_id: u32,
@@ -264,7 +171,7 @@ impl DocumentEditorView {
             },
             analysis: AnalysisState {
                 stats: DocumentStats::from_text(""),
-                request: workspace_ui::RequestTracker::default(),
+                request: workspace::RequestTracker::default(),
                 source_bounds: None,
                 outline: DocumentOutline::None,
                 outline_rows: Arc::new(Vec::new()),
@@ -299,11 +206,11 @@ impl DocumentEditorView {
                 completion_provider: wikilink_completion_provider,
                 loading: true,
                 error: None,
-                request: workspace_ui::RequestTracker::with_task(1, note_links_task),
+                request: workspace::RequestTracker::with_task(1, note_links_task),
             },
             embeds: EmbedStateGroup {
                 states: Arc::new(std::collections::HashMap::new()),
-                request: workspace_ui::RequestTracker::default(),
+                request: workspace::RequestTracker::default(),
                 loading_keys: std::collections::HashSet::new(),
             },
             mermaid: mermaid::MermaidState::default(),
@@ -495,8 +402,9 @@ impl DocumentEditorView {
             EditorMode::Source
         };
         self.analysis.outline_rendered = kind.supports_outline() && self.analysis.outline_visible;
-        self.editor
-            .update(cx, |editor, cx| editor.set_highlighter(kind.language(), cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.set_highlighter(document_language(kind), cx)
+        });
         kind
     }
 
@@ -818,6 +726,14 @@ fn changed_document_kind(current: DocumentKind, path: Option<&Path>) -> Option<D
     (kind != current).then_some(kind)
 }
 
+fn document_language(kind: DocumentKind) -> Language {
+    match kind {
+        DocumentKind::Markdown => Language::Markdown,
+        DocumentKind::Json => Language::Json,
+        DocumentKind::PlainText => Language::Plain,
+    }
+}
+
 fn analyze_document(
     kind: DocumentKind,
     content: String,
@@ -872,14 +788,15 @@ mod tests {
     use super::{
         DocumentEditorView, DocumentKind, DocumentOutline, JsonOutline,
         OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document, changed_document_kind,
-        row_is_in_visible_layout, source_row_centers_at_document_start,
+        document_language, row_is_in_visible_layout, source_row_centers_at_document_start,
     };
-    use app_services::AppServices;
-    use app_settings::AppSettings;
     use entity::note;
     use gpui::AppContext as _;
+    use gpui_component::highlighter::Language;
     use migration::{Migrator, MigratorTrait};
+    use runtime::AppRuntime;
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use settings::AppSettings;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use test_support as test_alloc;
 
@@ -925,7 +842,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(AppSettings::load(directory.path()));
-            cx.set_global(AppServices::new(db.clone(), directory.path().to_path_buf()));
+            cx.set_global(AppRuntime::new(db.clone(), directory.path().to_path_buf()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -1011,7 +928,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
-            cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
@@ -1158,6 +1075,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn document_kinds_select_the_expected_highlighter() {
+        assert_eq!(
+            document_language(DocumentKind::Markdown),
+            Language::Markdown
+        );
+        assert_eq!(document_language(DocumentKind::Json), Language::Json);
+        assert_eq!(document_language(DocumentKind::PlainText), Language::Plain);
+    }
+
     #[gpui::test]
     fn outline_navigation_to_document_start_has_no_intermediate_scroll_frame(
         cx: &mut gpui::TestAppContext,
@@ -1193,7 +1120,7 @@ mod tests {
             cx.set_global(gpui_component::Theme::default());
             gpui_component::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
-            cx.set_global(AppServices::new(Arc::new(db), PathBuf::new()));
+            cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());

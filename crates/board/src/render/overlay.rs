@@ -1,5 +1,42 @@
 use super::*;
 
+fn entry_metadata_sections(
+    labels: impl IntoElement,
+    due_date: impl IntoElement,
+    cx: &App,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .min_h(px(132.))
+        .items_stretch()
+        .gap_4()
+        .flex_wrap()
+        .p_3()
+        .rounded(cx.theme().radius)
+        .border_1()
+        .border_color(cx.theme().border.opacity(0.4))
+        .bg(cx.theme().secondary.opacity(0.1))
+        .child(
+            div()
+                .id("entry-metadata-labels")
+                .debug_selector(|| "entry-metadata-labels".into())
+                .min_w(px(260.))
+                .flex_1()
+                .child(labels),
+        )
+        .child(
+            div()
+                .id("entry-metadata-due-date")
+                .debug_selector(|| "entry-metadata-due-date".into())
+                .min_w(px(260.))
+                .flex_1()
+                .border_l_1()
+                .border_color(cx.theme().border.opacity(0.32))
+                .pl_4()
+                .child(due_date),
+        )
+}
+
 impl BoardView {
     pub(super) fn render_entry_detail_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -47,7 +84,7 @@ impl BoardView {
 
     pub(super) fn render_entry_detail_header(
         &self,
-        selected_entry: Option<(&str, &BoardCardDTO)>,
+        selected_entry: Option<(&str, &BoardCardState)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -221,7 +258,7 @@ impl BoardView {
 
     pub(super) fn render_entry_detail_body(
         &self,
-        selected_entry: Option<(&str, &BoardCardDTO)>,
+        selected_entry: Option<(&str, &BoardCardState)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -239,6 +276,13 @@ impl BoardView {
             );
         }
 
+        let labels = self
+            .render_entry_labels(selected_entry, cx)
+            .into_any_element();
+        let due_date = self
+            .render_entry_due_date(selected_entry, cx)
+            .into_any_element();
+
         div().flex_1().overflow_hidden().child(
             v_flex()
                 .id("entry-detail-content-scroll")
@@ -253,24 +297,7 @@ impl BoardView {
                         .gap_4()
                         .child(self.render_entry_description(selected_entry, cx))
                         .child(self.render_entry_related_notes(selected_entry, cx))
-                        .child(
-                            h_flex()
-                                .items_start()
-                                .gap_4()
-                                .flex_wrap()
-                                .child(
-                                    div()
-                                        .min_w(px(260.))
-                                        .flex_1()
-                                        .child(self.render_entry_labels(selected_entry, cx)),
-                                )
-                                .child(
-                                    div()
-                                        .min_w(px(260.))
-                                        .flex_1()
-                                        .child(self.render_entry_due_date(selected_entry, cx)),
-                                ),
-                        )
+                        .child(entry_metadata_sections(labels, due_date, cx))
                         .child(self.render_entry_properties(selected_entry, cx))
                         .child(self.render_entry_checklist(selected_entry, cx)),
                 ),
@@ -279,7 +306,7 @@ impl BoardView {
 
     pub(super) fn render_entry_due_date(
         &self,
-        selected_entry: Option<(&str, &BoardCardDTO)>,
+        selected_entry: Option<(&str, &BoardCardState)>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let due_on = selected_entry
@@ -351,12 +378,6 @@ impl BoardView {
 
         v_flex()
             .gap_3()
-            .min_h(px(132.))
-            .p_3()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border.opacity(0.4))
-            .bg(cx.theme().secondary.opacity(0.1))
             .child(
                 h_flex()
                     .items_center()
@@ -521,5 +542,43 @@ impl BoardView {
                         },
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::entry_metadata_sections;
+    use gpui::{
+        Context, IntoElement, Render, Styled, TestAppContext, VisualTestContext, Window, div, px,
+        size,
+    };
+
+    struct EntryMetadataSectionsTest;
+
+    impl Render for EntryMetadataSectionsTest {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            entry_metadata_sections(div().h(px(80.)), div().h(px(180.)), cx)
+        }
+    }
+
+    #[gpui::test]
+    fn metadata_sections_share_the_same_row_height(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, _| EntryMetadataSectionsTest);
+        let cx: &mut VisualTestContext = cx;
+        cx.simulate_resize(size(px(800.), px(400.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            _ = window.draw(cx);
+        });
+
+        let Some(labels_bounds) = cx.debug_bounds("entry-metadata-labels") else {
+            panic!("labels metadata section should be rendered");
+        };
+        let Some(due_date_bounds) = cx.debug_bounds("entry-metadata-due-date") else {
+            panic!("due date metadata section should be rendered");
+        };
+
+        assert_eq!(labels_bounds.size.height, due_date_bounds.size.height);
     }
 }

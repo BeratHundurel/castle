@@ -91,7 +91,7 @@ impl BoardView {
                 Some(card.entries.remove(index))
             });
 
-        if let Some(mut dto) = moving_entry
+        if let Some(mut entry) = moving_entry
             && let Some(target_card) = self
                 .data
                 .lists
@@ -106,11 +106,11 @@ impl BoardView {
                 return;
             };
 
-            dto.card_id = target_card_id;
+            entry.card_id = target_card_id;
             if moving_down_in_same_card {
                 target_index = target_index.saturating_add(1);
             }
-            target_card.entries.insert(target_index, dto);
+            target_card.entries.insert(target_index, entry);
             self.persist_board_layout(cx);
         }
     }
@@ -135,9 +135,9 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let db = cx.global::<AppServices>();
+        let db = cx.global::<AppRuntime>();
         let persistence = cx.global::<crate::BoardServices>().layout_persistence();
-        let runtime = db.runtime();
+        let runtime = db.tokio_handle();
         let revision = match persistence.submit(
             board_id,
             db.store(),
