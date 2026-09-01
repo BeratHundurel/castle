@@ -59,9 +59,30 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
 
+  architecture:
+    name: Validate architecture
+    needs: metadata
+    runs-on: windows-2022
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: architecture
+
+      - name: Validate crate boundaries
+        run: cargo test --locked --package storage --test architecture
+
   build:
     name: Windows ${{ matrix.arch }}
-    needs: metadata
+    needs: [metadata, architecture]
     strategy:
       fail-fast: false
       matrix:
