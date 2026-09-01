@@ -23,9 +23,9 @@ const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
 const SETTINGS_DIALOG_MARGIN: f32 = 32.0;
 const SETTINGS_DIALOG_MIN_WIDTH: f32 = 640.0;
 const SETTINGS_DIALOG_MIN_HEIGHT: f32 = 360.0;
-const SETTINGS_SIDEBAR_WIDE_WIDTH: f32 = 300.0;
-const SETTINGS_SIDEBAR_MEDIUM_WIDTH: f32 = 260.0;
-const SETTINGS_SIDEBAR_NARROW_WIDTH: f32 = 220.0;
+const SETTINGS_SIDEBAR_WIDE_WIDTH: f32 = 272.0;
+const SETTINGS_SIDEBAR_MEDIUM_WIDTH: f32 = 240.0;
+const SETTINGS_SIDEBAR_NARROW_WIDTH: f32 = 208.0;
 const SETTINGS_SIDEBAR_HORIZONTAL_PADDING: f32 = 24.0;
 const SETTINGS_PICKER_WIDTH: f32 = 360.0;
 const THEME_SEARCH_PLACEHOLDER: &str = "Search themes...";
@@ -192,8 +192,12 @@ impl SettingsView {
                             div().size_full().overflow_hidden().child(
                                 Settings::new("castle-settings")
                                     .with_size(Size::Medium)
-                                    .with_group_variant(GroupBoxVariant::Outline)
+                                    .with_group_variant(GroupBoxVariant::Fill)
                                     .sidebar_width(px(sidebar_width))
+                                    .sidebar_style(&settings_sidebar_style(
+                                        *cx.theme().tokens.background,
+                                        cx.theme().border,
+                                    ))
                                     .header_style(&settings_header_style(sidebar_width))
                                     .pages(setting_pages(settings.clone(), cx)),
                             ),
@@ -305,6 +309,12 @@ fn settings_header_style(sidebar_width: f32) -> StyleRefinement {
     let search_width = sidebar_width - SETTINGS_SIDEBAR_HORIZONTAL_PADDING;
 
     StyleRefinement::default().w(px(search_width)).max_w_full()
+}
+
+fn settings_sidebar_style(background: gpui::Hsla, border: gpui::Hsla) -> StyleRefinement {
+    StyleRefinement::default()
+        .bg(background)
+        .border_color(border)
 }
 
 fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPage> {
@@ -830,4 +840,22 @@ fn with_selected_option(
     }
 
     options
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_sidebar_uses_the_dialog_background() {
+        let background = gpui::hsla(0.6, 0.2, 0.15, 1.0);
+        let border = gpui::hsla(0.6, 0.1, 0.3, 1.0);
+        let style = settings_sidebar_style(background, border);
+
+        assert_eq!(
+            style.background.as_ref().and_then(|fill| fill.color()),
+            Some(background.into())
+        );
+        assert_eq!(style.border_color, Some(border));
+    }
 }

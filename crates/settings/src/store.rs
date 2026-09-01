@@ -535,11 +535,11 @@ mod tests {
             settings.apply_to_theme(cx);
 
             assert_eq!(
-                gpui_base::Theme::global(cx).resizable.handle,
+                gpui_base::Theme::global(cx).resizable.handle.expect("handle should be set"),
                 Theme::global(cx).border
             );
             assert_eq!(
-                gpui_base::Theme::global(cx).resizable.active_handle,
+                gpui_base::Theme::global(cx).resizable.active_handle.expect("active handle should be set"),
                 Theme::global(cx).drag_border
             );
         });
