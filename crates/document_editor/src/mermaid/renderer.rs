@@ -46,6 +46,77 @@ impl MermaidTheme {
         self.accent_surfaces.hash(&mut hasher);
         hasher.finish()
     }
+
+    pub fn prepare(&self) -> PreparedMermaidRenderer {
+        let roles = HostThemeRoles {
+            canvas: Some(self.background.clone()),
+            surface: Some(self.surface.clone()),
+            surface_alt: Some(self.surface_alt.clone()),
+            surface_muted: Some(self.surface_alt.clone()),
+            text: Some(self.foreground.clone()),
+            subtle_text: Some(self.muted_foreground.clone()),
+            border: Some(self.border.clone()),
+            line: Some(self.muted_foreground.clone()),
+            edge_label_background: Some(self.background.clone()),
+            cluster_background: Some(self.surface_alt.clone()),
+            cluster_border: Some(self.border.clone()),
+            note_background: Some(self.surface_alt.clone()),
+            note_border: Some(self.warning.clone()),
+            note_text: Some(self.foreground.clone()),
+            actor_background: Some(self.surface.clone()),
+            actor_border: Some(self.border.clone()),
+            actor_text: Some(self.foreground.clone()),
+            activation_background: Some(self.surface_alt.clone()),
+            activation_border: Some(self.primary.clone()),
+            error: Some(self.danger.clone()),
+            warning: Some(self.warning.clone()),
+            success: Some(self.success.clone()),
+        };
+        let font_family = if self.font_family.to_ascii_lowercase().contains("sans-serif") {
+            self.font_family.clone()
+        } else {
+            format!("{}, sans-serif", self.font_family)
+        };
+        let mut output = HostThemeOutput::resvg_safe_editor();
+        output.scoped_css = Some(themed_shape_css(self));
+        let profile = HostThemeProfile::builder()
+            .font_family(font_family)
+            .font_size("16px")
+            .roles(roles)
+            .series_palette(self.chart_palette.clone())
+            .output(output)
+            .build();
+        PreparedMermaidRenderer {
+            renderer: HeadlessRenderer::new()
+                .with_compiled_host_theme(&profile.compile())
+                .with_vendored_text_measurer(),
+            accent_count: self.chart_palette.len().min(self.accent_surfaces.len()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct PreparedMermaidRenderer {
+    renderer: HeadlessRenderer,
+    accent_count: usize,
+}
+
+impl PreparedMermaidRenderer {
+    pub fn render_to_svg(&self, source: &str) -> Result<String> {
+        if !is_supported_diagram(source) {
+            return Err(anyhow!("unsupported Mermaid diagram type"));
+        }
+
+        let id = DIAGRAM_ID.fetch_add(1, Ordering::Relaxed);
+        let diagram_id = format!("castle-mermaid-{id}");
+        let svg = self
+            .renderer
+            .clone()
+            .with_diagram_id(&diagram_id)
+            .render_svg_sync(source)?
+            .ok_or_else(|| anyhow!("Merman produced no SVG"))?;
+        assign_accent_classes(&svg, self.accent_count)
+    }
 }
 
 fn themed_shape_css(theme: &MermaidTheme) -> String {
@@ -184,67 +255,6 @@ pub fn is_supported_diagram(source: &str) -> bool {
     .any(|supported| kind.eq_ignore_ascii_case(supported))
 }
 
-pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
-    if !is_supported_diagram(source) {
-        return Err(anyhow!("unsupported Mermaid diagram type"));
-    }
-
-    let roles = HostThemeRoles {
-        canvas: Some(theme.background.clone()),
-        surface: Some(theme.surface.clone()),
-        surface_alt: Some(theme.surface_alt.clone()),
-        surface_muted: Some(theme.surface_alt.clone()),
-        text: Some(theme.foreground.clone()),
-        subtle_text: Some(theme.muted_foreground.clone()),
-        border: Some(theme.border.clone()),
-        line: Some(theme.muted_foreground.clone()),
-        edge_label_background: Some(theme.background.clone()),
-        cluster_background: Some(theme.surface_alt.clone()),
-        cluster_border: Some(theme.border.clone()),
-        note_background: Some(theme.surface_alt.clone()),
-        note_border: Some(theme.warning.clone()),
-        note_text: Some(theme.foreground.clone()),
-        actor_background: Some(theme.surface.clone()),
-        actor_border: Some(theme.border.clone()),
-        actor_text: Some(theme.foreground.clone()),
-        activation_background: Some(theme.surface_alt.clone()),
-        activation_border: Some(theme.primary.clone()),
-        error: Some(theme.danger.clone()),
-        warning: Some(theme.warning.clone()),
-        success: Some(theme.success.clone()),
-    };
-    let font_family = if theme
-        .font_family
-        .to_ascii_lowercase()
-        .contains("sans-serif")
-    {
-        theme.font_family.clone()
-    } else {
-        format!("{}, sans-serif", theme.font_family)
-    };
-    let mut output = HostThemeOutput::resvg_safe_editor();
-    output.scoped_css = Some(themed_shape_css(theme));
-    let profile = HostThemeProfile::builder()
-        .font_family(font_family)
-        .font_size("16px")
-        .roles(roles)
-        .series_palette(theme.chart_palette.clone())
-        .output(output)
-        .build();
-    let id = DIAGRAM_ID.fetch_add(1, Ordering::Relaxed);
-    let diagram_id = format!("castle-mermaid-{id}");
-    let svg = HeadlessRenderer::new()
-        .with_host_theme(&profile)
-        .with_vendored_text_measurer()
-        .with_diagram_id(&diagram_id)
-        .render_svg_sync(source)?
-        .ok_or_else(|| anyhow!("Merman produced no SVG"))?;
-    assign_accent_classes(
-        &svg,
-        theme.chart_palette.len().min(theme.accent_surfaces.len()),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,7 +315,9 @@ mod tests {
 
     #[test]
     fn renders_resvg_safe_svg() {
-        let svg = render_to_svg("flowchart LR\nA[Castle] --> B[Preview]", &theme())
+        let svg = theme()
+            .prepare()
+            .render_to_svg("flowchart LR\nA[Castle] --> B[Preview]")
             .expect("representative Mermaid should render");
         assert!(svg.starts_with("<svg") || svg.contains("<svg"));
         assert!(!svg.contains("foreignObject"));
@@ -358,8 +370,10 @@ mod tests {
         dark.accent_surfaces = vec!["#172554".into(), "#2e1065".into(), "#083344".into()];
 
         for current_theme in [&light, &dark] {
+            let renderer = current_theme.prepare();
             for (name, source) in samples {
-                let svg = render_to_svg(source, current_theme)
+                let svg = renderer
+                    .render_to_svg(source)
                     .unwrap_or_else(|error| panic!("{name} failed: {error}"));
                 assert!(svg.contains("<svg"), "{name}");
                 assert!(!svg.contains("foreignObject"), "{name}");

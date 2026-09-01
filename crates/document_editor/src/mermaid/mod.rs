@@ -1,4 +1,4 @@
-use self::renderer::{MermaidTheme, is_supported_diagram, render_to_svg};
+use self::renderer::{MermaidTheme, PreparedMermaidRenderer, is_supported_diagram};
 use gpui::{
     App, AppContext as _, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle,
     ImageSource, InteractiveElement as _, IntoElement, ParentElement as _, ParsedSvg, RenderImage,
@@ -28,6 +28,8 @@ use std::{
 use super::DocumentEditorView;
 
 const MAX_RENDER_JOBS: usize = 2;
+const INITIAL_RASTER_QUALITY: f32 = 0.5;
+const FINAL_RASTER_QUALITY: f32 = 1.0;
 const ZOOM_STEP: f32 = 0.1;
 const MIN_ZOOM: f32 = 0.5;
 const MAX_ZOOM: f32 = 2.0;
@@ -46,6 +48,7 @@ struct CacheKey {
 struct Raster {
     image: Arc<RenderImage>,
     zoom: f32,
+    quality: f32,
     natural_width: f32,
     natural_height: f32,
 }
@@ -143,7 +146,7 @@ enum RenderRequest {
     Layout {
         key: CacheKey,
         generation: u64,
-        theme: Box<MermaidTheme>,
+        renderer: Arc<PreparedMermaidRenderer>,
     },
     Raster {
         key: CacheKey,
@@ -861,6 +864,7 @@ impl DocumentEditorView {
     pub(super) fn activate_mermaids(&mut self, cx: &mut Context<Self>) {
         let theme = theme_from_app(cx);
         let fingerprint = theme.fingerprint();
+        let mut renderer = None;
         let descriptors = self.mermaid.analyzed.clone();
         self.mermaid.generation = self.mermaid.generation.saturating_add(1);
         let generation = self.mermaid.generation;
@@ -948,7 +952,9 @@ impl DocumentEditorView {
                 self.mermaid.queue.push_back(RenderRequest::Layout {
                     key,
                     generation,
-                    theme: Box::new(theme.clone()),
+                    renderer: renderer
+                        .get_or_insert_with(|| Arc::new(theme.prepare()))
+                        .clone(),
                 });
             }
         }
@@ -987,17 +993,24 @@ impl DocumentEditorView {
                             RenderRequest::Layout {
                                 key,
                                 generation,
-                                theme,
+                                renderer,
                             } => {
                                 let value = (|| {
-                                    let svg = render_to_svg(&key.source, &theme)
+                                    let svg = renderer
+                                        .render_to_svg(&key.source)
                                         .map_err(|error| error.to_string())?;
                                     let parsed = Arc::new(
                                         svg_renderer
                                             .parse_svg(svg.as_bytes())
                                             .map_err(|error| error.to_string())?,
                                     );
-                                    let raster = rasterize(&svg_renderer, &parsed, key.scale, 1.0)?;
+                                    let raster = rasterize(
+                                        &svg_renderer,
+                                        &parsed,
+                                        key.scale,
+                                        1.0,
+                                        INITIAL_RASTER_QUALITY,
+                                    )?;
                                     Ok::<_, String>((Some(parsed), raster))
                                 })();
                                 CompletedRender {
@@ -1013,8 +1026,14 @@ impl DocumentEditorView {
                                 zoom,
                                 parsed,
                             } => {
-                                let value = rasterize(&svg_renderer, &parsed, key.scale, zoom)
-                                    .map(|raster| (None, raster));
+                                let value = rasterize(
+                                    &svg_renderer,
+                                    &parsed,
+                                    key.scale,
+                                    zoom,
+                                    FINAL_RASTER_QUALITY,
+                                )
+                                .map(|raster| (None, raster));
                                 CompletedRender {
                                     key,
                                     generation,
@@ -1074,6 +1093,7 @@ impl DocumentEditorView {
                 .pending_rasters
                 .remove(&(key.clone(), zoom_bits(zoom)));
         }
+        let mut quality_upgrade = None;
         match value {
             Ok((parsed, raster)) => {
                 self.mermaid
@@ -1091,6 +1111,18 @@ impl DocumentEditorView {
                         && *current == generation
                     {
                         let retired_image = fallback.take().map(|old| old.image);
+                        let upgrade = (raster.quality < FINAL_RASTER_QUALITY).then(|| {
+                            let zoom = raster.zoom;
+                            (
+                                (key.clone(), zoom_bits(zoom)),
+                                RenderRequest::Raster {
+                                    key: key.clone(),
+                                    generation,
+                                    zoom,
+                                    parsed: parsed.clone(),
+                                },
+                            )
+                        });
                         let mut rasters = HashMap::new();
                         rasters.insert(zoom_bits(raster.zoom), raster);
                         *entry = CacheEntry::Ready {
@@ -1098,6 +1130,7 @@ impl DocumentEditorView {
                             parsed,
                             rasters,
                         };
+                        quality_upgrade = upgrade;
                         if let Some(image) = retired_image {
                             self.mermaid.retire_image(image);
                         }
@@ -1140,6 +1173,11 @@ impl DocumentEditorView {
                     );
                 }
             }
+        }
+        if let Some((pending, request)) = quality_upgrade
+            && self.mermaid.pending_rasters.insert(pending)
+        {
+            self.mermaid.queue.push_back(request);
         }
         self.schedule_mermaid_remeasure(cx);
     }
@@ -1287,7 +1325,7 @@ impl DocumentEditorView {
         self.mermaid.queue.push_back(RenderRequest::Layout {
             key,
             generation,
-            theme: Box::new(theme_from_app(cx)),
+            renderer: Arc::new(theme_from_app(cx).prepare()),
         });
         self.pump_mermaid_queue(cx);
         cx.notify();
@@ -1361,15 +1399,17 @@ fn rasterize(
     parsed: &Arc<ParsedSvg>,
     fence_scale: u16,
     zoom: f32,
+    quality: f32,
 ) -> Result<Raster, String> {
     let image = renderer
-        .render_parsed(parsed, f32::from(fence_scale) / 100.0 * zoom)
+        .render_parsed(parsed, f32::from(fence_scale) / 100.0 * zoom * quality)
         .map_err(|error| error.to_string())?;
     let size = image.size(0);
-    let divisor = SMOOTH_SVG_SCALE_FACTOR * zoom;
+    let divisor = SMOOTH_SVG_SCALE_FACTOR * zoom * quality;
     Ok(Raster {
         image,
         zoom,
+        quality,
         natural_width: size.width.0 as f32 / divisor,
         natural_height: size.height.0 as f32 / divisor,
     })
@@ -1503,8 +1543,10 @@ mod tests {
             "stateDiagram-v2\n[*] --> Ready",
         ];
         let renderer = gpui::SvgRenderer::new(Arc::new(()));
+        let mermaid_renderer = theme.prepare();
         for source in samples {
-            let svg = render_to_svg(source, &theme)
+            let svg = mermaid_renderer
+                .render_to_svg(source)
                 .unwrap_or_else(|error| panic!("failed to render {source}: {error}"));
             let parsed = renderer
                 .parse_svg(svg.as_bytes())
@@ -1517,6 +1559,47 @@ mod tests {
             assert!(image.size(0).width.0 < 5_000);
             assert!(image.size(0).height.0 < 5_000);
         }
-        assert!(render_to_svg("not-a-diagram", &theme).is_err());
+        assert!(mermaid_renderer.render_to_svg("not-a-diagram").is_err());
+    }
+
+    #[test]
+    fn initial_raster_preserves_layout_with_one_quarter_of_the_pixels() {
+        let theme = MermaidTheme {
+            font_family: "Arial, sans-serif".into(),
+            background: "#ffffff".into(),
+            surface: "#f8fafc".into(),
+            surface_alt: "#eef2f7".into(),
+            foreground: "#172033".into(),
+            muted_foreground: "#64748b".into(),
+            border: "#cbd5e1".into(),
+            primary: "#2563eb".into(),
+            warning: "#d97706".into(),
+            danger: "#dc2626".into(),
+            success: "#16a34a".into(),
+            chart_palette: vec!["#2563eb".into(), "#7c3aed".into(), "#0891b2".into()],
+            accent_surfaces: vec!["#dbeafe".into(), "#ede9fe".into(), "#cffafe".into()],
+        };
+        let source = "flowchart LR\nA[Capture] --> B[Organize] --> C[Review] --> D[Done]";
+        let svg = theme
+            .prepare()
+            .render_to_svg(source)
+            .expect("representative Mermaid should render");
+        let renderer = gpui::SvgRenderer::new(Arc::new(()));
+        let parsed = Arc::new(
+            renderer
+                .parse_svg(svg.as_bytes())
+                .expect("representative Mermaid SVG should parse"),
+        );
+        let initial = rasterize(&renderer, &parsed, 100, 1.0, INITIAL_RASTER_QUALITY)
+            .expect("initial Mermaid raster should render");
+        let final_raster = rasterize(&renderer, &parsed, 100, 1.0, FINAL_RASTER_QUALITY)
+            .expect("final Mermaid raster should render");
+        let initial_size = initial.image.size(0);
+        let final_size = final_raster.image.size(0);
+
+        assert!((initial.natural_width - final_raster.natural_width).abs() <= 1.0);
+        assert!((initial.natural_height - final_raster.natural_height).abs() <= 1.0);
+        assert!(initial_size.width.0 <= final_size.width.0 / 2 + 1);
+        assert!(initial_size.height.0 <= final_size.height.0 / 2 + 1);
     }
 }
