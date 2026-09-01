@@ -12,8 +12,9 @@ pub(super) struct RelatedNotesState {
         storage::workspace::links::WorkspaceItemRef,
         Vec<storage::workspace::links::RelatedNote>,
     >,
+    pub(super) reference_catalog: Arc<storage::workspace::links::WorkspaceReferenceCatalog>,
     pub(super) catalog: Arc<Vec<storage::workspace::links::WorkspaceCatalogEntry>>,
-    pub(super) completion_provider: workspace::WikiLinkCompletionProvider,
+    pub(super) completion_provider: workspace::WorkspaceReferenceCompletionProvider,
     pub(super) error: Option<SharedString>,
 }
 

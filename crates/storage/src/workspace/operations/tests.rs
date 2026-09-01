@@ -215,10 +215,11 @@ async fn creates_searches_updates_and_moves_notes() -> Result<()> {
     assert_eq!(standalone.project_id, None);
     assert_eq!(standalone.content, "# Roadmap\n\nNotes are supported.");
 
+    let missing_content = "See [[card:Missing card|Unavailable card]]".to_string();
     let missing = store
         .create_note(CreateNoteInput {
             title: "Missing target".to_string(),
-            content: "See [[card:999|Unavailable card]]".to_string(),
+            content: missing_content.clone(),
             project_id: None,
         })
         .await?;
@@ -226,7 +227,7 @@ async fn creates_searches_updates_and_moves_notes() -> Result<()> {
     assert_eq!(links.unresolved.len(), 1);
     assert_eq!(links.unresolved[0].target_kind.as_deref(), Some("card"));
     assert_eq!(links.unresolved[0].start_byte, 4);
-    assert_eq!(links.unresolved[0].end_byte, 33);
+    assert_eq!(links.unresolved[0].end_byte, missing_content.len());
     Ok(())
 }
 
@@ -285,7 +286,7 @@ async fn workspace_relations_validate_hierarchy_and_reindex_card_descriptions() 
         .update_entry(UpdateEntryInput {
             entry_id: card.id,
             title: None,
-            description: Some(format!("See [[note:{}|API research]]", note.id)),
+            description: Some("See [[note:API research]]".to_string()),
             due_on: None,
             clear_due_on: false,
         })

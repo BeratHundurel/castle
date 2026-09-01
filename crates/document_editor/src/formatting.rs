@@ -673,14 +673,8 @@ mod tests {
     }
 
     #[test]
-    fn formatting_preserves_castle_board_view_block_bytes() {
-        let block = concat!(
-            "```castle-board-view\n",
-            "board = 12\n",
-            "view = 4\n",
-            "title = \"Roadmap · Current\"\n",
-            "```\n"
-        );
+    fn formatting_preserves_board_transclusion_bytes() {
+        let block = "![[board:Roadmap#Current]]\n";
         let source = format!("#  Board context\n\n{block}");
         let Ok(Some(formatted)) = format_markdown(&source) else {
             panic!("heading should be formatted");

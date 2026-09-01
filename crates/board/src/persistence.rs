@@ -110,10 +110,10 @@ impl BoardView {
                     );
                     let views =
                         storage::board::properties::load_board_views(&db, board_id as i64);
-                    let link_catalog =
-                        storage::workspace::links::load_workspace_link_catalog(&db);
-                    let ((cards, labels), properties, views, link_catalog) =
-                        tokio::try_join!(board_data, properties, views, link_catalog)?;
+                    let reference_catalog =
+                        storage::workspace::links::load_workspace_reference_catalog(&db);
+                    let ((cards, labels), properties, views, reference_catalog) =
+                        tokio::try_join!(board_data, properties, views, reference_catalog)?;
                     let mut related_targets = vec![storage::workspace::links::WorkspaceItemRef {
                         kind: storage::workspace::links::WorkspaceItemKind::Board,
                         id: i64::from(board_id),
@@ -134,7 +134,7 @@ impl BoardView {
                         labels,
                         properties,
                         views,
-                        link_catalog,
+                        reference_catalog,
                         related_notes,
                     ))
                     } => Some(result),
@@ -163,7 +163,7 @@ impl BoardView {
                             board_labels,
                             board_properties,
                             saved_views,
-                            link_catalog,
+                            reference_catalog,
                             related_notes,
                         )) => {
                             let property_values = board_properties
@@ -194,7 +194,9 @@ impl BoardView {
                             this.properties.data = board_properties;
                             this.properties.values = property_values;
                             this.properties.saved_views = saved_views.views;
-                            let workspace_link_catalog = Arc::new(link_catalog);
+                            let workspace_reference_catalog = Arc::new(reference_catalog);
+                            let workspace_link_catalog =
+                                Arc::new(workspace_reference_catalog.items.clone());
                             let project_id = workspace_link_catalog
                                 .iter()
                                 .find(|entry| {
@@ -205,10 +207,13 @@ impl BoardView {
                                 .and_then(|entry| entry.project_id);
                             this.related_notes
                                 .completion_provider
-                                .update_for_workspace_source(
+                                .update_reference_catalog(
+                                    -1,
                                     project_id,
-                                    workspace_link_catalog.clone(),
+                                    true,
+                                    workspace_reference_catalog.clone(),
                                 );
+                            this.related_notes.reference_catalog = workspace_reference_catalog;
                             this.related_notes.catalog = workspace_link_catalog;
                             this.related_notes.by_item = related_notes;
                             this.properties.active_view_id = active_view_id;
@@ -227,7 +232,16 @@ impl BoardView {
                             this.properties.data = Default::default();
                             this.properties.values.clear();
                             this.properties.saved_views.clear();
+                            this.related_notes.reference_catalog = Arc::new(Default::default());
                             this.related_notes.catalog = Arc::new(Vec::new());
+                            this.related_notes
+                                .completion_provider
+                                .update_reference_catalog(
+                                    -1,
+                                    None,
+                                    false,
+                                    Arc::new(Default::default()),
+                                );
                             this.related_notes.by_item.clear();
                             this.properties.active_view_id = None;
                             this.properties.active_view_config =

@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use entity::{board, board::Entity as Board};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -519,91 +519,17 @@ fn property_value_label(value: &PropertyValue, definition: &PropertyDefinition) 
     }
 }
 
-pub fn parse_embed_config(source: &str) -> Result<(i64, Option<i64>, Option<String>)> {
-    let mut board_id = None;
-    let mut view_id = None;
-    let mut title = None;
-    for line in source.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        match key.trim() {
-            "board" => board_id = Some(value.trim().parse()?),
-            "view" => view_id = Some(value.trim().parse()?),
-            "title" => {
-                let value = value.trim();
-                title = Some(
-                    value
-                        .strip_prefix('"')
-                        .and_then(|value| value.strip_suffix('"'))
-                        .unwrap_or(value)
-                        .to_string(),
-                );
-            }
-            _ => {}
-        }
-    }
-    let Some(board_id) = board_id else {
-        bail!("castle-board-view embed requires board");
-    };
-    Ok((board_id, view_id, title))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BoardViewEmbed {
-    pub board_id: i64,
-    pub view_id: Option<i64>,
-    pub fallback_title: Option<String>,
-    pub start_byte: usize,
-    pub end_byte: usize,
-}
+pub use crate::workspace::links::ParsedBoardViewEmbed as BoardViewEmbed;
 
 pub fn parse_board_view_embeds(content: &str) -> Vec<BoardViewEmbed> {
-    let lines = content.split_inclusive('\n').collect::<Vec<_>>();
-    let mut embeds = Vec::new();
-    let mut offset = 0usize;
-    let mut index = 0usize;
-    while index < lines.len() {
-        let line = lines[index];
-        if line.trim_end_matches(['\r', '\n']) != "```castle-board-view" {
-            offset = offset.saturating_add(line.len());
-            index += 1;
-            continue;
-        }
-        let start_byte = offset;
-        let mut source = String::new();
-        offset = offset.saturating_add(line.len());
-        index += 1;
-        let mut closed = false;
-        while index < lines.len() {
-            let line = lines[index];
-            offset = offset.saturating_add(line.len());
-            index += 1;
-            if line.trim_end_matches(['\r', '\n']) == "```" {
-                closed = true;
-                break;
-            }
-            source.push_str(line);
-        }
-        if closed && let Ok((board_id, view_id, fallback_title)) = parse_embed_config(&source) {
-            embeds.push(BoardViewEmbed {
-                board_id,
-                view_id,
-                fallback_title,
-                start_byte,
-                end_byte: offset,
-            });
-        }
-    }
-    embeds
+    crate::workspace::links::parse_board_view_embeds(content)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         BOARD_VIEW_PROJECTION_LIMIT, BoardViewEntry, BoardViewProjectionResult,
-        compare_entries_for_view, load_board_view_projection, parse_embed_config,
-        sort_entries_for_view,
+        compare_entries_for_view, load_board_view_projection, sort_entries_for_view,
     };
     use anyhow::Result;
     use entity::{board, card, entry, note};
@@ -951,24 +877,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_readable_embed_config() {
-        assert_eq!(
-            parse_embed_config("board = 12\nview = 4\ntitle = \"Roadmap · Current\"")
-                .expect("config should parse"),
-            (12, Some(4), Some("Roadmap · Current".to_string()))
-        );
-    }
-
-    #[test]
-    fn recognizes_only_exact_closed_castle_fences() {
-        let content = "before\n```castle-board-view\nboard = 12\n```\n```rust\nboard = 1\n```\n";
+    fn recognizes_only_standalone_readable_board_transclusions() {
+        let content = "before ![[board:Roadmap]]\n  ![[board:Roadmap#Current]]\n```castle-board-view\nboard = 12\n```\n";
         let embeds = super::parse_board_view_embeds(content);
         assert_eq!(embeds.len(), 1);
-        assert_eq!(embeds[0].board_id, 12);
+        assert_eq!(embeds[0].board_path, vec!["Roadmap"]);
+        assert_eq!(embeds[0].view_name.as_deref(), Some("Current"));
         assert_eq!(
             &content[embeds[0].start_byte..embeds[0].end_byte],
-            "```castle-board-view\nboard = 12\n```\n"
+            "![[board:Roadmap#Current]]"
         );
+        assert!(super::parse_board_view_embeds("![[board:12]]").is_empty());
     }
 
     #[tokio::test]

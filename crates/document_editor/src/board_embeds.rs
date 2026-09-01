@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
 };
@@ -22,9 +23,61 @@ use runtime::AppRuntime;
 use super::DocumentEditorView;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(super) struct EmbedKey {
+struct EmbedTarget {
     board_id: i64,
     view_id: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct EmbedKey {
+    raw_target: String,
+    target: Option<EmbedTarget>,
+}
+
+impl EmbedKey {
+    fn unresolved(raw_target: String) -> Self {
+        Self {
+            raw_target,
+            target: None,
+        }
+    }
+
+    fn resolved(raw_target: String, target: EmbedTarget) -> Self {
+        Self {
+            raw_target,
+            target: Some(target),
+        }
+    }
+}
+
+impl PartialEq for EmbedKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.target, other.target) {
+            (Some(left), Some(right)) => {
+                left == right && self.raw_target.to_lowercase() == other.raw_target.to_lowercase()
+            }
+            (None, None) => self.raw_target.to_lowercase() == other.raw_target.to_lowercase(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for EmbedKey {}
+
+impl Hash for EmbedKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self.target {
+            Some(target) => {
+                1u8.hash(state);
+                target.hash(state);
+                self.raw_target.to_lowercase().hash(state);
+            }
+            None => {
+                0u8.hash(state);
+                self.raw_target.to_lowercase().hash(state);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -33,13 +86,13 @@ pub(super) enum EmbedState {
     Available(Arc<storage::board::projection::BoardViewProjection>),
     MissingBoard,
     MissingView,
+    Ambiguous,
     Error(SharedString),
 }
 
 #[derive(Clone)]
 struct EmbedBlock {
     key: EmbedKey,
-    fallback_title: Option<String>,
     source_range: Range<usize>,
 }
 
@@ -68,18 +121,31 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
     }
 
     fn parse(&self, node: &Node, cx: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
-        let Node::Code(code) = node else {
+        let Node::Paragraph(paragraph) = node else {
             return None;
         };
-        if code.lang.as_deref() != Some("castle-board-view") {
+        let Some(source) = cx.node_source(node) else {
+            return None;
+        };
+        let [Node::Text(text)] = paragraph.children.as_slice() else {
+            return None;
+        };
+        let embeds = storage::board::projection::parse_board_view_embeds(source);
+        let [embed] = embeds.as_slice() else {
+            return None;
+        };
+        if text.value.trim() != source.trim() {
             return None;
         }
-        let (board_id, view_id, fallback_title) =
-            storage::board::projection::parse_embed_config(&code.value).ok()?;
         let position = node.position()?;
+        let key = self
+            .states
+            .keys()
+            .find(|key| key.raw_target.to_lowercase() == embed.raw_target.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| EmbedKey::unresolved(embed.raw_target.clone()));
         let block = EmbedBlock {
-            key: EmbedKey { board_id, view_id },
-            fallback_title,
+            key,
             source_range: (cx.offset() + position.start.offset)
                 ..(cx.offset() + position.end.offset),
         };
@@ -123,6 +189,13 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
                 self.editor.clone(),
                 block.clone(),
                 "This saved view is unavailable",
+                true,
+                cx,
+            ),
+            EmbedState::Ambiguous => render_status(
+                self.editor.clone(),
+                block.clone(),
+                "This reference matches more than one board or view",
                 true,
                 cx,
             ),
@@ -302,10 +375,7 @@ fn render_status(
     actions: bool,
     cx: &mut gpui::App,
 ) -> gpui::AnyElement {
-    let fallback = block
-        .fallback_title
-        .clone()
-        .unwrap_or_else(|| format!("Board {}", block.key.board_id));
+    let fallback = block.key.raw_target.clone();
     v_flex()
         .id(("castle-board-view", block.source_range.start as u64))
         .w_full()
@@ -371,22 +441,16 @@ fn render_status(
 impl DocumentEditorView {
     pub(crate) fn refresh_board_embeds(&mut self, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board::projection::parse_board_view_embeds(&content)
-            .into_iter()
-            .map(|embed| EmbedKey {
-                board_id: embed.board_id,
-                view_id: embed.view_id,
-            })
-            .collect::<HashSet<_>>();
+        let keys = keys_for_content(&content, &self.embeds.states);
         let mut states = self.embeds.states.as_ref().clone();
         states.retain(|key, _| keys.contains(key));
         let keys_to_load = keys
             .iter()
-            .copied()
+            .cloned()
             .filter(|key| !states.contains_key(key))
             .collect::<HashSet<_>>();
         for key in &keys_to_load {
-            states.insert(*key, EmbedState::Loading);
+            states.insert(key.clone(), EmbedState::Loading);
         }
         self.embeds.states = Arc::new(states);
         if keys.is_empty() {
@@ -404,29 +468,18 @@ impl DocumentEditorView {
 
     pub fn refresh_board_embeds_for(&mut self, board_id: i64, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board::projection::parse_board_view_embeds(&content)
+        let keys = keys_for_content(&content, &self.embeds.states)
             .into_iter()
-            .filter(|embed| embed.board_id == board_id)
-            .map(|embed| EmbedKey {
-                board_id: embed.board_id,
-                view_id: embed.view_id,
-            })
+            .filter(|key| key.target.is_some_and(|target| target.board_id == board_id))
             .collect::<HashSet<_>>();
-        if keys.is_empty() {
-            return;
+        if !keys.is_empty() {
+            self.start_board_embed_load(keys, cx);
         }
-        self.start_board_embed_load(keys, cx);
     }
 
     pub fn reload_board_embeds(&mut self, cx: &mut Context<Self>) {
         let content = self.editor.read(cx).value().to_string();
-        let keys = storage::board::projection::parse_board_view_embeds(&content)
-            .into_iter()
-            .map(|embed| EmbedKey {
-                board_id: embed.board_id,
-                view_id: embed.view_id,
-            })
-            .collect::<HashSet<_>>();
+        let keys = keys_for_content(&content, &self.embeds.states);
         if !keys.is_empty() {
             self.start_board_embed_load(keys, cx);
         }
@@ -437,7 +490,7 @@ impl DocumentEditorView {
             self.embeds
                 .loading_keys
                 .iter()
-                .copied()
+                .cloned()
                 .filter(|key| self.embeds.states.contains_key(key)),
         );
         self.embeds.loading_keys = keys.clone();
@@ -451,29 +504,69 @@ impl DocumentEditorView {
                     biased;
                     _ = cancelled => None,
                     states = async move {
+                        let catalog = storage::workspace::links::load_workspace_reference_catalog(&db)
+                            .await?;
                         let mut states = HashMap::new();
                         for key in keys {
-                            let state = match storage::board::projection::load_board_view_projection(
-                                &db,
-                                key.board_id,
-                                key.view_id,
-                            )
-                            .await
-                            {
-                                Ok(storage::board::projection::BoardViewProjectionResult::Available(
-                                    projection,
-                                )) => EmbedState::Available(Arc::new(projection)),
-                                Ok(storage::board::projection::BoardViewProjectionResult::MissingBoard) => {
-                                    EmbedState::MissingBoard
-                                }
-                                Ok(storage::board::projection::BoardViewProjectionResult::MissingView) => {
-                                    EmbedState::MissingView
-                                }
-                                Err(error) => EmbedState::Error(error.to_string().into()),
+                            let resolved = match key.target {
+                                Some(target) => Ok(
+                                    storage::workspace::links::ResolvedWorkspaceReference::BoardView {
+                                        board_id: target.board_id,
+                                        view_id: target.view_id,
+                                    },
+                                ),
+                                None => storage::workspace::links::resolve_board_view_target(
+                                    &key.raw_target,
+                                    &catalog,
+                                ),
                             };
-                            states.insert(key, state);
+                            let (state_key, state) = match resolved {
+                                Ok(storage::workspace::links::ResolvedWorkspaceReference::BoardView {
+                                    board_id,
+                                    view_id,
+                                }) => {
+                                    let state = match storage::board::projection::load_board_view_projection(
+                                        &db,
+                                        board_id,
+                                        view_id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(storage::board::projection::BoardViewProjectionResult::Available(
+                                            projection,
+                                        )) => EmbedState::Available(Arc::new(projection)),
+                                        Ok(storage::board::projection::BoardViewProjectionResult::MissingBoard) => {
+                                            EmbedState::MissingBoard
+                                        }
+                                        Ok(storage::board::projection::BoardViewProjectionResult::MissingView) => {
+                                            EmbedState::MissingView
+                                        }
+                                        Err(error) => EmbedState::Error(error.to_string().into()),
+                                    };
+                                    (
+                                        EmbedKey::resolved(
+                                            key.raw_target,
+                                            EmbedTarget { board_id, view_id },
+                                        ),
+                                        state,
+                                    )
+                                }
+                                Err(storage::workspace::links::WorkspaceReferenceResolveError::Missing) => {
+                                    (key.clone(), missing_embed_state(&key.raw_target, &catalog))
+                                }
+                                Err(storage::workspace::links::WorkspaceReferenceResolveError::Ambiguous) => {
+                                    (key, EmbedState::Ambiguous)
+                                }
+                                Err(storage::workspace::links::WorkspaceReferenceResolveError::Invalid) => {
+                                    (key, EmbedState::Error("Invalid board reference".into()))
+                                }
+                                Ok(storage::workspace::links::ResolvedWorkspaceReference::Item(_)) => {
+                                    (key, EmbedState::Error("Board view reference expected".into()))
+                                }
+                            };
+                            states.insert(state_key, state);
                         }
-                        states
+                        Ok::<_, anyhow::Error>(states)
                     } => Some(states),
                 }
             });
@@ -486,11 +579,32 @@ impl DocumentEditorView {
                 let loading_keys = std::mem::take(&mut this.embeds.loading_keys);
                 let mut merged = this.embeds.states.as_ref().clone();
                 match result {
-                    Ok(Some(states)) => {
+                    Ok(Some(Ok(states))) => {
                         for (key, state) in states {
-                            if merged.contains_key(&key) {
-                                merged.insert(key, state);
+                            let matching_raw = merged.keys().any(|existing| {
+                                existing.raw_target.to_lowercase() == key.raw_target.to_lowercase()
+                            });
+                            if !matching_raw {
+                                continue;
                             }
+                            let stale_keys = merged
+                                .keys()
+                                .filter(|existing| {
+                                    existing.raw_target.to_lowercase()
+                                        == key.raw_target.to_lowercase()
+                                        && **existing != key
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            for stale_key in stale_keys {
+                                merged.remove(&stale_key);
+                            }
+                            merged.insert(key, state);
+                        }
+                    }
+                    Ok(Some(Err(error))) => {
+                        for key in keys_for_error(&merged, &loading_keys) {
+                            merged.insert(key, EmbedState::Error(error.to_string().into()));
                         }
                     }
                     Ok(None) => return,
@@ -510,13 +624,68 @@ impl DocumentEditorView {
     }
 }
 
+fn keys_for_content(content: &str, states: &HashMap<EmbedKey, EmbedState>) -> HashSet<EmbedKey> {
+    storage::board::projection::parse_board_view_embeds(content)
+        .into_iter()
+        .map(|embed| {
+            states
+                .keys()
+                .find(|key| key.raw_target.to_lowercase() == embed.raw_target.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| EmbedKey::unresolved(embed.raw_target))
+        })
+        .collect()
+}
+
+fn missing_embed_state(
+    raw_target: &str,
+    catalog: &storage::workspace::links::WorkspaceReferenceCatalog,
+) -> EmbedState {
+    let Some(reference) = storage::workspace::links::parse_reference_target(raw_target) else {
+        return EmbedState::MissingBoard;
+    };
+    let board_reference = storage::workspace::links::WorkspaceReferencePath {
+        kind: reference.kind,
+        segments: reference.segments,
+        view: None,
+        display_text: None,
+    };
+    match storage::workspace::links::resolve_reference(&board_reference, catalog) {
+        Ok(storage::workspace::links::ResolvedWorkspaceReference::Item(_)) => {
+            EmbedState::MissingView
+        }
+        _ => EmbedState::MissingBoard,
+    }
+}
+
 fn keys_for_error(
     states: &HashMap<EmbedKey, EmbedState>,
     loading: &HashSet<EmbedKey>,
 ) -> Vec<EmbedKey> {
     if loading.is_empty() {
-        states.keys().copied().collect()
+        states.keys().cloned().collect()
     } else {
-        loading.iter().copied().collect()
+        loading.iter().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolved_embed_keys_keep_distinct_readable_spellings() {
+        let target = EmbedTarget {
+            board_id: 7,
+            view_id: Some(8),
+        };
+        let current = EmbedKey::resolved("board:Roadmap#Current".into(), target);
+        let alias = EmbedKey::resolved("board:Old Roadmap#Now".into(), target);
+        assert_ne!(current, alias);
+
+        let mut states = HashMap::new();
+        states.insert(current, EmbedState::Loading);
+        states.insert(alias, EmbedState::Loading);
+        assert_eq!(states.len(), 2);
     }
 }

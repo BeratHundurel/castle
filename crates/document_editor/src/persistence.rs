@@ -173,13 +173,14 @@ impl DocumentEditorView {
         self.persistence.current_path = model.file_path.map(PathBuf::from);
         let current_path = self.persistence.current_path.clone();
         self.apply_document_kind(current_path.as_deref(), cx);
-        self.inspector_links.completion_provider.update(
-            self.note_id as i64,
-            self.inspector_links.project_id,
-            self.kind == DocumentKind::Markdown,
-            self.inspector_links.note_catalog.clone(),
-            self.inspector_links.workspace_catalog.clone(),
-        );
+        self.inspector_links
+            .completion_provider
+            .update_reference_catalog(
+                self.note_id as i64,
+                self.inspector_links.project_id,
+                self.kind == DocumentKind::Markdown,
+                self.inspector_links.workspace_catalog.clone(),
+            );
         self.persistence.file_managed_by_app = model.file_managed_by_app;
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         self.persistence.is_loading = is_loading;

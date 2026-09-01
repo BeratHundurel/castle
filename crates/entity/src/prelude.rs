@@ -19,3 +19,4 @@ pub use super::project::Entity as Project;
 pub use super::saved_board_view::Entity as SavedBoardView;
 pub use super::workspace_link::Entity as WorkspaceLink;
 pub use super::workspace_link_index_state::Entity as WorkspaceLinkIndexState;
+pub use super::workspace_reference_alias::Entity as WorkspaceReferenceAlias;

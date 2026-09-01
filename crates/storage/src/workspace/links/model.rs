@@ -18,10 +18,6 @@ impl WorkspaceItemKind {
             Self::Card => "card",
         }
     }
-
-    fn prefixed_target(self, id: i64) -> String {
-        format!("{}:{id}", self.as_str())
-    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -51,6 +47,38 @@ pub struct WorkspaceCatalogEntry {
 }
 
 impl WorkspaceCatalogEntry {
+    pub fn path_segments(&self) -> Vec<String> {
+        let mut path = Vec::new();
+        if let Some(project_name) = self.project_name.as_ref() {
+            path.push(project_name.clone());
+        }
+        match self.item.kind {
+            WorkspaceItemKind::Note | WorkspaceItemKind::Board => path.push(self.title.clone()),
+            WorkspaceItemKind::List => {
+                path.push(
+                    self.board_title
+                        .clone()
+                        .unwrap_or_else(|| "Unavailable board".to_string()),
+                );
+                path.push(self.title.clone());
+            }
+            WorkspaceItemKind::Card => {
+                path.push(
+                    self.board_title
+                        .clone()
+                        .unwrap_or_else(|| "Unavailable board".to_string()),
+                );
+                path.push(
+                    self.list_title
+                        .clone()
+                        .unwrap_or_else(|| "Unavailable list".to_string()),
+                );
+                path.push(self.title.clone());
+            }
+        }
+        path
+    }
+
     pub fn breadcrumb(&self) -> String {
         match self.item.kind {
             WorkspaceItemKind::Note => self
@@ -73,14 +101,24 @@ impl WorkspaceCatalogEntry {
         }
     }
 
+    pub fn readable_link(&self) -> String {
+        let path = self
+            .path_segments()
+            .into_iter()
+            .map(|segment| super::escape_segment(&segment))
+            .collect::<Vec<_>>()
+            .join(" / ");
+        format!("[[{}:{}]]", self.item.kind.as_str(), path)
+    }
+
     pub fn stable_link(&self) -> String {
-        stable_workspace_link(self.item, &self.title)
+        self.readable_link()
     }
 }
 
 pub fn stable_workspace_link(item: WorkspaceItemRef, title: &str) -> String {
-    let display = title.replace(['\r', '\n', '|', '[', ']'], " ");
-    format!("[[{}|{display}]]", item.kind.prefixed_target(item.id))
+    let display = crate::workspace::links::escape_segment(title.trim());
+    format!("[[{}:{display}]]", item.kind.as_str())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

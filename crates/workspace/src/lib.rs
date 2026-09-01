@@ -15,5 +15,6 @@ pub use navigation::{
 pub use request_tracker::RequestTracker;
 pub use sidebar::{ActiveItem, SidebarEvent, SidebarView};
 pub use wikilinks::{
-    WikiLinkCompletionProvider, WikiLinkPreviewPlugin, workspace_navigation_target,
+    WikiLinkCompletionProvider, WikiLinkPreviewPlugin, WorkspaceReferenceCompletionProvider,
+    workspace_navigation_target,
 };

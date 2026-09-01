@@ -546,12 +546,24 @@ pub async fn rename_board_view(
     view_id: i64,
     name: String,
 ) -> Result<BoardView> {
-    let view = active_board_view(db, view_id).await?;
     let name = required_text(name, "view name")?;
-    ensure_unique_view_name(db, view.board_id, Some(view_id), &name).await?;
+    let transaction = db.begin().await?;
+    let view = active_board_view(&transaction, view_id).await?;
+    ensure_unique_view_name(&transaction, view.board_id, Some(view_id), &name).await?;
+    if view.name != name {
+        crate::workspace::links::record_reference_alias(
+            &transaction,
+            crate::workspace::links::WorkspaceAliasTarget::SavedView(view_id),
+            &view.name,
+            crate::time::unix_timestamp_seconds(),
+        )
+        .await?;
+    }
     let mut active = view.into_active_model();
     active.name = Set(name);
-    decode_board_view(active.update(db).await?)
+    let updated = decode_board_view(active.update(&transaction).await?)?;
+    transaction.commit().await?;
+    Ok(updated)
 }
 
 pub async fn update_board_view(

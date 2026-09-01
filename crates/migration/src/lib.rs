@@ -25,6 +25,7 @@ mod m20260805_000022_remember_selected_board_view;
 mod m20260807_000023_workspace_links;
 mod m20260810_000024_external_workspace_link_revisions;
 mod m20260811_000025_reindex_workspace_links;
+mod m20260901_000026_workspace_reference_aliases;
 
 pub struct Migrator;
 
@@ -57,6 +58,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260807_000023_workspace_links::Migration),
             Box::new(m20260810_000024_external_workspace_link_revisions::Migration),
             Box::new(m20260811_000025_reindex_workspace_links::Migration),
+            Box::new(m20260901_000026_workspace_reference_aliases::Migration),
         ]
     }
 }

@@ -36,7 +36,7 @@ mod tests {
         db.execute_unprepared(
             r#"
             INSERT INTO note (id, title, cached_content, file_managed_by_app, created_at, updated_at)
-            VALUES (1, 'Source', '[[board:1|Roadmap]]', 0, 0, 1);
+            VALUES (1, 'Source', '[[board:Roadmap]]', 0, 0, 1);
             INSERT INTO board (id, title, last_selected_view_id) VALUES (1, 'Roadmap', 0);
             INSERT INTO note_link_index_state (note_id, indexed_updated_at)
             VALUES (1, 1);

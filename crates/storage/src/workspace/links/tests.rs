@@ -1,12 +1,12 @@
 use super::*;
-use entity::{board, card, entry, note};
+use entity::{board, card, entry, note, project, workspace_reference_alias};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, Database, QueryFilter, QueryOrder};
 
 #[test]
 fn relation_signature_ignores_prose_and_duplicate_occurrences() {
-    let original = "Before [[board:12|Old]] and [[board:12|Duplicate]].\n\n```castle-board-view\nboard = 12\nview = 4\ntitle = \"Old\"\n```";
-    let edited = "After [[board:12|New]].\n\n```castle-board-view\nboard = 12\nview = 4\ntitle = \"New\"\n```";
+    let original = "Before [[board:Roadmap|Old]] and [[board:Roadmap|Duplicate]].\n\n![[board:Roadmap#Current]]";
+    let edited = "After [[board:Roadmap|New]].\n\n![[board:Roadmap#Current]]";
 
     assert_eq!(
         workspace_relation_signature(original),
@@ -14,7 +14,15 @@ fn relation_signature_ignores_prose_and_duplicate_occurrences() {
     );
     assert_ne!(
         workspace_relation_signature(original),
-        workspace_relation_signature("[[card:99|Different]]")
+        workspace_relation_signature("[[card:Different]]")
+    );
+}
+
+#[test]
+fn relation_signature_keeps_escaped_path_delimiters_distinct() {
+    assert_ne!(
+        workspace_relation_signature(r"[[board:Road\/Map]]"),
+        workspace_relation_signature(r"[[board:Road / Map]]")
     );
 }
 
@@ -69,6 +77,7 @@ async fn manual_and_wikilink_origins_are_deduplicated() -> Result<()> {
     )
     .await?;
     index_entry_workspace_links(&db, item.id, "[[Research]]", 0).await?;
+    index_entry_workspace_links(&db, item.id, "[[Research]]", 1).await?;
 
     let related = load_related_notes(
         &db,
@@ -127,7 +136,7 @@ async fn manual_link_updates_are_idempotent_and_return_canonical_state() -> Resu
 }
 
 #[tokio::test]
-async fn note_workspace_links_use_stable_prefixed_ids() -> Result<()> {
+async fn note_workspace_links_resolve_readable_references() -> Result<()> {
     let db = Database::connect("sqlite::memory:").await?;
     Migrator::up(&db, None).await?;
     let note = note::ActiveModel {
@@ -147,7 +156,7 @@ async fn note_workspace_links_use_stable_prefixed_ids() -> Result<()> {
     }
     .insert(&db)
     .await?;
-    index_note_workspace_links(&db, note.id, &format!("[[board:{}|Roadmap]]", board.id), 0).await?;
+    index_note_workspace_links(&db, note.id, "[[board:Before rename|Roadmap]]", 0).await?;
     board::ActiveModel {
         id: Set(board.id),
         title: Set("After rename".to_string()),
@@ -158,6 +167,247 @@ async fn note_workspace_links_use_stable_prefixed_ids() -> Result<()> {
 
     let links = load_note_workspace_links(&db, note.id).await?;
     assert_eq!(links.references[0].item.title, "After rename");
+    Ok(())
+}
+
+#[tokio::test]
+async fn rename_operations_record_historical_reference_aliases_transactionally() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let project = project::ActiveModel {
+        name: Set("Old Project".to_string()),
+        archived: Set(false),
+        position: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let board = board::ActiveModel {
+        title: Set("Old Board".to_string()),
+        project_id: Set(Some(project.id)),
+        last_selected_view_id: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let list = card::ActiveModel {
+        title: Set("Old List".to_string()),
+        board_id: Set(board.id),
+        position: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let entry = entry::ActiveModel {
+        title: Set("Old Card".to_string()),
+        description: Set(String::new()),
+        card_id: Set(list.id),
+        position: Set(0),
+        reminder_enabled: Set(false),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let view = crate::board::properties::create_board_view(
+        &db,
+        board.id,
+        "Old View".to_string(),
+        Default::default(),
+    )
+    .await?;
+
+    crate::workspace::rename_project(&db, project.id as u32, "New Project".to_string()).await?;
+    crate::workspace::persist_workspace_title(
+        &db,
+        crate::workspace::WorkspaceTitleTarget::Board(board.id as u32),
+        "New Board".to_string(),
+    )
+    .await?;
+    crate::board::commands::rename_board_list(&db, list.id as u32, "New List".to_string()).await?;
+    crate::board::commands::update_board_card(
+        &db,
+        entry.id as u32,
+        "New Card".to_string(),
+        String::new(),
+        1,
+    )
+    .await?;
+    crate::board::properties::rename_board_view(&db, view.id, "New View".to_string()).await?;
+
+    let catalog = load_workspace_reference_catalog(&db).await?;
+    assert_eq!(
+        resolve_reference_target("board:Old Board", &catalog),
+        Ok(ResolvedWorkspaceReference::Item(WorkspaceItemRef {
+            kind: WorkspaceItemKind::Board,
+            id: board.id,
+        }))
+    );
+    assert_eq!(
+        resolve_reference_target("list:Old List", &catalog),
+        Ok(ResolvedWorkspaceReference::Item(WorkspaceItemRef {
+            kind: WorkspaceItemKind::List,
+            id: list.id,
+        }))
+    );
+    assert_eq!(
+        resolve_reference_target("card:Old Card", &catalog),
+        Ok(ResolvedWorkspaceReference::Item(WorkspaceItemRef {
+            kind: WorkspaceItemKind::Card,
+            id: entry.id,
+        }))
+    );
+    assert_eq!(
+        resolve_board_view_target("board:New Board#Old View", &catalog),
+        Ok(ResolvedWorkspaceReference::BoardView {
+            board_id: board.id,
+            view_id: Some(view.id),
+        })
+    );
+    assert_eq!(
+        resolve_reference_target(
+            "card:Old Project / New Board / New List / New Card",
+            &catalog
+        ),
+        Ok(ResolvedWorkspaceReference::Item(WorkspaceItemRef {
+            kind: WorkspaceItemKind::Card,
+            id: entry.id,
+        }))
+    );
+    assert_eq!(
+        workspace_reference_alias::Entity::find().count(&db).await?,
+        5
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reindexing_keeps_an_existing_binding_when_a_duplicate_name_appears() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let note = note::ActiveModel {
+        title: Set("Brief".to_string()),
+        cached_content: Set(String::new()),
+        file_managed_by_app: Set(false),
+        created_at: Set(0),
+        updated_at: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let first = board::ActiveModel {
+        title: Set("Roadmap".to_string()),
+        last_selected_view_id: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let content = "[[board:Roadmap]]";
+    index_note_workspace_links(&db, note.id, content, 0).await?;
+    board::ActiveModel {
+        title: Set("Roadmap".to_string()),
+        last_selected_view_id: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+
+    index_note_workspace_links(&db, note.id, content, 1).await?;
+    let links = load_note_workspace_links(&db, note.id).await?;
+    assert_eq!(links.references.len(), 1);
+    assert_eq!(links.references[0].item.item.id, first.id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn board_transclusions_index_readable_board_and_saved_view_targets() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let note = note::ActiveModel {
+        title: Set("Brief".to_string()),
+        cached_content: Set(String::new()),
+        file_managed_by_app: Set(false),
+        created_at: Set(0),
+        updated_at: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let board = board::ActiveModel {
+        title: Set("Roadmap".to_string()),
+        last_selected_view_id: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let view = crate::board::properties::create_board_view(
+        &db,
+        board.id,
+        "Current".to_string(),
+        Default::default(),
+    )
+    .await?;
+    let content = "![[board:Roadmap#Current]]\n![[board:Roadmap]]\n";
+    crate::note::links::index_note_links(&db, note.id, content, 0).await?;
+    let links = WorkspaceLink::find()
+        .filter(workspace_link::Column::SourceNoteId.eq(note.id))
+        .filter(workspace_link::Column::Origin.eq("embed"))
+        .order_by_asc(workspace_link::Column::Ordinal)
+        .all(&db)
+        .await?;
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].target_board_id, Some(board.id));
+    assert_eq!(links[0].target_saved_view_id, Some(view.id));
+    assert_eq!(links[1].target_saved_view_id, None);
+    assert!(
+        crate::note::links::load_note_links(&db, note.id)
+            .await?
+            .outbound
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reindexing_does_not_turn_a_deleted_saved_view_into_all_cards() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let note = note::ActiveModel {
+        title: Set("Brief".to_string()),
+        cached_content: Set(String::new()),
+        file_managed_by_app: Set(false),
+        created_at: Set(0),
+        updated_at: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let board = board::ActiveModel {
+        title: Set("Roadmap".to_string()),
+        last_selected_view_id: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    let view = crate::board::properties::create_board_view(
+        &db,
+        board.id,
+        "Current".to_string(),
+        Default::default(),
+    )
+    .await?;
+    let content = "![[board:Roadmap#Current]]";
+    crate::note::links::index_note_links(&db, note.id, content, 0).await?;
+    crate::board::properties::delete_board_view(&db, view.id).await?;
+    crate::note::links::index_note_links(&db, note.id, content, 1).await?;
+
+    assert_eq!(
+        WorkspaceLink::find()
+            .filter(workspace_link::Column::SourceNoteId.eq(note.id))
+            .filter(workspace_link::Column::Origin.eq("embed"))
+            .count(&db)
+            .await?,
+        0
+    );
     Ok(())
 }
 
@@ -177,7 +427,7 @@ async fn managed_note_creation_indexes_workspace_targets_immediately() -> Result
         None,
         "Brief".to_string(),
         "brief.md".to_string(),
-        format!("[[board:{}|Roadmap]]", board.id),
+        "[[board:Roadmap]]".to_string(),
     )
     .await?;
 

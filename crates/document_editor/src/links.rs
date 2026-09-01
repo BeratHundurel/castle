@@ -4,7 +4,7 @@ use gpui::{Context, Task};
 use runtime::AppRuntime;
 
 pub use workspace::{
-    WikiLinkCompletionProvider, WikiLinkPreviewPlugin, workspace_navigation_target,
+    WikiLinkPreviewPlugin, WorkspaceReferenceCompletionProvider, workspace_navigation_target,
 };
 
 use super::{DocumentEditorView, DocumentInspectorTab};
@@ -40,7 +40,7 @@ impl DocumentEditorView {
                             note_id as i64,
                         );
                         let workspace_catalog =
-                            storage::workspace::links::load_workspace_link_catalog(&db);
+                            storage::workspace::links::load_workspace_reference_catalog(&db);
                         let (note_catalog, workspace_links, workspace_catalog) =
                             tokio::try_join!(note_catalog, workspace_links, workspace_catalog)?;
                         Ok::<_, anyhow::Error>((
@@ -68,20 +68,37 @@ impl DocumentEditorView {
                         this.inspector_links.note_catalog = Arc::new(note_catalog);
                         this.inspector_links.workspace_links = Arc::new(workspace_links);
                         this.inspector_links.workspace_catalog = Arc::new(workspace_catalog);
-                        this.inspector_links.completion_provider.update(
+                        this.inspector_links.completion_provider.update_reference_catalog(
                             this.note_id as i64,
                             this.inspector_links.project_id,
                             this.kind == super::DocumentKind::Markdown,
-                            this.inspector_links.note_catalog.clone(),
                             this.inspector_links.workspace_catalog.clone(),
                         );
                         this.inspector_links.error = None;
                     }
                     Ok(Some(Err(error))) => {
+                        this.inspector_links.note_catalog = Arc::new(Vec::new());
+                        this.inspector_links.workspace_links = Arc::new(Default::default());
+                        this.inspector_links.workspace_catalog = Arc::new(Default::default());
+                        this.inspector_links.completion_provider.update_reference_catalog(
+                            this.note_id as i64,
+                            this.inspector_links.project_id,
+                            false,
+                            this.inspector_links.workspace_catalog.clone(),
+                        );
                         this.inspector_links.error = Some(error.to_string().into())
                     }
                     Ok(None) => return,
                     Err(error) => {
+                        this.inspector_links.note_catalog = Arc::new(Vec::new());
+                        this.inspector_links.workspace_links = Arc::new(Default::default());
+                        this.inspector_links.workspace_catalog = Arc::new(Default::default());
+                        this.inspector_links.completion_provider.update_reference_catalog(
+                            this.note_id as i64,
+                            this.inspector_links.project_id,
+                            false,
+                            this.inspector_links.workspace_catalog.clone(),
+                        );
                         this.inspector_links.error =
                             Some(format!("Link task failed: {error}").into())
                     }

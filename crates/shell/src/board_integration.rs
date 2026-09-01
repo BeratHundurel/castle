@@ -306,27 +306,41 @@ impl AppShell {
             let result = runtime
                 .spawn(async move {
                     let catalog =
-                        storage::workspace::links::load_workspace_link_catalog(&db).await?;
+                        storage::workspace::links::load_workspace_reference_catalog(&db).await?;
                     let boards = catalog
-                        .into_iter()
+                        .items
+                        .iter()
                         .filter(|entry| {
                             entry.item.kind == storage::workspace::links::WorkspaceItemKind::Board
                         })
                         .collect::<Vec<_>>();
                     let mut choices = Vec::new();
                     for board in boards {
+                        let board_path = catalog.item_path(board).join(" / ");
                         choices.push((
                             board.item.id,
                             None,
-                            board.title.clone(),
+                            board_path.clone(),
                             "All cards".to_string(),
+                            catalog
+                                .format_board_view(board.item.id, None)
+                                .unwrap_or_default(),
                         ));
-                        let views =
-                            storage::board::properties::load_board_views(&db, board.item.id)
-                                .await?;
-                        choices.extend(views.views.into_iter().map(|view| {
-                            (board.item.id, Some(view.id), board.title.clone(), view.name)
-                        }));
+                        choices.extend(
+                            catalog
+                                .views
+                                .iter()
+                                .filter(|view| view.board_id == board.item.id)
+                                .filter_map(|view| {
+                                    Some((
+                                        board.item.id,
+                                        Some(view.id),
+                                        board_path.clone(),
+                                        view.name.clone(),
+                                        catalog.format_board_view(board.item.id, Some(view.id))?,
+                                    ))
+                                }),
+                        );
                     }
                     Ok::<_, anyhow::Error>(choices)
                 })
@@ -355,7 +369,7 @@ impl AppShell {
     fn show_insert_board_view_picker(
         &mut self,
         note_id: u32,
-        choices: Vec<(i64, Option<i64>, String, String)>,
+        choices: Vec<(i64, Option<i64>, String, String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -366,7 +380,7 @@ impl AppShell {
         let options = choices
             .iter()
             .map(
-                |(board_id, view_id, board_title, view_title)| DestinationOption {
+                |(board_id, view_id, board_title, view_title, _)| DestinationOption {
                     value: format!(
                         "{board_id}:{}",
                         view_id.map(|id| id.to_string()).unwrap_or_default()
@@ -406,25 +420,17 @@ impl AppShell {
                             return false;
                         };
                         let view_id = (!view.is_empty()).then(|| view.parse::<i64>().ok()).flatten();
-                        let Some((_, _, board_title, view_title)) = choices.iter().find(
-                            |(candidate_board, candidate_view, _, _)| {
+                        let Some((_, _, _, _, block)) = choices.iter().find(
+                            |(candidate_board, candidate_view, _, _, _)| {
                                 *candidate_board == board_id && *candidate_view == view_id
                             },
                         ) else {
                             return false;
                         };
-                        let title = format!("{board_title} · {view_title}").replace('"', "\\\"");
-                        let mut block = format!(
-                            "```castle-board-view\nboard = {board_id}\n"
-                        );
-                        if let Some(view_id) = view_id {
-                            block.push_str(&format!("view = {view_id}\n"));
-                        }
-                        block.push_str(&format!("title = \"{title}\"\n```"));
                         app.update(cx, |this, cx| {
                             if let Some(editor) = this.tabs.note_views.get(&note_id) {
                                 editor.update(cx, |editor, cx| {
-                                    editor.insert_text_at_selection(&block, window, cx);
+                                    editor.insert_text_at_selection(block, window, cx);
                                 });
                             }
                         });

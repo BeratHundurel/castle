@@ -26,14 +26,15 @@ impl SidebarView {
             .find(|board| board.id == action.0)
             .map(|board| board.title.as_ref())
             .unwrap_or("Board");
+        let item = storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Board,
+            id: i64::from(action.0),
+        };
+        let catalog = self.reference_catalog();
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace::links::stable_workspace_link(
-                storage::workspace::links::WorkspaceItemRef {
-                    kind: storage::workspace::links::WorkspaceItemKind::Board,
-                    id: i64::from(action.0),
-                },
-                title,
-            ),
+            catalog
+                .format_item_link(item, None)
+                .unwrap_or_else(|| storage::workspace::links::stable_workspace_link(item, title)),
         ));
     }
 
@@ -51,15 +52,86 @@ impl SidebarView {
             .find(|note| note.id == action.0)
             .map(|note| note.title.as_ref())
             .unwrap_or("Note");
+        let item = storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Note,
+            id: i64::from(action.0),
+        };
+        let catalog = self.reference_catalog();
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace::links::stable_workspace_link(
-                storage::workspace::links::WorkspaceItemRef {
-                    kind: storage::workspace::links::WorkspaceItemKind::Note,
-                    id: i64::from(action.0),
-                },
-                title,
-            ),
+            catalog
+                .format_item_link(item, None)
+                .unwrap_or_else(|| storage::workspace::links::stable_workspace_link(item, title)),
         ));
+    }
+
+    fn reference_catalog(&self) -> storage::workspace::links::WorkspaceReferenceCatalog {
+        let mut items = Vec::new();
+        for project in &self.projects {
+            for board in &project.boards {
+                items.push(storage::workspace::links::WorkspaceCatalogEntry {
+                    item: storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Board,
+                        id: i64::from(board.id),
+                    },
+                    title: board.title.to_string(),
+                    project_id: Some(i64::from(project.id)),
+                    project_name: Some(project.name.to_string()),
+                    board_id: Some(i64::from(board.id)),
+                    board_title: Some(board.title.to_string()),
+                    list_id: None,
+                    list_title: None,
+                });
+            }
+            for note in &project.notes {
+                items.push(storage::workspace::links::WorkspaceCatalogEntry {
+                    item: storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Note,
+                        id: i64::from(note.id),
+                    },
+                    title: note.title.to_string(),
+                    project_id: Some(i64::from(project.id)),
+                    project_name: Some(project.name.to_string()),
+                    board_id: None,
+                    board_title: None,
+                    list_id: None,
+                    list_title: None,
+                });
+            }
+        }
+        for board in &self.standalone_boards {
+            items.push(storage::workspace::links::WorkspaceCatalogEntry {
+                item: storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Board,
+                    id: i64::from(board.id),
+                },
+                title: board.title.to_string(),
+                project_id: None,
+                project_name: None,
+                board_id: Some(i64::from(board.id)),
+                board_title: Some(board.title.to_string()),
+                list_id: None,
+                list_title: None,
+            });
+        }
+        for note in &self.standalone_notes {
+            items.push(storage::workspace::links::WorkspaceCatalogEntry {
+                item: storage::workspace::links::WorkspaceItemRef {
+                    kind: storage::workspace::links::WorkspaceItemKind::Note,
+                    id: i64::from(note.id),
+                },
+                title: note.title.to_string(),
+                project_id: None,
+                project_name: None,
+                board_id: None,
+                board_title: None,
+                list_id: None,
+                list_title: None,
+            });
+        }
+        storage::workspace::links::WorkspaceReferenceCatalog {
+            items,
+            ..Default::default()
+        }
     }
 
     pub(super) fn on_toggle_board_pinned_action(

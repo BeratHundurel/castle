@@ -89,7 +89,8 @@ impl DocumentEditorView {
         let outline_visible = AppSettings::document_outline_visible(cx);
         let preview_font_size_bits = AppSettings::markdown_preview_font_size(cx).to_bits();
         let vim_enabled = AppSettings::editor_vim_mode(cx);
-        let wikilink_completion_provider = links::WikiLinkCompletionProvider::new(note_id as i64);
+        let wikilink_completion_provider =
+            links::WorkspaceReferenceCompletionProvider::new(note_id as i64);
         let input_completion_provider = std::rc::Rc::new(wikilink_completion_provider.clone());
 
         let editor = cx.new(|cx| {
@@ -200,7 +201,7 @@ impl DocumentEditorView {
                 note_links: Arc::new(storage::note::links::NoteLinkSet::default()),
                 note_catalog: Arc::new(Vec::new()),
                 workspace_links: Arc::new(storage::workspace::links::NoteWorkspaceLinks::default()),
-                workspace_catalog: Arc::new(Vec::new()),
+                workspace_catalog: Arc::new(Default::default()),
                 relation_signature: Vec::new(),
                 project_id: None,
                 completion_provider: wikilink_completion_provider,

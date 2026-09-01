@@ -149,7 +149,8 @@ impl BoardView {
 
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         init(cx);
-        let entry_wikilink_completion_provider = workspace::WikiLinkCompletionProvider::new(-1);
+        let entry_wikilink_completion_provider =
+            workspace::WorkspaceReferenceCompletionProvider::new(-1);
         let entry_completion_provider =
             std::rc::Rc::new(entry_wikilink_completion_provider.clone());
         let new_list_input = cx.new(|cx| InputState::new(window, cx).placeholder("List name..."));
@@ -546,6 +547,7 @@ impl BoardView {
             related_notes: RelatedNotesState {
                 picker: related_note_picker,
                 by_item: HashMap::new(),
+                reference_catalog: Arc::new(Default::default()),
                 catalog: Arc::new(Vec::new()),
                 completion_provider: entry_wikilink_completion_provider,
                 error: None,

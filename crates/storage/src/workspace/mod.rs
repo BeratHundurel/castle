@@ -114,13 +114,29 @@ pub async fn rename_project(
     project_id: u32,
     name: String,
 ) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    let current = Project::find_by_id(i64::from(project_id))
+        .one(&txn)
+        .await?
+        .ok_or_else(|| DbErr::RecordNotFound("project".to_string()))?;
+    if current.name != name {
+        crate::workspace::links::record_reference_alias(
+            &txn,
+            crate::workspace::links::WorkspaceAliasTarget::Project(i64::from(project_id)),
+            &current.name,
+            now_ts(),
+        )
+        .await
+        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    }
     project::ActiveModel {
         id: Set(i64::from(project_id)),
         name: Set(name),
         ..Default::default()
     }
-    .update(db)
+    .update(&txn)
     .await?;
+    txn.commit().await?;
     Ok(())
 }
 
@@ -420,13 +436,34 @@ pub async fn persist_workspace_title(
 ) -> Result<WorkspaceTitleUpdate> {
     match target {
         WorkspaceTitleTarget::Board(board_id) => {
+            let transaction = db.begin().await?;
+            let current = Board::find_by_id(board_id as i64)
+                .one(&transaction)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("board {board_id} was not found"))?;
+            if current.title != title {
+                crate::workspace::links::record_reference_alias(
+                    &transaction,
+                    crate::workspace::links::WorkspaceAliasTarget::Item(
+                        crate::workspace::links::WorkspaceItemRef {
+                            kind: crate::workspace::links::WorkspaceItemKind::Board,
+                            id: board_id as i64,
+                        },
+                    ),
+                    &current.title,
+                    now_ts(),
+                )
+                .await
+                .map_err(|error| DbErr::Custom(error.to_string()))?;
+            }
             board::ActiveModel {
                 id: Set(board_id as i64),
                 title: Set(title),
                 ..Default::default()
             }
-            .update(db)
+            .update(&transaction)
             .await?;
+            transaction.commit().await?;
 
             Ok(WorkspaceTitleUpdate::default())
         }

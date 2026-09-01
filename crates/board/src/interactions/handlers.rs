@@ -30,14 +30,15 @@ impl BoardView {
             .map(|entry| entry.title.as_str())
             .unwrap_or("Board");
 
+        let item = storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Board,
+            id: i64::from(board_id),
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace::links::stable_workspace_link(
-                storage::workspace::links::WorkspaceItemRef {
-                    kind: storage::workspace::links::WorkspaceItemKind::Board,
-                    id: i64::from(board_id),
-                },
-                title,
-            ),
+            self.related_notes
+                .reference_catalog
+                .format_item_link(item, None)
+                .unwrap_or_else(|| storage::workspace::links::stable_workspace_link(item, title)),
         ));
     }
 
@@ -55,14 +56,15 @@ impl BoardView {
             .map(|list| list.title.as_ref())
             .unwrap_or("List");
 
+        let item = storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::List,
+            id: i64::from(action.0),
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace::links::stable_workspace_link(
-                storage::workspace::links::WorkspaceItemRef {
-                    kind: storage::workspace::links::WorkspaceItemKind::List,
-                    id: i64::from(action.0),
-                },
-                title,
-            ),
+            self.related_notes
+                .reference_catalog
+                .format_item_link(item, None)
+                .unwrap_or_else(|| storage::workspace::links::stable_workspace_link(item, title)),
         ));
     }
 
@@ -75,14 +77,17 @@ impl BoardView {
         let Some((_, entry)) = self.selected_entry() else {
             return;
         };
+        let item = storage::workspace::links::WorkspaceItemRef {
+            kind: storage::workspace::links::WorkspaceItemKind::Card,
+            id: i64::from(entry.id),
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(
-            storage::workspace::links::stable_workspace_link(
-                storage::workspace::links::WorkspaceItemRef {
-                    kind: storage::workspace::links::WorkspaceItemKind::Card,
-                    id: i64::from(entry.id),
-                },
-                entry.title.as_ref(),
-            ),
+            self.related_notes
+                .reference_catalog
+                .format_item_link(item, None)
+                .unwrap_or_else(|| {
+                    storage::workspace::links::stable_workspace_link(item, entry.title.as_ref())
+                }),
         ));
     }
 

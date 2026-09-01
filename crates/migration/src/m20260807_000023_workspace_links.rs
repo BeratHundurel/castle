@@ -257,7 +257,7 @@ mod tests {
             .ok_or_else(|| DbErr::Custom("link count row is missing".to_string()))?;
         assert_eq!(links.try_get::<i64>("", "count")?, 0);
 
-        Migrator::down(&db, Some(3)).await?;
+        Migrator::down(&db, Some(4)).await?;
         let tables = db
             .query_one_raw(Statement::from_string(
                 DbBackend::Sqlite,

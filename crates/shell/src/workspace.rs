@@ -404,7 +404,7 @@ impl AppShell {
                         .child(DialogTitle::new().child("Create linked note"))
                         .child(
                             DialogDescription::new()
-                                .child("The note starts with a stable link back to this item."),
+                                .child("The note starts with a readable link back to this item."),
                         ),
                 )
                 .child(v_flex().py_3().child(Input::new(&dialog_input)))
@@ -445,13 +445,26 @@ impl AppShell {
         let background_executor = cx.background_executor().clone();
         let runtime = cx.global::<AppRuntime>().tokio_handle();
         let display_title = title.replace(['\r', '\n', '|'], " ");
-        let source_link = storage::workspace::links::stable_workspace_link(item, &source_title);
-        let content = format!(
-            "# {display_title}\n\nRelated {}: {source_link}\n",
-            item.kind.as_str(),
-        );
+        let fallback_link = storage::workspace::links::stable_workspace_link(item, &source_title);
+        let catalog_runtime = runtime.clone();
+        let catalog_db = db.clone();
 
         cx.spawn_in(window, async move |_, window| {
+            let source_link = match catalog_runtime
+                .spawn(async move {
+                    storage::workspace::links::load_workspace_reference_catalog(&catalog_db).await
+                })
+                .await
+            {
+                Ok(Ok(catalog)) => catalog
+                    .format_item_link(item, None)
+                    .unwrap_or_else(|| fallback_link.clone()),
+                _ => fallback_link,
+            };
+            let content = format!(
+                "# {display_title}\n\nRelated {}: {source_link}\n",
+                item.kind.as_str(),
+            );
             let write_path = path.clone();
             let write_content = content.clone();
             if background_executor

@@ -37,11 +37,13 @@ const MERMAID_CARD_TITLE: &str = "Draw an idea with Mermaid";
 const EMBED_CARD_TITLE: &str = "Embed a live board view in a note";
 const MAKE_IT_YOURS_CARD_TITLE: &str = "Make this workspace yours";
 
-fn docs_content(starter_board_id: u32, starter_view_id: i64) -> String {
+fn docs_content(starter_board_title: &str, starter_view_name: &str) -> String {
+    let starter_board_title = crate::workspace::links::escape_segment(starter_board_title);
+    let starter_view_name = crate::workspace::links::escape_segment(starter_view_name);
     format!(
         r#"# Welcome to Castle
 
-Castle is a local-first workspace where notes, files, and boards stay connected. This guide and [[board:{starter_board_id}|Your first board]] are ordinary workspace items: edit them, move them, or delete them whenever you are ready.
+Castle is a local-first workspace where notes, files, and boards stay connected. This guide and [[board:{starter_board_title}]] are ordinary workspace items: edit them, move them, or delete them whenever you are ready.
 
 ## See Castle working
 
@@ -56,15 +58,11 @@ flowchart LR
 
 ## A live board inside this note
 
-The projection below is read-only so the board remains the single editable source. Change a card on [[board:{starter_board_id}|Your first board]], then return here to see the note stay in sync.
+The projection below is read-only so the board remains the single editable source. Change a card on [[board:{starter_board_title}]], then return here to see the note stay in sync.
 
-```castle-board-view
-board = {starter_board_id}
-view = {starter_view_id}
-title = "Your first board · Feature tour"
-```
+![[board:{starter_board_title}#{starter_view_name}]]
 
-Use **Insert board view** from the command palette to embed any board or saved view without writing this block by hand.
+Use **Insert board view** from the command palette to embed any board or saved view without writing this reference by hand.
 
 ## Notes are more than text
 
@@ -80,7 +78,7 @@ Use `Ctrl+Shift+O` for the outline and links inspector, or `Ctrl+Shift+F` to sea
 
 ## Boards can model more than tasks
 
-Open [[board:{starter_board_id}|Your first board]] and try the seeded examples. A card can hold Markdown, labels, a checklist, attachments, a due date, an optional reminder, custom fields, and related notes.
+Open [[board:{starter_board_title}|Your first board]] and try the seeded examples. A card can hold Markdown, labels, a checklist, attachments, a due date, an optional reminder, custom fields, and related notes.
 
 Boards also support:
 
@@ -131,9 +129,9 @@ pub async fn seed_fresh_workspace(
         starter_board_definition(),
     )
     .await?;
-    let starter_view_id = seed_starter_board_details(&transaction, &starter_board).await?;
+    seed_starter_board_details(&transaction, &starter_board).await?;
 
-    let docs_content = docs_content(starter_board.id, starter_view_id);
+    let docs_content = docs_content(&starter_board.title, "Feature tour");
     let docs_path = write_docs_file(data_dir, &docs_content)?;
     let now = now_ts();
     let note_result = note::ActiveModel {
@@ -467,11 +465,8 @@ mod tests {
         assert!(seeded_docs.contains("```mermaid\nflowchart LR"));
         let embeds = crate::board::projection::parse_board_view_embeds(&seeded_docs);
         assert_eq!(embeds.len(), 1);
-        assert_eq!(embeds[0].board_id, i64::from(seeded.starter_board.id));
-        assert_eq!(
-            embeds[0].fallback_title.as_deref(),
-            Some("Your first board · Feature tour")
-        );
+        assert_eq!(embeds[0].board_path, vec![STARTER_BOARD_TITLE]);
+        assert_eq!(embeds[0].view_name.as_deref(), Some("Feature tour"));
 
         let stored_note = Note::find_by_id(i64::from(seeded.docs_note.id))
             .one(&db)
@@ -544,10 +539,10 @@ mod tests {
         assert_eq!(views.views.len(), 1);
         assert_eq!(views.views[0].name, "Feature tour");
         assert_eq!(views.selected_view_id, Some(views.views[0].id));
-        assert_eq!(embeds[0].view_id, Some(views.views[0].id));
+        assert_eq!(embeds[0].raw_target, "board:Your first board#Feature tour");
         assert_eq!(
             stored_note.cached_content,
-            docs_content(seeded.starter_board.id, views.views[0].id)
+            docs_content(&seeded.starter_board.title, &views.views[0].name)
         );
         assert_eq!(
             views.views[0].config.visible_properties,

@@ -30,10 +30,10 @@ impl BoardView {
             workspace::weak_navigation_handler(cx.entity().downgrade(), |_, target, cx| {
                 cx.emit(crate::BoardViewEvent::OpenWorkspaceTarget(target))
             });
-        let wikilink_plugin = workspace::WikiLinkPreviewPlugin::new_for_workspace(
+        let wikilink_plugin = workspace::WikiLinkPreviewPlugin::new_for_workspace_reference_catalog(
             open_target,
             source_project_id,
-            self.related_notes.catalog.clone(),
+            self.related_notes.reference_catalog.clone(),
         );
         let placeholder_description = description.clone();
 

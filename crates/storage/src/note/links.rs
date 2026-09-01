@@ -44,9 +44,7 @@ pub struct NoteLinkCatalogEntry {
 pub(crate) struct NoteIndexCatalogs<'a> {
     pub note_links: &'a [NoteLinkCatalogEntry],
     pub aliases: &'a [note_alias::Model],
-    pub workspace: &'a [crate::workspace::links::WorkspaceCatalogEntry],
-    pub existing_workspace_items: &'a HashSet<crate::workspace::links::WorkspaceItemRef>,
-    pub saved_views: &'a HashSet<(i64, i64)>,
+    pub workspace: &'a crate::workspace::links::WorkspaceReferenceCatalog,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -155,11 +153,13 @@ fn parse_line_wikilinks(
                 .len()
                 .min(content_start.saturating_add(MAX_LINK_TARGET_BYTES + 2));
 
-            if let Some(relative_end) = line[content_start..search_end].find("]]") {
+            if let Some(relative_end) =
+                find_unescaped_closing_brackets(line, content_start, search_end, bytes)
+            {
                 let content_end = content_start + relative_end;
                 let token_end = content_end + 2;
                 let inner = &line[content_start..content_end];
-                let (raw_target, display_text) = match inner.split_once('|') {
+                let (raw_target, display_text) = match split_unescaped_once(inner, '|') {
                     Some((target, display)) => (target.trim(), Some(display.trim())),
                     None => (inner.trim(), None),
                 };
@@ -168,7 +168,7 @@ fn parse_line_wikilinks(
                         raw_target: raw_target.to_string(),
                         display_text: display_text
                             .filter(|display| !display.is_empty())
-                            .map(str::to_string),
+                            .map(crate::workspace::links::unescape_segment),
                         start_byte: line_offset + index,
                         end_byte: line_offset + token_end,
                         line_number,
@@ -185,6 +185,38 @@ fn parse_line_wikilinks(
             .map(char::len_utf8)
             .unwrap_or(1);
     }
+}
+
+fn split_unescaped_once(value: &str, delimiter: char) -> Option<(&str, &str)> {
+    let mut escaped = false;
+    for (index, character) in value.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == delimiter {
+            return Some((&value[..index], &value[index + character.len_utf8()..]));
+        }
+    }
+    None
+}
+
+fn find_unescaped_closing_brackets(
+    line: &str,
+    start: usize,
+    end: usize,
+    bytes: &[u8],
+) -> Option<usize> {
+    let mut cursor = start;
+    while cursor < end {
+        let relative = line[cursor..end].find("]]")?;
+        let candidate = cursor + relative;
+        if !is_escaped(bytes, candidate) {
+            return Some(candidate - start);
+        }
+        cursor = candidate.saturating_add(1);
+    }
+    None
 }
 
 fn fence_run(line: &str, marker: u8) -> usize {
@@ -278,22 +310,16 @@ pub async fn load_note_links(
             line_number: link.line_number.max(1) as usize,
         }
     };
-    let workspace_targets = outbound_models
-        .iter()
-        .filter_map(|link| crate::workspace::links::parse_workspace_target(&link.raw_target))
-        .collect::<Vec<_>>();
-    let active_workspace_items = crate::workspace::links::load_workspace_link_catalog(db)
-        .await?
-        .into_iter()
-        .map(|entry| entry.item)
-        .collect::<HashSet<_>>();
-    let existing_workspace_items =
-        crate::workspace::links::load_existing_workspace_items(db, &workspace_targets).await?;
+    let workspace_catalog = crate::workspace::links::load_workspace_reference_catalog(db).await?;
     let mut outbound = Vec::new();
     let mut unresolved = Vec::new();
     for model in outbound_models {
-        if let Some(item) = crate::workspace::links::parse_workspace_target(&model.raw_target) {
-            if !active_workspace_items.contains(&item) && !existing_workspace_items.contains(&item)
+        if crate::workspace::links::is_workspace_target(&model.raw_target) {
+            if crate::workspace::links::resolve_workspace_item(
+                &model.raw_target,
+                &workspace_catalog,
+            )
+            .is_err()
             {
                 unresolved.push(UnresolvedLinkReference {
                     source_note_id: model.source_note_id,
@@ -304,7 +330,8 @@ pub async fn load_note_links(
                     source_project_name: by_id
                         .get(&model.source_note_id)
                         .and_then(|note| note.project_name.clone()),
-                    target_kind: Some(item.kind),
+                    target_kind: crate::workspace::links::parse_reference_target(&model.raw_target)
+                        .map(|reference| reference.kind),
                     raw_target: model.raw_target,
                     display_text: model.display_text,
                     start_byte: model.start_byte.max(0) as usize,
@@ -377,23 +404,7 @@ pub async fn index_note_links_in_connection(
             .all(db)
             .await?
     };
-    let workspace_catalog = crate::workspace::links::load_workspace_link_catalog(db).await?;
-    let mut requested_workspace_targets = parsed
-        .iter()
-        .filter_map(|link| crate::workspace::links::parse_workspace_target(&link.raw_target))
-        .collect::<Vec<_>>();
-    requested_workspace_targets.extend(
-        crate::board::projection::parse_board_view_embeds(content)
-            .into_iter()
-            .map(|embed| crate::workspace::links::WorkspaceItemRef {
-                kind: crate::workspace::links::WorkspaceItemKind::Board,
-                id: embed.board_id,
-            }),
-    );
-    let existing_workspace_targets =
-        crate::workspace::links::load_existing_workspace_items(db, &requested_workspace_targets)
-            .await?;
-    let saved_views = crate::workspace::links::load_saved_view_identities(db).await?;
+    let workspace_catalog = crate::workspace::links::load_workspace_reference_catalog(db).await?;
     index_note_links_with_catalog(
         db,
         note_id,
@@ -404,8 +415,6 @@ pub async fn index_note_links_in_connection(
             note_links: &catalog,
             aliases: &aliases,
             workspace: &workspace_catalog,
-            existing_workspace_items: &existing_workspace_targets,
-            saved_views: &saved_views,
         },
     )
     .await
@@ -419,14 +428,24 @@ pub(crate) async fn index_note_links_with_catalog(
     indexed_updated_at: i64,
     catalogs: NoteIndexCatalogs<'_>,
 ) -> Result<Vec<IndexedNoteLink>> {
+    let embed_ranges = crate::board::projection::parse_board_view_embeds(content)
+        .into_iter()
+        .map(|embed| embed.start_byte..embed.end_byte)
+        .collect::<Vec<_>>();
     let indexed = parse_wikilinks(content)
         .into_iter()
+        .filter(|link| {
+            !embed_ranges
+                .iter()
+                .any(|range| range.contains(&link.start_byte))
+        })
         .map(|link| IndexedNoteLink {
             target_note_id: resolve_target(
                 &link.raw_target,
                 source_project_id,
                 catalogs.note_links,
                 catalogs.aliases,
+                catalogs.workspace,
             ),
             raw_target: link.raw_target,
             display_text: link.display_text,
@@ -467,8 +486,6 @@ pub(crate) async fn index_note_links_with_catalog(
         content,
         indexed_updated_at,
         catalogs.workspace,
-        catalogs.existing_workspace_items,
-        catalogs.saved_views,
     )
     .await?;
 
@@ -540,15 +557,23 @@ fn resolve_target(
     source_project_id: Option<i64>,
     catalog: &[NoteLinkCatalogEntry],
     aliases: &[note_alias::Model],
+    workspace_catalog: &crate::workspace::links::WorkspaceReferenceCatalog,
 ) -> Option<i64> {
-    if let Some(note_id) = raw_target
-        .strip_prefix("note:")
-        .and_then(|value| value.trim().parse::<i64>().ok())
-    {
-        return catalog
-            .iter()
-            .any(|candidate| candidate.note_id == note_id)
-            .then_some(note_id);
+    if let Some(reference) = crate::workspace::links::parse_reference_target(raw_target) {
+        return match crate::workspace::links::resolve_reference_target(
+            raw_target,
+            workspace_catalog,
+        ) {
+            Ok(crate::workspace::links::ResolvedWorkspaceReference::Item(item))
+                if item.kind == crate::workspace::links::WorkspaceItemKind::Note =>
+            {
+                Some(item.id)
+            }
+            _ if reference.kind == crate::workspace::links::WorkspaceItemKind::Note => {
+                resolve_note_target_alias(reference.segments.last()?, catalog, aliases)
+            }
+            _ => None,
+        };
     }
 
     if let Some((project_name, title)) = raw_target.split_once('/') {
@@ -594,6 +619,28 @@ fn resolve_target(
         .flatten()
 }
 
+fn resolve_note_target_alias(
+    alias: &str,
+    catalog: &[NoteLinkCatalogEntry],
+    aliases: &[note_alias::Model],
+) -> Option<i64> {
+    let active_note_ids = catalog
+        .iter()
+        .map(|candidate| candidate.note_id)
+        .collect::<HashSet<_>>();
+    let alias_note_ids = aliases
+        .iter()
+        .filter(|candidate| {
+            candidate.normalized_alias == normalize_name(alias)
+                && active_note_ids.contains(&candidate.note_id)
+        })
+        .map(|candidate| candidate.note_id)
+        .collect::<HashSet<_>>();
+    (alias_note_ids.len() == 1)
+        .then(|| alias_note_ids.into_iter().next())
+        .flatten()
+}
+
 fn unique_note_id<'a>(candidates: impl Iterator<Item = &'a NoteLinkCatalogEntry>) -> Option<i64> {
     let mut ids = candidates.map(|candidate| candidate.note_id);
     let first = ids.next()?;
@@ -631,6 +678,15 @@ mod tests {
         let links = parse_wikilinks(r"\[[escaped]] [ [not a link] ] [[ ]] [[valid]]");
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].raw_target, "valid");
+
+        let escaped = parse_wikilinks(r"[[card:Launch|Open \| card]]");
+        assert_eq!(escaped[0].display_text.as_deref(), Some("Open | card"));
+        let escaped_source = r"[[card:Launch|Open \[card\]".to_string() + "]]";
+        let escaped_brackets = parse_wikilinks(&escaped_source);
+        assert_eq!(
+            escaped_brackets[0].display_text.as_deref(),
+            Some("Open [card]")
+        );
     }
 
     #[tokio::test]
@@ -648,10 +704,7 @@ mod tests {
         let links = index_note_links(
             &db,
             source.id,
-            &format!(
-                "[[Shared]] [[Second/Shared]] [[note:{}|Stable]] [[Previous]] [[Missing]]",
-                remote.id
-            ),
+            "[[Shared]] [[Second/Shared]] [[note:Second / Shared|Stable]] [[Previous]] [[Missing]]",
             10,
         )
         .await?;
@@ -697,7 +750,7 @@ mod tests {
         }
         .insert(&db)
         .await?;
-        let content = format!("before [[board:{}|Roadmap]] after", board.id);
+        let content = "before [[board:Roadmap|Roadmap]] after";
 
         index_note_links(&db, source.id, &content, 1).await?;
         let links = load_note_links(&db, source.id).await?;
@@ -719,7 +772,11 @@ mod tests {
         .await?;
         index_note_links(&db, source.id, &content, 2).await?;
         let links = load_note_links(&db, source.id).await?;
-        assert!(links.unresolved.is_empty());
+        assert_eq!(links.unresolved.len(), 1);
+        assert_eq!(
+            links.unresolved[0].target_kind,
+            Some(crate::workspace::links::WorkspaceItemKind::Board)
+        );
         assert!(
             crate::workspace::links::load_note_workspace_links(&db, source.id)
                 .await?
@@ -735,13 +792,10 @@ mod tests {
             links.unresolved[0].target_kind,
             Some(crate::workspace::links::WorkspaceItemKind::Board)
         );
-        assert_eq!(
-            links.unresolved[0].raw_target,
-            format!("board:{}", board.id)
-        );
+        assert_eq!(links.unresolved[0].raw_target, "board:Roadmap");
         assert_eq!(
             &content[links.unresolved[0].start_byte..links.unresolved[0].end_byte],
-            format!("[[board:{}|Roadmap]]", board.id)
+            "[[board:Roadmap|Roadmap]]"
         );
         Ok(())
     }
