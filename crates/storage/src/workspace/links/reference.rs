@@ -178,7 +178,7 @@ impl WorkspaceReferenceCatalog {
 
 pub fn parse_reference_target(raw_target: &str) -> Option<WorkspaceReferencePath> {
     let (prefix, value) = raw_target.trim().split_once(':')?;
-    let kind = WorkspaceItemKind::from_str(prefix.trim())?;
+    let kind = WorkspaceItemKind::parse(prefix.trim())?;
     if has_unterminated_escape(value) || contains_unescaped_bracket(value) {
         return None;
     }
@@ -682,7 +682,7 @@ fn normalize(value: &str) -> String {
 }
 
 impl WorkspaceItemKind {
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "note" => Some(Self::Note),
             "board" => Some(Self::Board),

@@ -471,20 +471,36 @@ fn append_preview_text(
     for link in storage::note::links::parse_wikilinks(text) {
         block.text.push_str(&text[consumed..link.start_byte]);
         let start = block.text.len();
-        block
-            .text
-            .push_str(link.display_text.as_deref().unwrap_or(&link.raw_target));
-        let end = block.text.len();
-        let target =
+        let workspace_entry =
             storage::workspace::links::resolve_reference_entry(&link.raw_target, workspace_catalog)
-                .ok()
-                .and_then(workspace_navigation_target)
-                .map(PreviewLinkTarget::Workspace)
-                .or_else(|| {
-                    resolve_preview_note(&link.raw_target, project_id, catalog, indexed_links)
-                        .and_then(|note_id| u32::try_from(note_id).ok())
-                        .map(PreviewLinkTarget::Note)
-                });
+                .ok();
+        let note_id = workspace_entry
+            .is_none()
+            .then(|| resolve_preview_note(&link.raw_target, project_id, catalog, indexed_links))
+            .flatten();
+        let display_text = link
+            .display_text
+            .as_deref()
+            .or_else(|| workspace_entry.map(|entry| entry.title.as_str()))
+            .or_else(|| {
+                note_id.and_then(|note_id| {
+                    catalog
+                        .iter()
+                        .find(|note| note.note_id == note_id)
+                        .map(|note| note.title.as_str())
+                })
+            })
+            .unwrap_or(&link.raw_target);
+        block.text.push_str(display_text);
+        let end = block.text.len();
+        let target = workspace_entry
+            .and_then(workspace_navigation_target)
+            .map(PreviewLinkTarget::Workspace)
+            .or_else(|| {
+                note_id
+                    .and_then(|note_id| u32::try_from(note_id).ok())
+                    .map(PreviewLinkTarget::Note)
+            });
         block.links.push(PreviewLink {
             range: start..end,
             target,
@@ -714,9 +730,7 @@ fn reference_kind_query(
         .split_once(':')
         .and_then(|(prefix, query)| {
             Some((
-                Some(storage::workspace::links::WorkspaceItemKind::from_str(
-                    prefix,
-                )?),
+                Some(storage::workspace::links::WorkspaceItemKind::parse(prefix)?),
                 query.trim(),
             ))
         })
@@ -970,24 +984,25 @@ fn reference_completion_candidates(
             let board_path = catalog.item_path(board).join(" / ");
             let board_matches =
                 reference_entry_matches_query(catalog, board, &normalized_board_query);
-            if normalized_view_query.is_none() && board_matches {
-                if let Some(new_text) = catalog.format_board_view(board.item.id, None) {
-                    matches.push(WikiLinkCompletionCandidate {
-                        label: format!("{} · All cards", board.title),
-                        detail: Some(format!("board · {board_path}")),
-                        kind: CompletionItemKind::MODULE,
-                        new_text,
-                        rank: embed_completion_rank(
-                            catalog,
-                            board,
-                            &board_path,
-                            "All cards",
-                            &normalized_board_query,
-                            project_id,
-                            &[],
-                        ),
-                    });
-                }
+            if normalized_view_query.is_none()
+                && board_matches
+                && let Some(new_text) = catalog.format_board_view(board.item.id, None)
+            {
+                matches.push(WikiLinkCompletionCandidate {
+                    label: format!("{} · All cards", board.title),
+                    detail: Some(format!("board · {board_path}")),
+                    kind: CompletionItemKind::MODULE,
+                    new_text,
+                    rank: embed_completion_rank(
+                        catalog,
+                        board,
+                        &board_path,
+                        "All cards",
+                        &normalized_board_query,
+                        project_id,
+                        &[],
+                    ),
+                });
             }
             for view in catalog
                 .views
@@ -1005,38 +1020,38 @@ fn reference_completion_candidates(
                                 && alias.alias.to_lowercase().contains(query)
                         })
                 });
-                if board_matches && view_matches {
-                    if let Some(new_text) = catalog.format_board_view(board.item.id, Some(view.id))
-                    {
-                        let view_aliases = catalog
-                            .aliases
-                            .iter()
-                            .filter(|alias| {
-                                alias.target
-                                    == storage::workspace::links::WorkspaceAliasTarget::SavedView(
-                                        view.id,
-                                    )
-                            })
-                            .map(|alias| alias.alias.to_lowercase())
-                            .collect::<Vec<_>>();
-                        matches.push(WikiLinkCompletionCandidate {
-                            label,
-                            detail: Some(format!("saved view · {board_path} / {}", view.name)),
-                            kind: CompletionItemKind::VALUE,
-                            new_text,
-                            rank: embed_completion_rank(
-                                catalog,
-                                board,
-                                &board_path,
-                                &view.name,
-                                normalized_view_query
-                                    .as_deref()
-                                    .unwrap_or(&normalized_board_query),
-                                project_id,
-                                &view_aliases,
-                            ),
-                        });
-                    }
+                if board_matches
+                    && view_matches
+                    && let Some(new_text) = catalog.format_board_view(board.item.id, Some(view.id))
+                {
+                    let view_aliases = catalog
+                        .aliases
+                        .iter()
+                        .filter(|alias| {
+                            alias.target
+                                == storage::workspace::links::WorkspaceAliasTarget::SavedView(
+                                    view.id,
+                                )
+                        })
+                        .map(|alias| alias.alias.to_lowercase())
+                        .collect::<Vec<_>>();
+                    matches.push(WikiLinkCompletionCandidate {
+                        label,
+                        detail: Some(format!("saved view · {board_path} / {}", view.name)),
+                        kind: CompletionItemKind::VALUE,
+                        new_text,
+                        rank: embed_completion_rank(
+                            catalog,
+                            board,
+                            &board_path,
+                            &view.name,
+                            normalized_view_query
+                                .as_deref()
+                                .unwrap_or(&normalized_board_query),
+                            project_id,
+                            &view_aliases,
+                        ),
+                    });
                 }
             }
         }
@@ -1526,6 +1541,78 @@ mod tests {
         assert!(matches!(
             block.links[0].target,
             Some(PreviewLinkTarget::Note(7))
+        ));
+    }
+
+    #[test]
+    fn preview_uses_workspace_reference_titles_without_kind_prefixes() {
+        let note = storage::note::links::NoteLinkCatalogEntry {
+            note_id: 7,
+            title: "Features".into(),
+            project_id: None,
+            project_name: None,
+        };
+        let workspace_catalog = storage::workspace::links::WorkspaceReferenceCatalog {
+            items: vec![
+                storage::workspace::links::WorkspaceCatalogEntry {
+                    item: storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Board,
+                        id: 4,
+                    },
+                    title: "Castle Board".into(),
+                    project_id: None,
+                    project_name: None,
+                    board_id: Some(4),
+                    board_title: Some("Castle Board".into()),
+                    list_id: None,
+                    list_title: None,
+                },
+                storage::workspace::links::WorkspaceCatalogEntry {
+                    item: storage::workspace::links::WorkspaceItemRef {
+                        kind: storage::workspace::links::WorkspaceItemKind::Note,
+                        id: note.note_id,
+                    },
+                    title: note.title.clone(),
+                    project_id: note.project_id,
+                    project_name: note.project_name.clone(),
+                    board_id: None,
+                    board_title: None,
+                    list_id: None,
+                    list_title: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let mut block = WikiLinkPreviewBlock {
+            text: String::new(),
+            links: Vec::new(),
+            heading_depth: None,
+            source_offset: 0,
+        };
+
+        append_preview_text(
+            "See [[board:Castle Board]] and [[note:Features]].",
+            &mut block,
+            None,
+            &[note],
+            &storage::note::links::NoteLinkSet::default(),
+            &workspace_catalog,
+        );
+
+        assert_eq!(block.text, "See Castle Board and Features.");
+        assert_eq!(block.links[0].range, 4..16);
+        assert_eq!(block.links[1].range, 21..29);
+        assert!(matches!(
+            block.links[0].target,
+            Some(PreviewLinkTarget::Workspace(
+                WorkspaceNavigationTarget::Board { board_id: 4, .. }
+            ))
+        ));
+        assert!(matches!(
+            block.links[1].target,
+            Some(PreviewLinkTarget::Workspace(
+                WorkspaceNavigationTarget::Note { note_id: 7, .. }
+            ))
         ));
     }
 }

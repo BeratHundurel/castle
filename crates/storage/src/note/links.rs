@@ -752,7 +752,7 @@ mod tests {
         .await?;
         let content = "before [[board:Roadmap|Roadmap]] after";
 
-        index_note_links(&db, source.id, &content, 1).await?;
+        index_note_links(&db, source.id, content, 1).await?;
         let links = load_note_links(&db, source.id).await?;
         assert!(links.unresolved.is_empty());
         assert_eq!(
@@ -770,7 +770,7 @@ mod tests {
         }
         .update(&db)
         .await?;
-        index_note_links(&db, source.id, &content, 2).await?;
+        index_note_links(&db, source.id, content, 2).await?;
         let links = load_note_links(&db, source.id).await?;
         assert_eq!(links.unresolved.len(), 1);
         assert_eq!(
@@ -785,7 +785,7 @@ mod tests {
         );
 
         board::Entity::delete_by_id(board.id).exec(&db).await?;
-        index_note_links(&db, source.id, &content, 3).await?;
+        index_note_links(&db, source.id, content, 3).await?;
         let links = load_note_links(&db, source.id).await?;
         assert_eq!(links.unresolved.len(), 1);
         assert_eq!(

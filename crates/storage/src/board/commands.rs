@@ -190,21 +190,21 @@ pub async fn rename_board_list(
     title: String,
 ) -> Result<()> {
     let txn = db.begin().await?;
-    if let Some(current) = BoardList::find_by_id(i64::from(list_id)).one(&txn).await? {
-        if current.title != title {
-            crate::workspace::links::record_reference_alias(
-                &txn,
-                crate::workspace::links::WorkspaceAliasTarget::Item(
-                    crate::workspace::links::WorkspaceItemRef {
-                        kind: crate::workspace::links::WorkspaceItemKind::List,
-                        id: i64::from(list_id),
-                    },
-                ),
-                &current.title,
-                crate::time::unix_timestamp_seconds(),
-            )
-            .await?;
-        }
+    if let Some(current) = BoardList::find_by_id(i64::from(list_id)).one(&txn).await?
+        && current.title != title
+    {
+        crate::workspace::links::record_reference_alias(
+            &txn,
+            crate::workspace::links::WorkspaceAliasTarget::Item(
+                crate::workspace::links::WorkspaceItemRef {
+                    kind: crate::workspace::links::WorkspaceItemKind::List,
+                    id: i64::from(list_id),
+                },
+            ),
+            &current.title,
+            crate::time::unix_timestamp_seconds(),
+        )
+        .await?;
     }
     card::ActiveModel {
         id: Set(i64::from(list_id)),
@@ -226,22 +226,22 @@ pub async fn update_board_card(
 ) -> Result<()> {
     let txn = db.begin().await?;
     let current = BoardCard::find_by_id(i64::from(card_id)).one(&txn).await?;
-    if let Some(current) = current {
-        if current.title != title {
-            crate::workspace::links::record_reference_alias(
-                &txn,
-                crate::workspace::links::WorkspaceAliasTarget::Item(
-                    crate::workspace::links::WorkspaceItemRef {
-                        kind: crate::workspace::links::WorkspaceItemKind::Card,
-                        id: i64::from(card_id),
-                    },
-                ),
-                &current.title,
-                indexed_at,
-            )
-            .await
-            .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-        }
+    if let Some(current) = current
+        && current.title != title
+    {
+        crate::workspace::links::record_reference_alias(
+            &txn,
+            crate::workspace::links::WorkspaceAliasTarget::Item(
+                crate::workspace::links::WorkspaceItemRef {
+                    kind: crate::workspace::links::WorkspaceItemKind::Card,
+                    id: i64::from(card_id),
+                },
+            ),
+            &current.title,
+            indexed_at,
+        )
+        .await
+        .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
     }
     entry::ActiveModel {
         id: Set(i64::from(card_id)),
