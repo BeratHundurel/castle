@@ -40,6 +40,7 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
                 "board",
                 "command_palette",
                 "document_editor",
+                "quick_capture",
                 "runtime",
                 "settings",
                 "shell",
@@ -50,6 +51,7 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
         ("settings", set(&[])),
         ("board", set(&["runtime", "storage", "workspace"])),
         ("command_palette", set(&["runtime", "settings", "storage"])),
+        ("quick_capture", set(&["runtime", "storage"])),
         ("castle-mcp", set(&["storage"])),
         (
             "document_editor",
@@ -111,6 +113,7 @@ fn persistence_and_protocol_dependencies_stay_in_their_own_layers() {
         "board",
         "castle-mcp",
         "command_palette",
+        "quick_capture",
         "document_editor",
         "shell",
         "workspace",
