@@ -4,7 +4,7 @@ impl DocumentEditorView {
     pub(crate) fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (outline_in_layout, _) = editor_layout_signature(
             self.view_width,
-            self.analysis.outline_rendered,
+            self.effective_outline_rendered(),
             self.outline_width,
         );
         let source_width = self.view_width
@@ -55,6 +55,7 @@ impl DocumentEditorView {
                     .separator()
                     .menu("Focus Mode", Box::new(ToggleFocusMode))
                     .menu("Typewriter Scrolling", Box::new(ToggleTypewriterScrolling))
+                    .menu("Zen Mode", Box::new(ToggleZenMode))
                     .separator()
                     .menu_with_disabled("Format Document", !can_format, Box::new(FormatDocument))
             });

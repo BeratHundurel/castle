@@ -109,3 +109,70 @@ pub(super) struct WritingExperienceState {
     pub(super) focused_range: Option<Range<usize>>,
     pub(super) focus_decorations: gpui_component::input::TextDecorationCollection,
 }
+
+pub(super) struct ZenModeState {
+    pub(super) enabled: bool,
+    pub(super) show_status_bar: bool,
+    pub(super) show_outline: bool,
+}
+
+impl ZenModeState {
+    pub(super) fn status_bar_visible(&self, default_visible: bool) -> bool {
+        if self.enabled {
+            self.show_status_bar
+        } else {
+            default_visible
+        }
+    }
+
+    pub(super) fn outline_wanted(&self, default_visible: bool) -> bool {
+        if self.enabled {
+            self.show_outline
+        } else {
+            default_visible
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ZenModeState;
+
+    fn zen_enabled(show_status_bar: bool, show_outline: bool) -> ZenModeState {
+        ZenModeState {
+            enabled: true,
+            show_status_bar,
+            show_outline,
+        }
+    }
+
+    #[test]
+    fn zen_mode_hides_status_bar_and_outline_by_default() {
+        let zen = zen_enabled(false, false);
+
+        assert!(!zen.status_bar_visible(true));
+        assert!(!zen.outline_wanted(true));
+    }
+
+    #[test]
+    fn zen_mode_toggles_status_bar_and_outline_independently() {
+        assert!(zen_enabled(true, false).status_bar_visible(true));
+        assert!(!zen_enabled(true, false).outline_wanted(true));
+        assert!(!zen_enabled(false, true).status_bar_visible(true));
+        assert!(zen_enabled(false, true).outline_wanted(true));
+    }
+
+    #[test]
+    fn inactive_zen_mode_preserves_default_visibility() {
+        let zen = ZenModeState {
+            enabled: false,
+            show_status_bar: false,
+            show_outline: false,
+        };
+
+        assert!(zen.status_bar_visible(true));
+        assert!(!zen.status_bar_visible(false));
+        assert!(zen.outline_wanted(true));
+        assert!(!zen.outline_wanted(false));
+    }
+}

@@ -15,6 +15,8 @@ gpui::actions!(
         ToggleTask,
         ToggleFocusMode,
         ToggleTypewriterScrolling,
+        ToggleZenMode,
+        ToggleZenStatusBar,
     ]
 );
 

@@ -106,16 +106,33 @@ impl DocumentEditorView {
                             }),
                     )
                     .children(self.kind.supports_outline().then(|| {
+                        let outline_selected = if self.zen.enabled {
+                            self.zen.show_outline
+                        } else {
+                            self.analysis.outline_visible
+                        };
                         Button::new("toggle-document-outline")
                             .icon(IconName::PanelRight)
                             .ghost()
                             .xsmall()
-                            .selected(self.analysis.outline_visible)
+                            .selected(outline_selected)
                             .tooltip("Toggle outline (Ctrl+Shift+O)")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_outline(window, cx);
                             }))
                     }))
+                    .child(
+                        Button::new("toggle-zen-mode")
+                            .icon(IconName::Maximize)
+                            .ghost()
+                            .xsmall()
+                            .selected(self.zen.enabled)
+                            .when(self.zen.enabled, |this| this.outline())
+                            .tooltip(format!("Zen mode ({})", zen_shortcut_label()))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleZenMode), cx);
+                            }),
+                    )
                     .child(
                         div()
                             .h_4()
@@ -208,5 +225,13 @@ fn writing_shortcut(key: &str) -> String {
         format!("Cmd+Option+{key}")
     } else {
         format!("Ctrl+Alt+{key}")
+    }
+}
+
+fn zen_shortcut_label() -> String {
+    if cfg!(target_os = "macos") {
+        "Cmd+Alt+Z".to_string()
+    } else {
+        "Ctrl+Alt+Z".to_string()
     }
 }

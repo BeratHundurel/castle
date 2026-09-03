@@ -66,6 +66,7 @@ pub struct DocumentEditorView {
     mode: EditorMode,
     vim_state: VimSessionState,
     writing: WritingExperienceState,
+    zen: ZenModeState,
     persistence: PersistenceState,
     analysis: AnalysisState,
     emmet_input: Entity<InputState>,
@@ -187,6 +188,11 @@ impl DocumentEditorView {
                 typewriter_scrolling,
                 focused_range: None,
                 focus_decorations,
+            },
+            zen: ZenModeState {
+                enabled: false,
+                show_status_bar: false,
+                show_outline: false,
             },
             persistence: PersistenceState {
                 current_path: None,
@@ -456,6 +462,65 @@ impl DocumentEditorView {
         AppSettings::set_editor_focus_mode(enabled, cx);
     }
 
+    pub fn is_zen_mode(&self) -> bool {
+        self.zen.enabled
+    }
+
+    pub(crate) fn effective_outline_rendered(&self) -> bool {
+        self.zen.outline_wanted(self.analysis.outline_rendered)
+            && (!self.zen.enabled || self.kind.supports_outline())
+    }
+
+    pub fn exit_zen_mode(&mut self, cx: &mut Context<Self>) {
+        if !self.zen.enabled {
+            return;
+        }
+        self.set_zen_mode(false, cx);
+    }
+
+    fn set_zen_mode(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.zen.enabled == enabled {
+            return;
+        }
+        self.zen.enabled = enabled;
+        self.zen.show_status_bar = false;
+        self.zen.show_outline = false;
+        cx.notify();
+    }
+
+    fn toggle_zen_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let enabled = !self.zen.enabled;
+        self.set_zen_mode(enabled, cx);
+        if enabled {
+            self.focus_active_mode(window, cx);
+        }
+    }
+
+    fn toggle_zen_status_bar(&mut self, cx: &mut Context<Self>) {
+        if !self.zen.enabled {
+            return;
+        }
+        self.zen.show_status_bar = !self.zen.show_status_bar;
+        cx.notify();
+    }
+
+    fn toggle_zen_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.zen.enabled {
+            return;
+        }
+        if !self.kind.supports_outline() {
+            return;
+        }
+        self.zen.show_outline = !self.zen.show_outline;
+        if self.zen.show_outline {
+            self.schedule_document_analysis(false, cx);
+            self.analysis.outline_focus_handle.focus(window, cx);
+        } else {
+            self.focus_active_mode(window, cx);
+        }
+        cx.notify();
+    }
+
     fn refresh_focus_decorations(&mut self, cx: &mut Context<Self>) {
         if !self.writing.focus_mode {
             if self.writing.focused_range.take().is_some() {
@@ -541,6 +606,10 @@ impl DocumentEditorView {
 
     fn toggle_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.kind.supports_outline() {
+            return;
+        }
+        if self.zen.enabled {
+            self.toggle_zen_outline(window, cx);
             return;
         }
         self.analysis.outline_visible = !self.analysis.outline_visible;

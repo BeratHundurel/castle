@@ -56,6 +56,36 @@ impl AppShell {
             })
     }
 
+    fn exit_all_zen_modes(&self, cx: &mut Context<Self>) {
+        let views: Vec<Entity<DocumentEditorView>> =
+            self.tabs.note_views.values().cloned().collect();
+        for view in views {
+            view.update(cx, |editor, cx| editor.exit_zen_mode(cx));
+        }
+    }
+
+    fn exit_zen_modes_for_closed_notes(&self, cx: &mut Context<Self>) {
+        let open_note_ids: std::collections::HashSet<u32> = self
+            .tabs
+            .open_tabs
+            .iter()
+            .filter_map(|tab| match &tab.kind {
+                OpenTabKind::Note { note_id, .. } => Some(*note_id),
+                _ => None,
+            })
+            .collect();
+        let closed: Vec<Entity<DocumentEditorView>> = self
+            .tabs
+            .note_views
+            .iter()
+            .filter(|(note_id, _)| !open_note_ids.contains(note_id))
+            .map(|(_, view)| view.clone())
+            .collect();
+        for view in closed {
+            view.update(cx, |editor, cx| editor.exit_zen_mode(cx));
+        }
+    }
+
     pub(crate) fn open_workspace_target(
         &mut self,
         target: ::workspace::WorkspaceNavigationTarget,
@@ -251,6 +281,9 @@ impl AppShell {
             index = updated_index;
         }
 
+        if self.tabs.active_tab_index != index {
+            self.exit_all_zen_modes(cx);
+        }
         self.tabs.active_tab_index = index;
         self.tabs.tab_scroll_handle.scroll_to_item(index);
         let tab = &self.tabs.open_tabs[index];
@@ -338,6 +371,10 @@ impl AppShell {
             self.workspace.pending_board_open = None;
         }
         let was_active = self.tabs.active_tab_index == index;
+        let closing_note_id = match &self.tabs.open_tabs[index].kind {
+            OpenTabKind::Note { note_id, .. } => Some(*note_id),
+            _ => None,
+        };
         self.tabs.open_tabs.remove(index);
         if self.tabs.open_tabs.is_empty() {
             self.tabs.open_tabs.push(OpenTab {
@@ -358,6 +395,11 @@ impl AppShell {
 
         if was_active || self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
             self.sync_sidebar_active(cx);
+        }
+        if let Some(note_id) = closing_note_id
+            && let Some(view) = self.tabs.note_views.get(&note_id).cloned()
+        {
+            view.update(cx, |editor, cx| editor.exit_zen_mode(cx));
         }
         self.prune_closed_saved_note_views(cx);
         self.sync_title_input(window, cx);
@@ -418,6 +460,7 @@ impl AppShell {
         }
         self.tabs.active_tab_index = 0;
         self.tabs.tab_scroll_handle.scroll_to_item(0);
+        self.exit_zen_modes_for_closed_notes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
@@ -437,6 +480,7 @@ impl AppShell {
         self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         self.tabs.active_tab_index = 0;
         self.tabs.tab_scroll_handle.scroll_to_item(0);
+        self.exit_all_zen_modes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);

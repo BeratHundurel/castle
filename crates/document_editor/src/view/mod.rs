@@ -24,7 +24,7 @@ use gpui_component::{
 };
 use std::{collections::HashSet, ops::Range, path::Path};
 
-use super::action::{FormatDocument, ToggleFocusMode, ToggleTypewriterScrolling};
+use super::action::{FormatDocument, ToggleFocusMode, ToggleTypewriterScrolling, ToggleZenMode};
 use super::document_state::*;
 use super::vim::VimMode;
 use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
@@ -99,7 +99,7 @@ impl DocumentEditorView {
     fn render_split(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (outline_in_layout, _) = editor_layout_signature(
             self.view_width,
-            self.analysis.outline_rendered,
+            self.effective_outline_rendered(),
             self.outline_width,
         );
         let outline_width = outline_width_for_view(self.outline_width, self.view_width);
@@ -214,7 +214,10 @@ impl Render for DocumentEditorView {
         let theme_background = cx.theme().background;
         let theme_border = cx.theme().border;
         let theme_input = cx.theme().input;
-        let status_line_visible = AppSettings::editor_status_line_visible(cx);
+        let status_line_visible = self
+            .zen
+            .status_bar_visible(AppSettings::editor_status_line_visible(cx));
+        let outline_rendered = self.effective_outline_rendered();
         let vim_context = self.vim_context();
 
         v_flex()
@@ -235,6 +238,8 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_toggle_outline))
             .on_action(cx.listener(Self::on_action_toggle_focus_mode))
             .on_action(cx.listener(Self::on_action_toggle_typewriter_scrolling))
+            .on_action(cx.listener(Self::on_action_toggle_zen_mode))
+            .on_action(cx.listener(Self::on_action_toggle_zen_status_bar))
             .on_action(cx.listener(Self::on_action_expand_emmet))
             .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
             .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
@@ -259,12 +264,12 @@ impl Render for DocumentEditorView {
                                 if this.view_bounds != Some(bounds) {
                                     let previous_layout = editor_layout_signature(
                                         this.view_width,
-                                        this.analysis.outline_rendered,
+                                        this.effective_outline_rendered(),
                                         this.outline_width,
                                     );
                                     let next_layout = editor_layout_signature(
                                         bounds.size.width,
-                                        this.analysis.outline_rendered,
+                                        this.effective_outline_rendered(),
                                         this.outline_width,
                                     );
                                     let first_measurement = this.view_bounds.is_none();
@@ -293,15 +298,16 @@ impl Render for DocumentEditorView {
                             .children(
                                 editor_layout_signature(
                                     self.view_width,
-                                    self.analysis.outline_rendered,
+                                    outline_rendered,
                                     self.outline_width,
                                 )
                                 .0
-                                .then(|| self.render_outline_transition(cx)),
+                                .then(|| self.render_outline_for_layout(cx)),
                             ),
                     ),
             )
             .children(status_line_visible.then(|| self.render_status_bar(cx)))
+            .children(self.zen.enabled.then(|| self.render_zen_toolbar(cx)))
             .children(
                 (!status_line_visible && self.vim_is_enabled() && self.mode.shows_source()).then(
                     || {
@@ -367,6 +373,78 @@ impl DocumentEditorView {
                     .then(|| div().text_color(cx.theme().muted_foreground).child(command)),
             )
             .into_any_element()
+    }
+
+    fn render_outline_for_layout(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.zen.enabled {
+            let outline_width = outline_width_for_view(self.outline_width, self.view_width);
+            return div()
+                .h_full()
+                .flex_shrink_0()
+                .overflow_hidden()
+                .w(outline_width)
+                .child(self.render_outline(cx))
+                .into_any_element();
+        }
+        self.render_outline_transition(cx)
+    }
+
+    fn render_zen_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let supports_outline = self.kind.supports_outline();
+        h_flex()
+            .id("zen-toolbar")
+            .absolute()
+            .top(px(8.))
+            .right(px(8.))
+            .px_1()
+            .py_1()
+            .gap_1()
+            .items_center()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background.opacity(0.92))
+            .child(
+                Button::new("toggle-zen-status-bar")
+                    .icon(IconName::PanelBottom)
+                    .ghost()
+                    .xsmall()
+                    .selected(self.zen.show_status_bar)
+                    .tooltip("Show status bar in zen mode")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_zen_status_bar(cx);
+                    })),
+            )
+            .children(supports_outline.then(|| {
+                Button::new("toggle-zen-outline")
+                    .icon(IconName::PanelRight)
+                    .ghost()
+                    .xsmall()
+                    .selected(self.zen.show_outline)
+                    .tooltip("Show outline in zen mode")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_zen_outline(window, cx);
+                    }))
+            }))
+            .child(
+                Button::new("exit-zen-mode")
+                    .icon(IconName::Minimize)
+                    .ghost()
+                    .xsmall()
+                    .tooltip(format!("Exit zen mode ({})", zen_shortcut()))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_zen_mode(window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+}
+
+fn zen_shortcut() -> String {
+    if cfg!(target_os = "macos") {
+        "Cmd+Alt+Z".to_string()
+    } else {
+        "Ctrl+Alt+Z".to_string()
     }
 }
 

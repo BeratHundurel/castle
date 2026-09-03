@@ -9,8 +9,8 @@ use document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
     MarkdownFormat, MoveLineDown, MoveLineUp, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen,
     OutlinePrevious, OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
-    ToggleDocumentPreview, ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, VimKey,
-    VimKeyAction,
+    ToggleDocumentPreview, ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, ToggleZenMode,
+    VimKey, VimKeyAction,
 };
 use shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 
@@ -322,6 +322,10 @@ fn default_bindings() -> Vec<KeyBinding> {
             ToggleTypewriterScrolling,
             Some("DocumentEditor"),
         ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-z", ToggleZenMode, Some("DocumentEditor")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-z", ToggleZenMode, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-v", ToggleDocumentPreview, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
@@ -690,6 +694,23 @@ mod tests {
                     "ctrl-alt-w"
                 },
                 ToggleTypewriterScrolling,
+                Some("DocumentEditor"),
+            )
+            .keystrokes()
+        );
+        let zen_mode = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<ToggleZenMode>())
+            .expect("zen mode binding should be registered");
+        assert_eq!(
+            zen_mode.keystrokes(),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-alt-z"
+                } else {
+                    "ctrl-alt-z"
+                },
+                ToggleZenMode,
                 Some("DocumentEditor"),
             )
             .keystrokes()

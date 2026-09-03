@@ -269,6 +269,9 @@ impl Render for AppShell {
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let theme = cx.theme().clone();
         let command_palette_open = self.command_palette.read(cx).is_open();
+        let zen_mode = self
+            .active_note_view()
+            .is_some_and(|view| view.read(cx).is_zen_mode());
 
         v_flex()
             .id("app-container")
@@ -352,7 +355,7 @@ impl Render for AppShell {
                     this.select_next_command_palette_item(cx);
                 }
             }))
-            .child(self.render_title_bar(cx))
+            .children((!zen_mode).then(|| self.render_title_bar(cx)))
             .child(
                 h_flex()
                     .id("main-container")
@@ -360,7 +363,7 @@ impl Render for AppShell {
                     .size_full()
                     .overflow_hidden()
                     .rounded(theme.radius)
-                    .child(self.sidebar.clone())
+                    .children((!zen_mode).then(|| self.sidebar.clone()))
                     .child(
                         v_flex()
                             .id("content-container")

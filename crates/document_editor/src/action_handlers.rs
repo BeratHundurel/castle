@@ -24,6 +24,24 @@ impl DocumentEditorView {
         self.toggle_typewriter_scrolling(window, cx);
     }
 
+    pub(super) fn on_action_toggle_zen_mode(
+        &mut self,
+        _: &ToggleZenMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_zen_mode(window, cx);
+    }
+
+    pub(super) fn on_action_toggle_zen_status_bar(
+        &mut self,
+        _: &ToggleZenStatusBar,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_zen_status_bar(cx);
+    }
+
     pub(super) fn on_action_create_card_from_selection(
         &mut self,
         _: &CreateCardFromSelectionAction,
