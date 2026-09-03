@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::*;
+use gpui::relative;
 use gpui_component::{
     WindowExt as _,
     dialog::{
@@ -854,60 +855,71 @@ impl AppShell {
                 )
                 .child(
                     DialogFooter::new()
+                        .justify_between()
                         .child(
-                            DialogClose::new().child(
-                                Button::new("cancel-import-workspace")
-                                    .label("Cancel")
-                                    .outline(),
+                            div().flex_none().child(
+                                DialogClose::new().child(
+                                    Button::new("cancel-import-workspace")
+                                        .child(footer_action_label("Cancel"))
+                                        .outline(),
+                                ),
                             ),
                         )
                         .child(
-                            Button::new("merge-import-workspace")
-                                .label("Merge")
-                                .primary()
-                                .on_click({
-                                    let merge_app = merge_app.clone();
-                                    let merge_path = merge_path.clone();
-                                    let import_submitted = import_submitted.clone();
-                                    move |_, window, cx| {
-                                        if !claim_workspace_import_submission(&import_submitted) {
-                                            return;
-                                        }
-                                        window.close_dialog(cx);
-                                        merge_app.update(cx, |this, cx| {
-                                            this.start_workspace_import(
-                                                merge_path.clone(),
-                                                storage::workspace::archive::ImportMode::Merge,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
-                        )
-                        .child(
-                            Button::new("replace-import-workspace")
-                                .label("Replace workspace")
-                                .danger()
-                                .on_click({
-                                    let replace_app = replace_app.clone();
-                                    let replace_path = replace_path.clone();
-                                    let import_submitted = import_submitted.clone();
-                                    move |_, window, cx| {
-                                        if !claim_workspace_import_submission(&import_submitted) {
-                                            return;
-                                        }
-                                        window.close_dialog(cx);
-                                        replace_app.update(cx, |this, cx| {
-                                            this.start_workspace_import(
-                                                replace_path.clone(),
-                                                storage::workspace::archive::ImportMode::Replace,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("merge-import-workspace")
+                                        .child(footer_action_label("Merge"))
+                                        .primary()
+                                        .on_click({
+                                            let merge_app = merge_app.clone();
+                                            let merge_path = merge_path.clone();
+                                            let import_submitted = import_submitted.clone();
+                                            move |_, window, cx| {
+                                                if !claim_workspace_import_submission(
+                                                    &import_submitted,
+                                                ) {
+                                                    return;
+                                                }
+                                                window.close_dialog(cx);
+                                                merge_app.update(cx, |this, cx| {
+                                                    this.start_workspace_import(
+                                                        merge_path.clone(),
+                                                        storage::workspace::archive::ImportMode::Merge,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Button::new("replace-import-workspace")
+                                        .child(footer_action_label("Replace workspace"))
+                                        .danger()
+                                        .on_click({
+                                            let replace_app = replace_app.clone();
+                                            let replace_path = replace_path.clone();
+                                            let import_submitted = import_submitted.clone();
+                                            move |_, window, cx| {
+                                                if !claim_workspace_import_submission(
+                                                    &import_submitted,
+                                                ) {
+                                                    return;
+                                                }
+                                                window.close_dialog(cx);
+                                                replace_app.update(cx, |this, cx| {
+                                                    this.start_workspace_import(
+                                                        replace_path.clone(),
+                                                        storage::workspace::archive::ImportMode::Replace,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                ),
                         ),
                 )
         });
@@ -1098,6 +1110,18 @@ fn remove_linked_note_file(path: &Path) -> std::io::Result<()> {
 
 fn claim_workspace_import_submission(submitted: &Cell<bool>) -> bool {
     !submitted.replace(true)
+}
+
+fn footer_action_label(label: impl Into<SharedString>) -> impl IntoElement {
+    // Button::label renders inside a truncating single-line wrapper whose
+    // tight leading clips descenders, so static footer labels use a child
+    // with room to breathe instead.
+    let label: SharedString = label.into();
+    div()
+        .flex_none()
+        .whitespace_nowrap()
+        .line_height(relative(1.2))
+        .child(label)
 }
 
 async fn publish_change_revision(
