@@ -565,6 +565,24 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                 )
                 .description("Wrap long lines in newly opened document editors."),
                 SettingItem::new(
+                    "Focus Mode",
+                    SettingField::switch(
+                        AppSettings::editor_focus_mode,
+                        AppSettings::set_editor_focus_mode,
+                    )
+                    .default_value(false),
+                )
+                .description("Dim text outside the active paragraph in document source editors."),
+                SettingItem::new(
+                    "Typewriter Scrolling",
+                    SettingField::switch(
+                        AppSettings::editor_typewriter_scrolling,
+                        AppSettings::set_editor_typewriter_scrolling,
+                    )
+                    .default_value(false),
+                )
+                .description("Keep the active line near the vertical center while writing."),
+                SettingItem::new(
                     "Vim Mode",
                     SettingField::switch(
                         AppSettings::editor_vim_mode,

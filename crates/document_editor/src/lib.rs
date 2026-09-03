@@ -16,13 +16,13 @@ mod view;
 mod vim;
 
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString,
-    Subscription, Task, UniformListScrollHandle, Window, point, px,
+    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, HighlightStyle, Pixels,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, point, px,
 };
 use gpui_component::{
     Theme,
     highlighter::Language,
-    input::{EditorState, InputEvent, InputState, RopeExt as _, TabSize},
+    input::{EditorState, InputEvent, InputState, Rope, RopeExt as _, TabSize, TextDecoration},
 };
 use std::{
     cell::Cell,
@@ -54,6 +54,8 @@ const OUTLINE_MIN_WIDTH: Pixels = px(176.);
 const OUTLINE_MAX_WIDTH: Pixels = px(480.);
 const EDITOR_MIN_WIDTH_WITH_OUTLINE: Pixels = px(360.);
 const OUTLINE_INDENT_STEP: Pixels = px(8.);
+const TYPEWRITER_SCROLL_MARGIN_LINES: usize = usize::MAX;
+const FOCUS_MODE_FADE: f32 = 0.72;
 
 pub struct DocumentEditorView {
     note_id: u32,
@@ -63,6 +65,7 @@ pub struct DocumentEditorView {
     kind: DocumentKind,
     mode: EditorMode,
     vim_state: VimSessionState,
+    writing: WritingExperienceState,
     persistence: PersistenceState,
     analysis: AnalysisState,
     emmet_input: Entity<InputState>,
@@ -72,6 +75,7 @@ pub struct DocumentEditorView {
     embeds: EmbedStateGroup,
     mermaid: mermaid::MermaidState,
     _theme_subscription: Subscription,
+    _settings_subscription: Subscription,
     pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
@@ -93,6 +97,8 @@ impl DocumentEditorView {
         let outline_visible = AppSettings::document_outline_visible(cx);
         let preview_font_size_bits = AppSettings::markdown_preview_font_size(cx).to_bits();
         let vim_enabled = AppSettings::editor_vim_mode(cx);
+        let focus_mode = AppSettings::editor_focus_mode(cx);
+        let typewriter_scrolling = AppSettings::editor_typewriter_scrolling(cx);
         let wikilink_completion_provider =
             links::WorkspaceReferenceCompletionProvider::new(note_id as i64);
         let input_completion_provider = std::rc::Rc::new(wikilink_completion_provider.clone());
@@ -100,7 +106,10 @@ impl DocumentEditorView {
         let editor = cx.new(|cx| {
             let mut editor = EditorState::new(window, cx)
                 .language(Language::Plain)
-                .scroll_beyond_last_line(Some(1))
+                .scroll_beyond_last_line(if typewriter_scrolling { None } else { Some(1) })
+                .cursor_surrounding_lines(
+                    typewriter_scrolling.then_some(TYPEWRITER_SCROLL_MARGIN_LINES),
+                )
                 .line_number(line_numbers)
                 .indent_guides(false)
                 .tab_size(TabSize {
@@ -122,11 +131,22 @@ impl DocumentEditorView {
 
         let focus_handle = cx.focus_handle();
         let outline_focus_handle = cx.focus_handle();
+        let focus_decorations = editor.update(cx, |editor, cx| {
+            editor.create_decorations_collection(Vec::new(), cx)
+        });
         let theme_subscription = cx.observe_global::<Theme>(|this, cx| {
             if this.kind == DocumentKind::Markdown && this.mode.shows_preview() {
                 this.activate_mermaids(cx);
             }
         });
+        let settings_subscription = cx
+            .observe_global_in::<AppSettings>(window, |this, window, cx| {
+                this.sync_writing_preferences(window, cx)
+            });
+        cx.observe(&editor, |this, _, cx| {
+            this.refresh_focus_decorations(cx);
+        })
+        .detach();
         cx.on_release(|this, cx| this.mermaid.clear(cx)).detach();
         cx.subscribe_in(
             &editor,
@@ -161,6 +181,12 @@ impl DocumentEditorView {
             vim_state: VimSessionState {
                 state: VimState::new(vim_enabled),
                 search_active: false,
+            },
+            writing: WritingExperienceState {
+                focus_mode,
+                typewriter_scrolling,
+                focused_range: None,
+                focus_decorations,
             },
             persistence: PersistenceState {
                 current_path: None,
@@ -226,6 +252,7 @@ impl DocumentEditorView {
             },
             mermaid: mermaid::MermaidState::default(),
             _theme_subscription: theme_subscription,
+            _settings_subscription: settings_subscription,
             pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
@@ -402,6 +429,95 @@ impl DocumentEditorView {
                 self.focus_handle.focus(window, cx);
             }
         }
+    }
+
+    fn sync_writing_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.apply_focus_mode(AppSettings::editor_focus_mode(cx), cx);
+        self.apply_typewriter_scrolling(AppSettings::editor_typewriter_scrolling(cx), window, cx);
+    }
+
+    fn apply_focus_mode(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.writing.focus_mode == enabled {
+            return;
+        }
+        self.writing.focus_mode = enabled;
+        self.writing.focused_range = None;
+        if enabled {
+            self.refresh_focus_decorations(cx);
+        } else {
+            self.writing.focus_decorations.clear(cx);
+        }
+        cx.notify();
+    }
+
+    fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        let enabled = !self.writing.focus_mode;
+        self.apply_focus_mode(enabled, cx);
+        AppSettings::set_editor_focus_mode(enabled, cx);
+    }
+
+    fn refresh_focus_decorations(&mut self, cx: &mut Context<Self>) {
+        if !self.writing.focus_mode {
+            if self.writing.focused_range.take().is_some() {
+                self.writing.focus_decorations.clear(cx);
+            }
+            return;
+        }
+
+        let selection = self
+            .vim_visual_range(cx)
+            .unwrap_or_else(|| self.editor.read(cx).selected_range());
+        let (focused_range, text_len) = {
+            let editor = self.editor.read(cx);
+            (
+                focused_paragraph_range(editor.text(), selection),
+                editor.text().len(),
+            )
+        };
+        if self.writing.focused_range.as_ref() == Some(&focused_range) {
+            return;
+        }
+
+        let style = HighlightStyle {
+            fade_out: Some(FOCUS_MODE_FADE),
+            ..Default::default()
+        };
+        let mut decorations = Vec::with_capacity(2);
+        if focused_range.start > 0 {
+            decorations.push(TextDecoration::new(0..focused_range.start, style));
+        }
+        if focused_range.end < text_len {
+            decorations.push(TextDecoration::new(focused_range.end..text_len, style));
+        }
+        self.writing.focused_range = Some(focused_range);
+        self.writing.focus_decorations.set(decorations, cx);
+    }
+
+    fn apply_typewriter_scrolling(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.writing.typewriter_scrolling == enabled {
+            return;
+        }
+        self.writing.typewriter_scrolling = enabled;
+        self.editor.update(cx, |editor, cx| {
+            editor.set_scroll_beyond_last_line(if enabled { None } else { Some(1) }, window, cx);
+            editor.set_cursor_surrounding_lines(
+                enabled.then_some(TYPEWRITER_SCROLL_MARGIN_LINES),
+                window,
+                cx,
+            );
+        });
+        cx.notify();
+    }
+
+    fn toggle_typewriter_scrolling(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let enabled = !self.writing.typewriter_scrolling;
+        self.apply_typewriter_scrolling(enabled, window, cx);
+        AppSettings::set_editor_typewriter_scrolling(enabled, cx);
     }
 
     fn apply_document_kind(&mut self, path: Option<&Path>, cx: &mut Context<Self>) -> DocumentKind {
@@ -844,12 +960,47 @@ fn source_row_centers_at_document_start(
     })
 }
 
+fn focused_paragraph_range(text: &Rope, selection: Range<usize>) -> Range<usize> {
+    if text.len() == 0 {
+        return 0..0;
+    }
+
+    let start_offset = selection.start.min(text.len());
+    let end_offset = if selection.is_empty() {
+        start_offset
+    } else {
+        selection.end.min(text.len()).saturating_sub(1)
+    };
+    let mut start_row = text.offset_to_point(start_offset).row;
+    let mut end_row = text.offset_to_point(end_offset).row;
+    let line_is_blank = |row| text.slice_line(row).chars().all(char::is_whitespace);
+
+    if !line_is_blank(start_row) {
+        while start_row > 0 && !line_is_blank(start_row - 1) {
+            start_row -= 1;
+        }
+    }
+    if !line_is_blank(end_row) {
+        while end_row + 1 < text.lines_len() && !line_is_blank(end_row + 1) {
+            end_row += 1;
+        }
+    }
+
+    let end = if end_row + 1 < text.lines_len() {
+        text.line_start_offset(end_row + 1)
+    } else {
+        text.len()
+    };
+    text.line_start_offset(start_row)..end
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         DocumentEditorView, DocumentKind, DocumentOutline, JsonOutline,
         OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document, changed_document_kind,
-        document_language, row_is_in_visible_layout, source_row_centers_at_document_start,
+        document_language, focused_paragraph_range, row_is_in_visible_layout,
+        source_row_centers_at_document_start,
     };
     use entity::note;
     use gpui::AppContext as _;
@@ -1124,6 +1275,44 @@ mod tests {
             gpui::px(400.),
             0
         ));
+    }
+
+    #[test]
+    fn focus_mode_tracks_the_paragraph_containing_the_cursor() {
+        let text = gpui_component::input::Rope::from(
+            "First paragraph\ncontinues here\n\nSecond paragraph with café\ncontinues too\n",
+        );
+        let cursor = "First paragraph\ncontinues here\n\nSecond paragraph with ca".len();
+
+        assert_eq!(
+            focused_paragraph_range(&text, cursor..cursor),
+            "First paragraph\ncontinues here\n\n".len()..text.len()
+        );
+    }
+
+    #[test]
+    fn focus_mode_keeps_every_paragraph_touched_by_a_selection() {
+        let source = "One\n\nTwo\ncontinued\n\nThree";
+        let text = gpui_component::input::Rope::from(source);
+        let selection = source.find("ne").expect("selection start should exist")
+            ..source
+                .find("continued")
+                .expect("selection end should exist")
+                + "continued".len();
+
+        assert_eq!(
+            focused_paragraph_range(&text, selection),
+            0.."One\n\nTwo\ncontinued\n".len()
+        );
+    }
+
+    #[test]
+    fn focus_mode_on_a_blank_line_only_keeps_that_separator() {
+        let source = "One\n\nTwo";
+        let text = gpui_component::input::Rope::from(source);
+        let cursor = source.find("\n\n").expect("blank separator should exist") + 1;
+
+        assert_eq!(focused_paragraph_range(&text, cursor..cursor), 4..5);
     }
 
     #[test]

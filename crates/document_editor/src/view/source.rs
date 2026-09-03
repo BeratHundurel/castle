@@ -53,6 +53,9 @@ impl DocumentEditorView {
                     .separator()
                     .menu("Select All", Box::new(input::SelectAll))
                     .separator()
+                    .menu("Focus Mode", Box::new(ToggleFocusMode))
+                    .menu("Typewriter Scrolling", Box::new(ToggleTypewriterScrolling))
+                    .separator()
                     .menu_with_disabled("Format Document", !can_format, Box::new(FormatDocument))
             });
         let input = if outline_in_layout && self.analysis.outline_transition_epoch > 0 {

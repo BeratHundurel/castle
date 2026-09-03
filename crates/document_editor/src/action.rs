@@ -13,6 +13,8 @@ gpui::actions!(
         MoveLineUp,
         MoveLineDown,
         ToggleTask,
+        ToggleFocusMode,
+        ToggleTypewriterScrolling,
     ]
 );
 

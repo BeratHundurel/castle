@@ -24,7 +24,7 @@ use gpui_component::{
 };
 use std::{collections::HashSet, ops::Range, path::Path};
 
-use super::action::FormatDocument;
+use super::action::{FormatDocument, ToggleFocusMode, ToggleTypewriterScrolling};
 use super::document_state::*;
 use super::vim::VimMode;
 use super::{DocumentEditorView, DocumentInspectorTab, DocumentKind};
@@ -233,6 +233,8 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_create_card_from_selection))
             .on_action(cx.listener(Self::on_action_insert_board_view))
             .on_action(cx.listener(Self::on_action_toggle_outline))
+            .on_action(cx.listener(Self::on_action_toggle_focus_mode))
+            .on_action(cx.listener(Self::on_action_toggle_typewriter_scrolling))
             .on_action(cx.listener(Self::on_action_expand_emmet))
             .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
             .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))

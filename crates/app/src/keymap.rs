@@ -9,7 +9,8 @@ use document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
     MarkdownFormat, MoveLineDown, MoveLineUp, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen,
     OutlinePrevious, OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
-    ToggleDocumentPreview, ToggleTask, VimKey, VimKeyAction,
+    ToggleDocumentPreview, ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, VimKey,
+    VimKeyAction,
 };
 use shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 
@@ -305,6 +306,22 @@ fn default_bindings() -> Vec<KeyBinding> {
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         KeyBinding::new("alt-shift-f", FormatDocument, Some("DocumentEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-m", ToggleFocusMode, Some("DocumentEditor")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-m", ToggleFocusMode, Some("DocumentEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-alt-w",
+            ToggleTypewriterScrolling,
+            Some("DocumentEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-w",
+            ToggleTypewriterScrolling,
+            Some("DocumentEditor"),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-v", ToggleDocumentPreview, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
@@ -642,6 +659,40 @@ mod tests {
             bindings
                 .iter()
                 .any(|binding| binding.action().as_any().is::<ToggleTask>())
+        );
+        let focus_mode = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<ToggleFocusMode>())
+            .expect("focus mode binding should be registered");
+        let typewriter_scrolling = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<ToggleTypewriterScrolling>())
+            .expect("typewriter scrolling binding should be registered");
+        assert_eq!(
+            focus_mode.keystrokes(),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-alt-m"
+                } else {
+                    "ctrl-alt-m"
+                },
+                ToggleFocusMode,
+                Some("DocumentEditor"),
+            )
+            .keystrokes()
+        );
+        assert_eq!(
+            typewriter_scrolling.keystrokes(),
+            KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-alt-w"
+                } else {
+                    "ctrl-alt-w"
+                },
+                ToggleTypewriterScrolling,
+                Some("DocumentEditor"),
+            )
+            .keystrokes()
         );
 
         let toggle_task = bindings

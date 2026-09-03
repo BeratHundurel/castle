@@ -97,6 +97,25 @@ fn source_context_menu_does_not_reenter_input_state(cx: &mut gpui::TestAppContex
     });
 }
 
+#[gpui::test]
+fn disabling_focus_mode_clears_source_decorations(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "First paragraph\n\nSecond paragraph", |view, cx| {
+        cx.update(|_, cx| {
+            view.update(cx, |editor, cx| editor.apply_focus_mode(true, cx));
+        });
+        assert!(view.read_with(cx, |editor, cx| {
+            !editor.writing.focus_decorations.get_ranges(cx).is_empty()
+        }));
+
+        cx.update(|_, cx| {
+            view.update(cx, |editor, cx| editor.apply_focus_mode(false, cx));
+        });
+        assert!(view.read_with(cx, |editor, cx| {
+            editor.writing.focus_decorations.get_ranges(cx).is_empty()
+        }));
+    });
+}
+
 fn set_vim_test_content(
     view: &gpui::Entity<DocumentEditorView>,
     content: &str,

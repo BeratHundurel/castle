@@ -1,9 +1,13 @@
+use gpui::prelude::FluentBuilder as _;
+
 use super::*;
 
 impl DocumentEditorView {
     pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let path = status_path(self.persistence.current_path.as_deref(), self.kind);
         let path_tooltip = SharedString::from(path.tooltip.clone());
+        let focus_mode_shortcut = writing_shortcut("M");
+        let typewriter_scrolling_shortcut = writing_shortcut("W");
 
         h_flex()
             .id("document-status-bar")
@@ -74,6 +78,32 @@ impl DocumentEditorView {
                     .children(
                         (self.kind == DocumentKind::Markdown)
                             .then(|| self.render_mode_switcher(cx)),
+                    )
+                    .child(
+                        Button::new("toggle-focus-mode")
+                            .icon(IconName::Frame)
+                            .ghost()
+                            .xsmall()
+                            .selected(self.writing.focus_mode)
+                            .when(self.writing.focus_mode, |this| this.outline())
+                            .tooltip(format!("Focus mode ({focus_mode_shortcut})"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleFocusMode), cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("toggle-typewriter-scrolling")
+                            .icon(IconName::GalleryVerticalEnd)
+                            .ghost()
+                            .xsmall()
+                            .selected(self.writing.typewriter_scrolling)
+                            .when(self.writing.typewriter_scrolling, |this| this.outline())
+                            .tooltip(format!(
+                                "Typewriter scrolling ({typewriter_scrolling_shortcut})"
+                            ))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleTypewriterScrolling), cx);
+                            }),
                     )
                     .children(self.kind.supports_outline().then(|| {
                         Button::new("toggle-document-outline")
@@ -170,5 +200,13 @@ impl DocumentEditorView {
             .flex_shrink_0()
             .child(Icon::new(icon).xsmall())
             .child(label)
+    }
+}
+
+fn writing_shortcut(key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("Cmd+Option+{key}")
+    } else {
+        format!("Ctrl+Alt+{key}")
     }
 }

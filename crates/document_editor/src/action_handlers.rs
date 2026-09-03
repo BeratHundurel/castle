@@ -6,6 +6,24 @@ use super::emmet::parse_emmet_abbreviation;
 use super::{DocumentEditorView, DocumentKind};
 
 impl DocumentEditorView {
+    pub(super) fn on_action_toggle_focus_mode(
+        &mut self,
+        _: &ToggleFocusMode,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_focus_mode(cx);
+    }
+
+    pub(super) fn on_action_toggle_typewriter_scrolling(
+        &mut self,
+        _: &ToggleTypewriterScrolling,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_typewriter_scrolling(window, cx);
+    }
+
     pub(super) fn on_action_create_card_from_selection(
         &mut self,
         _: &CreateCardFromSelectionAction,

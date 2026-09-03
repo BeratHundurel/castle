@@ -28,6 +28,8 @@ const DEFAULT_EDITOR_STATUS_LINE_VISIBLE: bool = true;
 const DEFAULT_EDITOR_LINE_NUMBERS: bool = false;
 const DEFAULT_EDITOR_SOFT_WRAP: bool = true;
 const DEFAULT_EDITOR_VIM_MODE: bool = false;
+const DEFAULT_EDITOR_FOCUS_MODE: bool = false;
+const DEFAULT_EDITOR_TYPEWRITER_SCROLLING: bool = false;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
@@ -86,6 +88,8 @@ pub(crate) struct StoredSettings {
     #[serde(alias = "markdown_soft_wrap")]
     editor_soft_wrap: bool,
     editor_vim_mode: bool,
+    editor_focus_mode: bool,
+    editor_typewriter_scrolling: bool,
     #[serde(alias = "markdown_outline_visible")]
     document_outline_visible: bool,
     close_to_tray: bool,
@@ -112,6 +116,8 @@ impl Default for StoredSettings {
             editor_line_numbers: DEFAULT_EDITOR_LINE_NUMBERS,
             editor_soft_wrap: DEFAULT_EDITOR_SOFT_WRAP,
             editor_vim_mode: DEFAULT_EDITOR_VIM_MODE,
+            editor_focus_mode: DEFAULT_EDITOR_FOCUS_MODE,
+            editor_typewriter_scrolling: DEFAULT_EDITOR_TYPEWRITER_SCROLLING,
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
@@ -314,6 +320,14 @@ impl AppSettings {
         cx.global::<Self>().values.editor_vim_mode
     }
 
+    pub fn editor_focus_mode(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_focus_mode
+    }
+
+    pub fn editor_typewriter_scrolling(cx: &App) -> bool {
+        cx.global::<Self>().values.editor_typewriter_scrolling
+    }
+
     pub fn set_markdown_editor_mode(value: SharedString, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.markdown_editor_mode = value.to_string();
@@ -344,6 +358,18 @@ impl AppSettings {
             settings.values.editor_vim_mode = enabled;
         });
         cx.refresh_windows();
+    }
+
+    pub fn set_editor_focus_mode(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.editor_focus_mode = enabled;
+        });
+    }
+
+    pub fn set_editor_typewriter_scrolling(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.editor_typewriter_scrolling = enabled;
+        });
     }
 
     pub fn document_outline_visible(cx: &App) -> bool {
@@ -610,6 +636,8 @@ mod tests {
         assert_eq!(settings.sidebar_width, DEFAULT_SIDEBAR_WIDTH);
         assert!(settings.editor_status_line_visible);
         assert!(!settings.editor_vim_mode);
+        assert!(!settings.editor_focus_mode);
+        assert!(!settings.editor_typewriter_scrolling);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
         assert_eq!(

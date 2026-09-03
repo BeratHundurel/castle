@@ -102,3 +102,10 @@ pub(super) struct VimSessionState {
     pub(super) state: VimState,
     pub(super) search_active: bool,
 }
+
+pub(super) struct WritingExperienceState {
+    pub(super) focus_mode: bool,
+    pub(super) typewriter_scrolling: bool,
+    pub(super) focused_range: Option<Range<usize>>,
+    pub(super) focus_decorations: gpui_component::input::TextDecorationCollection,
+}
