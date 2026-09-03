@@ -10,6 +10,9 @@ gpui::actions!(
         ToggleDocumentPreview,
         CreateCardFromSelectionAction,
         InsertBoardViewAction,
+        MoveLineUp,
+        MoveLineDown,
+        ToggleTask,
     ]
 );
 
@@ -119,10 +122,17 @@ pub enum MarkdownFormat {
     HeadingOne,
     HeadingTwo,
     HeadingThree,
+    HeadingFour,
+    HeadingFive,
+    HeadingSix,
     Bold,
     Italic,
     InlineCode,
     Link,
+    Task,
+    Footnote,
+    Strikethrough,
+    Highlight,
     BulletList,
     OrderedList,
     Quote,

@@ -2,18 +2,33 @@ use super::*;
 
 impl DocumentEditorView {
     pub(crate) fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let view = cx.entity();
-        let source_is_ready = self.analysis.source_bounds.is_some();
-        let outline_in_layout = self.analysis.outline_rendered && self.view_width >= px(760.);
-        let outline_width = outline_width_for_view(self.outline_width, self.view_width);
+        let (outline_in_layout, _) = editor_layout_signature(
+            self.view_width,
+            self.analysis.outline_rendered,
+            self.outline_width,
+        );
         let source_width = self.view_width
             - if outline_in_layout {
-                outline_width
+                outline_width_for_view(self.outline_width, self.view_width)
             } else {
                 px(0.)
             };
+
+        self.render_source_with_width(source_width, outline_in_layout, cx)
+    }
+
+    pub(crate) fn render_source_with_width(
+        &self,
+        source_width: Pixels,
+        outline_in_layout: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let view = cx.entity();
+        let source_is_ready = self.analysis.source_bounds.is_some();
+        let outline_width = outline_width_for_view(self.outline_width, self.view_width);
         let navigation_highlight = self.render_outline_source_highlight(source_width, cx);
         let vim_overlays = self.render_vim_overlays(cx);
+        let source_layout_mode = self.mode;
         let source_context = if self.kind == DocumentKind::Markdown {
             "MarkdownSource"
         } else {
@@ -77,9 +92,13 @@ impl DocumentEditorView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_vim_mouse_down))
             .on_prepaint(move |bounds, _, cx| {
                 view.update(cx, |this, cx| {
-                    if this.analysis.source_bounds != Some(bounds) {
+                    let mode_changed = this.analysis.source_bounds_mode != Some(source_layout_mode);
+                    if this.analysis.source_bounds != Some(bounds) || mode_changed {
                         this.analysis.source_bounds = Some(bounds);
-                        cx.notify();
+                        this.analysis.source_bounds_mode = Some(source_layout_mode);
+                        if mode_changed {
+                            cx.notify();
+                        }
                     }
                 });
             })

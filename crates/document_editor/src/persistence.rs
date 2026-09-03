@@ -4,6 +4,7 @@ use std::{
     fs::read_to_string,
     fs::{create_dir_all, remove_file, write},
     path::PathBuf,
+    sync::Arc,
 };
 
 use runtime::AppRuntime;
@@ -194,6 +195,7 @@ impl DocumentEditorView {
 
         self.analysis.stats = DocumentStats::from_text("");
         self.analysis.outline = DocumentOutline::None;
+        self.analysis.preview_sections = Arc::new(Vec::new());
         self.analysis.outline_selected = None;
         self.rebuild_outline_rows();
 
@@ -248,7 +250,7 @@ impl DocumentEditorView {
         }
 
         self.schedule_document_analysis(true, cx);
-        self.refresh_board_embeds(cx);
+        self.schedule_board_embed_refresh(cx);
         self.schedule_auto_save(cx);
     }
 

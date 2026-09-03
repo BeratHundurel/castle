@@ -15,6 +15,7 @@ use std::{
 
 use runtime::AppRuntime;
 
+use super::smart_editing::markdown_link_for_paste;
 use super::{DocumentEditorView, DocumentKind};
 
 enum ImageImport {
@@ -134,6 +135,7 @@ impl DocumentEditorView {
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
+        let clipboard_text = clipboard.text();
 
         let imports = clipboard
             .entries()
@@ -155,6 +157,16 @@ impl DocumentEditorView {
             .collect::<Vec<_>>();
 
         if imports.is_empty() {
+            let selected = self.editor.read(cx).selected_value().to_string();
+            if let Some(target) = clipboard_text.as_deref()
+                && let Some(replacement) = markdown_link_for_paste(&selected, target)
+            {
+                cx.stop_propagation();
+                self.editor.update(cx, |editor, cx| {
+                    editor.replace(replacement, window, cx);
+                    editor.focus(window, cx);
+                });
+            }
             return;
         }
 

@@ -10,6 +10,7 @@ pub mod links;
 mod mermaid;
 mod outline;
 mod persistence;
+mod smart_editing;
 mod state;
 mod view;
 mod vim;
@@ -43,6 +44,7 @@ pub use workspace::DocumentKind;
 
 const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);
+const VIEW_LAYOUT_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const OUTLINE_SCROLL_LAYOUT_DELAY: Duration = Duration::from_millis(16);
 const OUTLINE_SCROLL_ATTEMPTS: usize = 4;
 const OUTLINE_TRANSITION_DURATION: Duration = Duration::from_millis(160);
@@ -73,6 +75,8 @@ pub struct DocumentEditorView {
     pending_navigation_offset: Option<usize>,
     view_width: gpui::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
+    view_layout_refresh_task: Option<Task<()>>,
+    view_layout_refresh_epoch: u64,
     outline_width: Pixels,
 }
 
@@ -119,7 +123,7 @@ impl DocumentEditorView {
         let focus_handle = cx.focus_handle();
         let outline_focus_handle = cx.focus_handle();
         let theme_subscription = cx.observe_global::<Theme>(|this, cx| {
-            if this.kind == DocumentKind::Markdown && this.mode == EditorMode::Preview {
+            if this.kind == DocumentKind::Markdown && this.mode.shows_preview() {
                 this.activate_mermaids(cx);
             }
         });
@@ -183,6 +187,10 @@ impl DocumentEditorView {
                 outline_navigation_generation: 0,
                 outline_source_highlight: None,
                 outline_source_highlight_task: None,
+                source_bounds_mode: None,
+                preview_bounds: None,
+                preview_bounds_mode: None,
+                preview_sections: Arc::new(Vec::new()),
                 preview_list_state: gpui::ListState::new(
                     0,
                     gpui::ListAlignment::Top,
@@ -213,12 +221,16 @@ impl DocumentEditorView {
                 states: Arc::new(std::collections::HashMap::new()),
                 request: workspace::RequestTracker::default(),
                 loading_keys: std::collections::HashSet::new(),
+                refresh_task: None,
+                refresh_epoch: 0,
             },
             mermaid: mermaid::MermaidState::default(),
             _theme_subscription: theme_subscription,
             pending_navigation_offset: None,
             view_width: gpui::px(0.),
             view_bounds: None,
+            view_layout_refresh_task: None,
+            view_layout_refresh_epoch: 0,
             outline_width: OUTLINE_DEFAULT_WIDTH,
         }
     }
@@ -354,7 +366,7 @@ impl DocumentEditorView {
             return;
         }
         self.mode = mode;
-        if mode == EditorMode::Preview {
+        if mode.shows_preview() {
             self.reset_vim_command();
             self.activate_mermaids(cx);
         } else {
@@ -370,9 +382,10 @@ impl DocumentEditorView {
         }
         self.mode = match self.mode {
             EditorMode::Source => EditorMode::Preview,
-            EditorMode::Preview => EditorMode::Source,
+            EditorMode::Split => EditorMode::Source,
+            EditorMode::Preview => EditorMode::Split,
         };
-        if self.mode == EditorMode::Preview {
+        if self.mode.shows_preview() {
             self.reset_vim_command();
             self.activate_mermaids(cx);
         } else {
@@ -384,7 +397,7 @@ impl DocumentEditorView {
 
     fn focus_active_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
         match self.mode {
-            EditorMode::Source => self.focus_source_mode(window, cx),
+            EditorMode::Source | EditorMode::Split => self.focus_source_mode(window, cx),
             EditorMode::Preview => {
                 self.focus_handle.focus(window, cx);
             }
@@ -417,32 +430,55 @@ impl DocumentEditorView {
         self.analysis.outline_transition_epoch =
             self.analysis.outline_transition_epoch.saturating_add(1);
         let transition_epoch = self.analysis.outline_transition_epoch;
+        let outline_visible = self.analysis.outline_visible;
 
-        if self.analysis.outline_visible {
+        if outline_visible {
             self.analysis.outline_rendered = true;
             self.schedule_document_analysis(false, cx);
             self.analysis.outline_focus_handle.focus(window, cx);
         } else {
             self.focus_active_mode(window, cx);
-            cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(OUTLINE_TRANSITION_DURATION)
-                    .await;
-                this.update(cx, |this, cx| {
-                    if this.analysis.outline_transition_epoch == transition_epoch
-                        && !this.analysis.outline_visible
-                    {
-                        this.analysis.outline_rendered = false;
-                        cx.notify();
-                    }
-                })
-                .ok();
-            })
-            .detach();
         }
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(OUTLINE_TRANSITION_DURATION)
+                .await;
+            this.update(cx, |this, cx| {
+                if this.analysis.outline_transition_epoch != transition_epoch
+                    || this.analysis.outline_visible != outline_visible
+                {
+                    return;
+                }
+                if !outline_visible {
+                    this.analysis.outline_rendered = false;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
 
         AppSettings::set_document_outline_visible(self.analysis.outline_visible, cx);
         cx.notify();
+    }
+
+    fn schedule_view_layout_refresh(&mut self, cx: &mut Context<Self>) {
+        self.view_layout_refresh_epoch = self.view_layout_refresh_epoch.saturating_add(1);
+        let epoch = self.view_layout_refresh_epoch;
+        self.view_layout_refresh_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(VIEW_LAYOUT_REFRESH_DELAY)
+                .await;
+            this.update(cx, |this, cx| {
+                if this.view_layout_refresh_epoch != epoch {
+                    return;
+                }
+                this.view_layout_refresh_task = None;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn select_outline_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -460,7 +496,7 @@ impl DocumentEditorView {
             .saturating_add(1);
         let navigation_generation = self.analysis.outline_navigation_generation;
         match self.mode {
-            EditorMode::Source => {
+            EditorMode::Source | EditorMode::Split => {
                 let source_bounds = self.analysis.source_bounds;
                 let centered_at_document_start = self.editor.update(cx, |editor, cx| {
                     let position = editor.text().offset_to_position(item.source_offset);
@@ -481,6 +517,16 @@ impl DocumentEditorView {
                 self.show_outline_source_highlight(item.source_offset, navigation_generation, cx);
                 if !centered_at_document_start {
                     self.align_source_heading_after_layout(navigation_generation, cx);
+                }
+                if self.mode == EditorMode::Split
+                    && let Some(section) = item.preview_section_index
+                {
+                    self.analysis
+                        .preview_list_state
+                        .scroll_to(gpui::ListOffset {
+                            item_ix: section,
+                            offset_in_item: gpui::px(0.),
+                        });
                 }
             }
             EditorMode::Preview => {
@@ -641,6 +687,7 @@ impl DocumentEditorView {
                 outline.preserve_json_expansion_from(&this.analysis.outline);
                 this.analysis.stats = analysis.stats;
                 this.analysis.outline = outline;
+                this.analysis.preview_sections = analysis.preview_sections;
                 this.mermaid.set_analyzed(analysis.mermaids);
                 this.rebuild_outline_rows();
                 this.analysis.preview_list_state.remeasure();
@@ -650,7 +697,7 @@ impl DocumentEditorView {
                         .analysis
                         .outline
                         .active_markdown_index_for_line(cursor_line);
-                    if this.mode == EditorMode::Preview {
+                    if this.mode.shows_preview() {
                         this.activate_mermaids(cx);
                     }
                 }
@@ -753,11 +800,23 @@ fn analyze_document(
     } else {
         Vec::new()
     };
+    let preview_sections = match &outline {
+        DocumentOutline::Markdown(_) => {
+            let sections = if outline.markdown_sections().is_empty() {
+                vec![SharedString::from(content.as_str())]
+            } else {
+                outline.markdown_sections().to_vec()
+            };
+            Arc::new(view::prepare_markdown_preview_sections(&content, sections))
+        }
+        DocumentOutline::None | DocumentOutline::Json(_) => Arc::new(Vec::new()),
+    };
 
     DocumentAnalysis {
         stats,
         outline,
         mermaids,
+        preview_sections,
     }
 }
 
@@ -995,6 +1054,14 @@ mod tests {
 
         assert!(matches!(analysis.outline, DocumentOutline::None));
         assert_eq!(analysis.stats.lines, 100_000);
+    }
+
+    #[test]
+    fn markdown_analysis_keeps_a_preview_block_without_headings() {
+        let analysis = analyze_document(DocumentKind::Markdown, "A paragraph".to_string(), false);
+
+        assert_eq!(analysis.preview_sections.len(), 1);
+        assert_eq!(analysis.preview_sections[0], "A paragraph");
     }
 
     #[test]

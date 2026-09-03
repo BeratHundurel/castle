@@ -90,6 +90,36 @@ pub(super) enum EmbedState {
     Error(SharedString),
 }
 
+struct EmbedRefreshPlan {
+    states: HashMap<EmbedKey, EmbedState>,
+    keys_to_load: HashSet<EmbedKey>,
+    states_changed: bool,
+}
+
+fn plan_embed_refresh(
+    keys: HashSet<EmbedKey>,
+    current_states: &HashMap<EmbedKey, EmbedState>,
+) -> EmbedRefreshPlan {
+    let mut states = current_states.clone();
+    states.retain(|key, _| keys.contains(key));
+
+    let mut keys_to_load = HashSet::new();
+    for key in keys {
+        if states.contains_key(&key) {
+            continue;
+        }
+
+        states.insert(key.clone(), EmbedState::Loading);
+        keys_to_load.insert(key);
+    }
+
+    EmbedRefreshPlan {
+        states_changed: states.len() != current_states.len() || !keys_to_load.is_empty(),
+        states,
+        keys_to_load,
+    }
+}
+
 #[derive(Clone)]
 struct EmbedBlock {
     key: EmbedKey,
@@ -124,9 +154,7 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
         let Node::Paragraph(paragraph) = node else {
             return None;
         };
-        let Some(source) = cx.node_source(node) else {
-            return None;
-        };
+        let source = cx.node_source(node)?;
         let [Node::Text(text)] = paragraph.children.as_slice() else {
             return None;
         };
@@ -440,33 +468,50 @@ fn render_status(
 
 impl DocumentEditorView {
     pub(crate) fn refresh_board_embeds(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_scheduled_board_embed_refresh();
         let content = self.editor.read(cx).value().to_string();
         let keys = keys_for_content(&content, &self.embeds.states);
-        let mut states = self.embeds.states.as_ref().clone();
-        states.retain(|key, _| keys.contains(key));
-        let keys_to_load = keys
-            .iter()
-            .cloned()
-            .filter(|key| !states.contains_key(key))
-            .collect::<HashSet<_>>();
-        for key in &keys_to_load {
-            states.insert(key.clone(), EmbedState::Loading);
-        }
-        self.embeds.states = Arc::new(states);
+        let plan = plan_embed_refresh(keys.clone(), &self.embeds.states);
+        let states_changed = plan.states_changed;
+        let keys_to_load = plan.keys_to_load;
+        self.embeds.states = Arc::new(plan.states);
         if keys.is_empty() {
             self.embeds.request.clear();
             self.embeds.loading_keys.clear();
-            cx.notify();
+            if states_changed {
+                cx.notify();
+            }
             return;
         }
         if keys_to_load.is_empty() {
-            cx.notify();
+            if states_changed {
+                cx.notify();
+            }
             return;
         }
         self.start_board_embed_load(keys_to_load, cx);
     }
 
+    pub(crate) fn schedule_board_embed_refresh(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_scheduled_board_embed_refresh();
+        let epoch = self.embeds.refresh_epoch;
+        self.embeds.refresh_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(super::DOCUMENT_ANALYSIS_DELAY)
+                .await;
+            this.update(cx, |this, cx| {
+                if this.embeds.refresh_epoch != epoch {
+                    return;
+                }
+                this.embeds.refresh_task = None;
+                this.refresh_board_embeds(cx);
+            })
+            .ok();
+        }));
+    }
+
     pub fn refresh_board_embeds_for(&mut self, board_id: i64, cx: &mut Context<Self>) {
+        self.invalidate_scheduled_board_embed_refresh();
         let content = self.editor.read(cx).value().to_string();
         let keys = keys_for_content(&content, &self.embeds.states)
             .into_iter()
@@ -478,6 +523,7 @@ impl DocumentEditorView {
     }
 
     pub fn reload_board_embeds(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_scheduled_board_embed_refresh();
         let content = self.editor.read(cx).value().to_string();
         let keys = keys_for_content(&content, &self.embeds.states);
         if !keys.is_empty() {
@@ -485,13 +531,18 @@ impl DocumentEditorView {
         }
     }
 
+    fn invalidate_scheduled_board_embed_refresh(&mut self) {
+        self.embeds.refresh_epoch = self.embeds.refresh_epoch.saturating_add(1);
+        self.embeds.refresh_task = None;
+    }
+
     fn start_board_embed_load(&mut self, mut keys: HashSet<EmbedKey>, cx: &mut Context<Self>) {
         keys.extend(
             self.embeds
                 .loading_keys
                 .iter()
-                .cloned()
-                .filter(|key| self.embeds.states.contains_key(key)),
+                .filter(|&key| self.embeds.states.contains_key(key))
+                .cloned(),
         );
         self.embeds.loading_keys = keys.clone();
         let generation = self.embeds.request.begin();
@@ -687,5 +738,18 @@ mod tests {
         states.insert(current, EmbedState::Loading);
         states.insert(alias, EmbedState::Loading);
         assert_eq!(states.len(), 2);
+    }
+
+    #[test]
+    fn unchanged_embed_keys_do_not_require_a_refresh() {
+        let key = EmbedKey::unresolved("board:Roadmap".into());
+        let mut states = HashMap::new();
+        states.insert(key.clone(), EmbedState::Loading);
+
+        let plan = plan_embed_refresh(HashSet::from([key]), &states);
+
+        assert!(!plan.states_changed);
+        assert!(plan.keys_to_load.is_empty());
+        assert_eq!(plan.states.len(), 1);
     }
 }

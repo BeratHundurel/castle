@@ -7,9 +7,9 @@ use command_palette::{
 };
 use document_editor::action::{
     ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
-    MarkdownFormat, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious,
-    OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
-    ToggleDocumentPreview, VimKey, VimKeyAction,
+    MarkdownFormat, MoveLineDown, MoveLineUp, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen,
+    OutlinePrevious, OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
+    ToggleDocumentPreview, ToggleTask, VimKey, VimKeyAction,
 };
 use shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
 
@@ -160,6 +160,42 @@ fn default_bindings() -> Vec<KeyBinding> {
         ),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
+            "cmd-alt-4",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingFour),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-4",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingFour),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-alt-5",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingFive),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-5",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingFive),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-alt-6",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingSix),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-6",
+            ApplyMarkdownFormat(MarkdownFormat::HeadingSix),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
             "cmd-shift-7",
             ApplyMarkdownFormat(MarkdownFormat::OrderedList),
             Some("MarkdownSource"),
@@ -206,6 +242,60 @@ fn default_bindings() -> Vec<KeyBinding> {
             ApplyMarkdownFormat(MarkdownFormat::CodeBlock),
             Some("MarkdownSource"),
         ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-x",
+            ApplyMarkdownFormat(MarkdownFormat::Strikethrough),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-x",
+            ApplyMarkdownFormat(MarkdownFormat::Strikethrough),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-h",
+            ApplyMarkdownFormat(MarkdownFormat::Highlight),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-h",
+            ApplyMarkdownFormat(MarkdownFormat::Highlight),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-shift-9",
+            ApplyMarkdownFormat(MarkdownFormat::Task),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-shift-9",
+            ApplyMarkdownFormat(MarkdownFormat::Task),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-alt-f",
+            ApplyMarkdownFormat(MarkdownFormat::Footnote),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-f",
+            ApplyMarkdownFormat(MarkdownFormat::Footnote),
+            Some("MarkdownSource"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-space", ToggleTask, Some("MarkdownSource")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-space", ToggleTask, Some("MarkdownSource")),
+        KeyBinding::new("alt-up", MoveLineUp, Some("DocumentEditor")),
+        KeyBinding::new("alt-down", MoveLineDown, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", SaveDocumentFile, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
@@ -431,10 +521,17 @@ fn shortcut_action_name(binding: &KeyBinding) -> SharedString {
             MarkdownFormat::HeadingOne => "HeadingOne",
             MarkdownFormat::HeadingTwo => "HeadingTwo",
             MarkdownFormat::HeadingThree => "HeadingThree",
+            MarkdownFormat::HeadingFour => "HeadingFour",
+            MarkdownFormat::HeadingFive => "HeadingFive",
+            MarkdownFormat::HeadingSix => "HeadingSix",
             MarkdownFormat::Bold => "Bold",
             MarkdownFormat::Italic => "Italic",
             MarkdownFormat::InlineCode => "InlineCode",
             MarkdownFormat::Link => "Link",
+            MarkdownFormat::Task => "Task",
+            MarkdownFormat::Footnote => "Footnote",
+            MarkdownFormat::Strikethrough => "Strikethrough",
+            MarkdownFormat::Highlight => "Highlight",
             MarkdownFormat::BulletList => "BulletList",
             MarkdownFormat::OrderedList => "OrderedList",
             MarkdownFormat::Quote => "Quote",
@@ -507,5 +604,74 @@ mod tests {
             .expect("markdown link binding should be registered");
 
         assert!(!theme.keystrokes().starts_with(link.keystrokes()));
+    }
+
+    #[test]
+    fn smart_markdown_shortcuts_are_registered() {
+        let bindings = default_bindings();
+        let formats = [
+            MarkdownFormat::HeadingFour,
+            MarkdownFormat::HeadingFive,
+            MarkdownFormat::HeadingSix,
+            MarkdownFormat::Task,
+            MarkdownFormat::Footnote,
+            MarkdownFormat::Strikethrough,
+            MarkdownFormat::Highlight,
+        ];
+
+        for format in formats {
+            assert!(bindings.iter().any(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<ApplyMarkdownFormat>()
+                    .is_some_and(|action| action.0 == format)
+            }));
+        }
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.action().as_any().is::<MoveLineUp>())
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.action().as_any().is::<MoveLineDown>())
+        );
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.action().as_any().is::<ToggleTask>())
+        );
+
+        let toggle_task = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<ToggleTask>())
+            .expect("task toggle binding should be registered");
+        let tray_shortcut = KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-alt-space"
+            } else {
+                "ctrl-alt-space"
+            },
+            ToggleTask,
+            Some("MarkdownSource"),
+        );
+        assert!(
+            !toggle_task
+                .keystrokes()
+                .starts_with(tray_shortcut.keystrokes())
+        );
+
+        let expected_shortcut = KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-shift-space"
+            } else {
+                "ctrl-shift-space"
+            },
+            ToggleTask,
+            Some("MarkdownSource"),
+        );
+        assert_eq!(toggle_task.keystrokes(), expected_shortcut.keystrokes());
     }
 }

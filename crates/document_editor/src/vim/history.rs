@@ -145,7 +145,7 @@ impl DocumentEditorView {
     pub(crate) fn sync_vim_search_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.vim_state.state.enabled
             || self.vim_state.state.mode == VimMode::Insert
-            || self.mode != EditorMode::Source
+            || !self.mode.shows_source()
             || !self.editor.focus_handle(cx).is_focused(window)
         {
             return;

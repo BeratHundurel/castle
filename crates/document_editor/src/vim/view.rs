@@ -87,7 +87,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim_state.state.enabled || self.mode != EditorMode::Source {
+        if !self.vim_state.state.enabled || !self.mode.shows_source() {
             return;
         }
         if self.vim_state.state.mode != VimMode::Insert {
@@ -158,7 +158,7 @@ impl DocumentEditorView {
         cx: &mut Context<Self>,
     ) {
         if !self.vim_state.state.enabled
-            || self.mode != EditorMode::Source
+            || !self.mode.shows_source()
             || self.vim_state.state.mode == VimMode::Insert
             || self.vim_state.state.pending_char.is_none()
         {
@@ -230,7 +230,7 @@ impl DocumentEditorView {
     ) {
         if !self.vim_state.state.enabled
             || self.vim_state.state.mode == VimMode::Insert
-            || self.mode != EditorMode::Source
+            || !self.mode.shows_source()
         {
             return;
         }
@@ -259,7 +259,7 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.vim_state.state.enabled || self.mode != EditorMode::Source {
+        if !self.vim_state.state.enabled || !self.mode.shows_source() {
             cx.propagate();
             return;
         }

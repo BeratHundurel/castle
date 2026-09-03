@@ -4,6 +4,8 @@ mod preview;
 mod source;
 mod status_bar;
 
+pub(super) use preview::prepare_markdown_preview_sections;
+
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
@@ -14,6 +16,7 @@ use gpui_component::{
     clipboard::Clipboard,
     h_flex,
     input::{self, Editor, EditorState, Input, RopeExt as _},
+    resizable::{h_resizable, resizable_panel, v_resizable},
     scroll::ScrollableElement,
     text::{TextView, TextViewStyle},
     tooltip::Tooltip,
@@ -37,6 +40,12 @@ struct OutlineResizeDrag {
 enum MarkdownPreviewVirtualization {
     Blocks,
     Sections,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SplitLayout {
+    Horizontal,
+    Vertical,
 }
 
 impl Render for OutlineResizeDrag {
@@ -80,8 +89,120 @@ impl DocumentEditorView {
 
         match self.mode {
             EditorMode::Source => self.render_source(cx).into_any_element(),
+            EditorMode::Split => self.render_split(cx).into_any_element(),
             EditorMode::Preview => self.render_preview(cx).into_any_element(),
         }
+    }
+}
+
+impl DocumentEditorView {
+    fn render_split(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (outline_in_layout, _) = editor_layout_signature(
+            self.view_width,
+            self.analysis.outline_rendered,
+            self.outline_width,
+        );
+        let outline_width = outline_width_for_view(self.outline_width, self.view_width);
+        let available_width = self.view_width
+            - if outline_in_layout {
+                outline_width
+            } else {
+                px(0.)
+            };
+        let layout = split_layout_for_width(available_width);
+        let source_width = self
+            .analysis
+            .source_bounds_mode
+            .filter(|mode| *mode == EditorMode::Split)
+            .and_then(|_| self.analysis.source_bounds.map(|bounds| bounds.size.width))
+            .unwrap_or_else(|| split_source_width(available_width, layout));
+        let preview_width = self
+            .analysis
+            .preview_bounds_mode
+            .filter(|mode| *mode == EditorMode::Split)
+            .and_then(|_| self.analysis.preview_bounds.map(|bounds| bounds.size.width))
+            .unwrap_or_else(|| split_preview_width(available_width, layout));
+        let source = self.render_split_panel(
+            IconName::File,
+            "Source",
+            self.render_source_with_width(source_width, false, cx)
+                .into_any_element(),
+            cx,
+        );
+        let preview = self.render_split_panel(
+            IconName::Eye,
+            "Preview",
+            self.render_preview_with_width(preview_width, cx)
+                .into_any_element(),
+            cx,
+        );
+
+        let split = match layout {
+            SplitLayout::Horizontal => h_resizable("document-editor-split-horizontal")
+                .child(
+                    resizable_panel()
+                        .size_range(px(320.)..Pixels::MAX)
+                        .child(source),
+                )
+                .child(
+                    resizable_panel()
+                        .size_range(px(280.)..Pixels::MAX)
+                        .child(preview),
+                )
+                .into_any_element(),
+            SplitLayout::Vertical => v_resizable("document-editor-split-vertical")
+                .child(
+                    resizable_panel()
+                        .size_range(px(180.)..Pixels::MAX)
+                        .child(source),
+                )
+                .child(
+                    resizable_panel()
+                        .size_range(px(180.)..Pixels::MAX)
+                        .child(preview),
+                )
+                .into_any_element(),
+        };
+
+        div()
+            .id("document-editor-split")
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .child(split)
+    }
+
+    fn render_split_panel(
+        &self,
+        icon: IconName,
+        label: &'static str,
+        content: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .h_7()
+                    .flex_shrink_0()
+                    .px_3()
+                    .items_center()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border.opacity(0.72))
+                    .bg(cx.theme().secondary.opacity(0.32))
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().muted_foreground)
+                    .child(Icon::new(icon).xsmall())
+                    .child(label),
+            )
+            .child(div().flex_1().min_w_0().min_h_0().child(content))
+            .into_any_element()
     }
 }
 
@@ -116,6 +237,10 @@ impl Render for DocumentEditorView {
             .on_action(cx.listener(Self::on_action_emmet_submit_wrap))
             .on_action(cx.listener(Self::on_action_emmet_cancel_wrap))
             .on_action(cx.listener(Self::apply_format))
+            .on_action(cx.listener(Self::on_action_move_line_up))
+            .on_action(cx.listener(Self::on_action_move_line_down))
+            .on_action(cx.listener(Self::on_action_toggle_task))
+            .capture_key_down(cx.listener(Self::on_smart_edit_key_down))
             .on_action(cx.listener(Self::on_action_vim_key))
             .capture_key_down(cx.listener(Self::on_vim_key_down))
             .capture_action(cx.listener(Self::on_action_vim_insert_escape))
@@ -130,9 +255,24 @@ impl Render for DocumentEditorView {
                         move |bounds, _, cx| {
                             view.update(cx, |this, cx| {
                                 if this.view_bounds != Some(bounds) {
+                                    let previous_layout = editor_layout_signature(
+                                        this.view_width,
+                                        this.analysis.outline_rendered,
+                                        this.outline_width,
+                                    );
+                                    let next_layout = editor_layout_signature(
+                                        bounds.size.width,
+                                        this.analysis.outline_rendered,
+                                        this.outline_width,
+                                    );
+                                    let first_measurement = this.view_bounds.is_none();
                                     this.view_width = bounds.size.width;
                                     this.view_bounds = Some(bounds);
-                                    cx.notify();
+                                    if first_measurement || previous_layout != next_layout {
+                                        cx.notify();
+                                    } else {
+                                        this.schedule_view_layout_refresh(cx);
+                                    }
                                 }
                             });
                         }
@@ -149,15 +289,20 @@ impl Render for DocumentEditorView {
                                     .child(self.render_editor_body(cx)),
                             )
                             .children(
-                                (self.analysis.outline_rendered && self.view_width >= px(760.))
-                                    .then(|| self.render_outline_transition(cx)),
+                                editor_layout_signature(
+                                    self.view_width,
+                                    self.analysis.outline_rendered,
+                                    self.outline_width,
+                                )
+                                .0
+                                .then(|| self.render_outline_transition(cx)),
                             ),
                     ),
             )
             .children(status_line_visible.then(|| self.render_status_bar(cx)))
             .children(
-                (!status_line_visible && self.vim_is_enabled() && self.mode == EditorMode::Source)
-                    .then(|| {
+                (!status_line_visible && self.vim_is_enabled() && self.mode.shows_source()).then(
+                    || {
                         div()
                             .id("vim-mode-overlay")
                             .debug_selector(|| "vim-mode-overlay".to_string())
@@ -165,7 +310,8 @@ impl Render for DocumentEditorView {
                             .bottom(px(8.))
                             .left(px(8.))
                             .child(self.render_vim_mode_indicator(cx))
-                    }),
+                    },
+                ),
             )
             .children(
                 (self.kind == DocumentKind::Markdown && self.show_emmet_input).then(|| {
@@ -471,6 +617,48 @@ fn markdown_preview_section_top_padding(index: usize) -> Rems {
     }
 }
 
+const SPLIT_HORIZONTAL_MIN_WIDTH: Pixels = px(680.);
+
+pub(super) fn editor_layout_signature(
+    width: Pixels,
+    outline_rendered: bool,
+    requested_outline_width: Pixels,
+) -> (bool, bool) {
+    let outline_in_layout = outline_rendered && width >= px(760.);
+    let available_width = width
+        - if outline_in_layout {
+            outline_width_for_view(requested_outline_width, width)
+        } else {
+            px(0.)
+        };
+    (
+        outline_in_layout,
+        split_layout_for_width(available_width) == SplitLayout::Horizontal,
+    )
+}
+
+fn split_layout_for_width(width: Pixels) -> SplitLayout {
+    if width >= SPLIT_HORIZONTAL_MIN_WIDTH {
+        SplitLayout::Horizontal
+    } else {
+        SplitLayout::Vertical
+    }
+}
+
+fn split_source_width(width: Pixels, layout: SplitLayout) -> Pixels {
+    match layout {
+        SplitLayout::Horizontal => width / 2.,
+        SplitLayout::Vertical => width,
+    }
+}
+
+fn split_preview_width(width: Pixels, layout: SplitLayout) -> Pixels {
+    match layout {
+        SplitLayout::Horizontal => width - split_source_width(width, layout),
+        SplitLayout::Vertical => width,
+    }
+}
+
 fn outline_width_for_view(requested_width: Pixels, view_width: Pixels) -> Pixels {
     let available_width = (view_width - super::EDITOR_MIN_WIDTH_WITH_OUTLINE)
         .max(super::OUTLINE_MIN_WIDTH)
@@ -528,10 +716,11 @@ mod tests {
     use gpui::{Bounds, point, px, rems, size};
 
     use super::{
-        DocumentKind, MarkdownPreviewVirtualization, markdown_preview_block_gap,
+        DocumentKind, MarkdownPreviewVirtualization, SplitLayout, markdown_preview_block_gap,
         markdown_preview_horizontal_padding, markdown_preview_section_top_padding,
         markdown_preview_virtualization, normalize_vim_cursor_bounds, outline_row_left_padding,
-        outline_width_for_view, reserves_disclosure_space, status_path, vim_selection_tail_width,
+        outline_width_for_view, reserves_disclosure_space, split_layout_for_width,
+        split_preview_width, split_source_width, status_path, vim_selection_tail_width,
     };
     use std::path::Path;
 
@@ -579,6 +768,32 @@ mod tests {
         assert_eq!(
             markdown_preview_section_top_padding(1),
             markdown_preview_block_gap()
+        );
+    }
+
+    #[test]
+    fn split_layout_keeps_both_panes_side_by_side_when_they_fit() {
+        assert_eq!(split_layout_for_width(px(680.)), SplitLayout::Horizontal);
+        assert_eq!(
+            split_source_width(px(1_000.), SplitLayout::Horizontal),
+            px(500.)
+        );
+        assert_eq!(
+            split_preview_width(px(1_000.), SplitLayout::Horizontal),
+            px(500.)
+        );
+    }
+
+    #[test]
+    fn split_layout_stacks_panes_when_a_narrow_window_would_hurt_writing() {
+        assert_eq!(split_layout_for_width(px(679.)), SplitLayout::Vertical);
+        assert_eq!(
+            split_source_width(px(600.), SplitLayout::Vertical),
+            px(600.)
+        );
+        assert_eq!(
+            split_preview_width(px(600.), SplitLayout::Vertical),
+            px(600.)
         );
     }
 

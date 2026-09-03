@@ -3,15 +3,44 @@ use gpui::SharedString;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMode {
     Source,
+    Split,
     Preview,
 }
 
 impl EditorMode {
     pub(crate) fn from_key(value: &str) -> Self {
         match value {
+            "split" => Self::Split,
             "preview" => Self::Preview,
             _ => Self::Source,
         }
+    }
+
+    pub(crate) fn shows_source(self) -> bool {
+        matches!(self, Self::Source | Self::Split)
+    }
+
+    pub(crate) fn shows_preview(self) -> bool {
+        matches!(self, Self::Preview | Self::Split)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EditorMode;
+
+    #[test]
+    fn split_mode_is_loaded_and_exposes_both_surfaces() {
+        let mode = EditorMode::from_key("split");
+
+        assert_eq!(mode, EditorMode::Split);
+        assert!(mode.shows_source());
+        assert!(mode.shows_preview());
+    }
+
+    #[test]
+    fn unknown_mode_keys_still_default_to_source() {
+        assert_eq!(EditorMode::from_key("unknown"), EditorMode::Source);
     }
 }
 

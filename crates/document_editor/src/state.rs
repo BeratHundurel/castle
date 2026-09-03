@@ -4,6 +4,7 @@ pub(super) struct DocumentAnalysis {
     pub(super) stats: DocumentStats,
     pub(super) outline: DocumentOutline,
     pub(super) mermaids: Vec<mermaid::MermaidDescriptor>,
+    pub(super) preview_sections: Arc<Vec<SharedString>>,
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +65,10 @@ pub(super) struct AnalysisState {
     pub(super) outline_navigation_generation: u64,
     pub(super) outline_source_highlight: Option<OutlineSourceHighlight>,
     pub(super) outline_source_highlight_task: Option<Task<()>>,
+    pub(super) source_bounds_mode: Option<EditorMode>,
+    pub(super) preview_bounds: Option<Bounds<Pixels>>,
+    pub(super) preview_bounds_mode: Option<EditorMode>,
+    pub(super) preview_sections: Arc<Vec<SharedString>>,
     pub(super) preview_list_state: gpui::ListState,
     pub(super) preview_font_size_bits: Cell<u64>,
     pub(super) outline_scroll_handle: UniformListScrollHandle,
@@ -89,6 +94,8 @@ pub(super) struct EmbedStateGroup {
         Arc<std::collections::HashMap<board_embeds::EmbedKey, board_embeds::EmbedState>>,
     pub(super) request: workspace::RequestTracker,
     pub(super) loading_keys: std::collections::HashSet<board_embeds::EmbedKey>,
+    pub(super) refresh_task: Option<Task<()>>,
+    pub(super) refresh_epoch: u64,
 }
 
 pub(super) struct VimSessionState {

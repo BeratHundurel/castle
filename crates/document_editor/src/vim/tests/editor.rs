@@ -1,11 +1,16 @@
+use crate::document_state::EditorMode;
+
 use super::super::*;
 use entity::note;
-use gpui_component::input::InputEvent;
+use gpui_component::input::{InputEvent, Paste};
 use migration::{Migrator, MigratorTrait};
 use runtime::AppRuntime;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
 use settings::AppSettings;
 use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
+
+use crate::DocumentKind;
+use crate::action::{MoveLineDown, ToggleTask};
 
 fn with_vim_editor(
     cx: &mut gpui::TestAppContext,
@@ -112,6 +117,155 @@ fn set_vim_test_content(
 
 fn vim_test_value(view: &gpui::Entity<DocumentEditorView>, cx: &gpui::VisualTestContext) -> String {
     view.read_with(cx, |editor, cx| editor.editor.read(cx).value().to_string())
+}
+
+#[gpui::test]
+fn smart_pairing_respects_vim_mode_and_skips_existing_closers(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "", |view, cx| {
+        cx.simulate_keystrokes("shift-9->(");
+        assert_eq!(vim_test_value(&view, cx), "");
+
+        cx.update(|window, cx| {
+            AppSettings::set_editor_vim_mode(false, cx);
+            view.update(cx, |editor, cx| {
+                editor.sync_vim_setting(window, cx);
+                editor.kind = DocumentKind::Markdown;
+                editor.mode = EditorMode::Source;
+                editor.replace_content_for_test("", window, cx);
+                editor.reset_vim_command();
+                editor.focus_source_mode(window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_keystrokes("shift-9->(");
+        assert_eq!(vim_test_value(&view, cx), "()");
+        assert_eq!(
+            view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+            1
+        );
+
+        cx.simulate_keystrokes("shift-0->)");
+        assert_eq!(vim_test_value(&view, cx), "()");
+        assert_eq!(
+            view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+            2
+        );
+
+        set_vim_test_content(&view, "", Position::new(0, 0), cx);
+        cx.simulate_keystrokes("[");
+        assert_eq!(vim_test_value(&view, cx), "[]");
+
+        set_vim_test_content(&view, "", Position::new(0, 0), cx);
+        cx.simulate_keystrokes("shift-[->{");
+        assert_eq!(vim_test_value(&view, cx), "{}");
+
+        set_vim_test_content(&view, "", Position::new(0, 0), cx);
+        cx.simulate_keystrokes("ctrl-alt-8->[");
+        assert_eq!(vim_test_value(&view, cx), "[]");
+
+        set_vim_test_content(&view, "", Position::new(0, 0), cx);
+        cx.simulate_keystrokes("ctrl-alt-7->{");
+        assert_eq!(vim_test_value(&view, cx), "{}");
+    });
+}
+
+#[gpui::test]
+fn smart_link_paste_wraps_selected_markdown_text(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "Read this", |view, cx| {
+        cx.update(|window, cx| {
+            AppSettings::set_editor_vim_mode(false, cx);
+            view.update(cx, |editor, cx| {
+                editor.sync_vim_setting(window, cx);
+                editor.kind = DocumentKind::Markdown;
+                editor.mode = EditorMode::Source;
+                editor.replace_content_for_test("Read this", window, cx);
+                editor.select_source_range(0..9, window, cx);
+                editor.focus_source_mode(window, cx);
+            });
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                "https://example.com/read-this".to_string(),
+            ));
+            let _ = window.draw(cx);
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.on_action_paste(&Paste, window, cx);
+            });
+        });
+
+        assert_eq!(
+            vim_test_value(&view, cx),
+            "[Read this](https://example.com/read-this)"
+        );
+    });
+}
+
+#[gpui::test]
+fn line_move_action_updates_text_and_cursor_in_source_mode(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "", |view, cx| {
+        cx.update(|window, cx| {
+            AppSettings::set_editor_vim_mode(false, cx);
+            view.update(cx, |editor, cx| {
+                editor.sync_vim_setting(window, cx);
+                editor.kind = DocumentKind::Markdown;
+                editor.mode = EditorMode::Source;
+                editor.replace_content_for_test("one\ntwo\nthree", window, cx);
+                editor.editor.update(cx, |input, cx| {
+                    input.set_cursor_position(Position::new(1, 1), window, cx);
+                });
+                editor.focus_source_mode(window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.on_action_move_line_down(&MoveLineDown, window, cx);
+            });
+        });
+
+        assert_eq!(vim_test_value(&view, cx), "one\nthree\ntwo");
+        assert_eq!(
+            view.read_with(cx, |editor, cx| editor.editor.read(cx).cursor()),
+            "one\nthree\n".len() + 1
+        );
+    });
+}
+
+#[gpui::test]
+fn task_toggle_action_updates_the_current_markdown_task(cx: &mut gpui::TestAppContext) {
+    with_vim_editor(cx, "", |view, cx| {
+        cx.update(|window, cx| {
+            AppSettings::set_editor_vim_mode(false, cx);
+            view.update(cx, |editor, cx| {
+                editor.sync_vim_setting(window, cx);
+                editor.kind = DocumentKind::Markdown;
+                editor.mode = EditorMode::Source;
+                editor.replace_content_for_test("- [ ] Draft conclusion", window, cx);
+                editor.editor.update(cx, |input, cx| {
+                    input.set_cursor_position(Position::new(0, 5), window, cx);
+                });
+                editor.focus_source_mode(window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.on_action_toggle_task(&ToggleTask, window, cx);
+            });
+        });
+        assert_eq!(vim_test_value(&view, cx), "- [x] Draft conclusion");
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.on_action_toggle_task(&ToggleTask, window, cx);
+            });
+        });
+        assert_eq!(vim_test_value(&view, cx), "- [ ] Draft conclusion");
+    });
 }
 
 #[gpui::test]

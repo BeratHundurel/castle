@@ -10,7 +10,6 @@ use std::ops::Range;
 
 use super::DocumentEditorView;
 use super::action::{VimKey, VimKeyAction};
-use super::document_state::EditorMode;
 use super::formatting::markdown_newline_prefix;
 use settings::AppSettings;
 

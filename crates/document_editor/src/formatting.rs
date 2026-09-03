@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
-use super::document_state::EditorMode;
+use super::smart_editing::format_task_lines;
 use super::{DocumentEditorView, DocumentKind};
 
 impl DocumentEditorView {
@@ -49,7 +49,7 @@ impl DocumentEditorView {
                     Ok(Some(formatted)) => {
                         let mapped_selection =
                             map_range_after_format(&source, &formatted, selection.clone());
-                        let source_mode = this.mode == EditorMode::Source;
+                        let source_mode = this.mode.shows_source();
                         this.editor.update(cx, |editor, cx| {
                             let document_end =
                                 editor.text().offset_to_offset_utf16(editor.text().len());
@@ -98,11 +98,22 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kind != DocumentKind::Markdown || self.mode == EditorMode::Preview {
+        if self.kind != DocumentKind::Markdown || !self.mode.shows_source() {
             return;
         }
 
         let vim_range = self.vim_visual_range(cx);
+        if action.0 == MarkdownFormat::Footnote {
+            let insertion_range = vim_range
+                .clone()
+                .unwrap_or_else(|| self.editor.read(cx).selected_range());
+            let cursor = self.insert_footnote(insertion_range, window, cx);
+            if let (Some(cursor), Some(_)) = (cursor, vim_range) {
+                self.finish_vim_visual_edit(cursor, window, cx);
+            }
+            return;
+        }
+
         let selected = if let Some(range) = vim_range.as_ref() {
             self.editor.read(cx).text().slice(range.clone()).to_string()
         } else {
@@ -112,10 +123,24 @@ impl DocumentEditorView {
             MarkdownFormat::HeadingOne => Self::prefix_block(&selected, "# ", "Heading"),
             MarkdownFormat::HeadingTwo => Self::prefix_block(&selected, "## ", "Heading"),
             MarkdownFormat::HeadingThree => Self::prefix_block(&selected, "### ", "Heading"),
+            MarkdownFormat::HeadingFour => Self::prefix_block(&selected, "#### ", "Heading"),
+            MarkdownFormat::HeadingFive => Self::prefix_block(&selected, "##### ", "Heading"),
+            MarkdownFormat::HeadingSix => Self::prefix_block(&selected, "###### ", "Heading"),
             MarkdownFormat::Bold => Self::wrap_inline(&selected, "**", "**", "bold text"),
             MarkdownFormat::Italic => Self::wrap_inline(&selected, "*", "*", "italic text"),
             MarkdownFormat::InlineCode => Self::wrap_inline(&selected, "`", "`", "code"),
             MarkdownFormat::Link => Self::wrap_inline(&selected, "[", "](https://)", "link text"),
+            MarkdownFormat::Task => format_task_lines(&selected),
+            MarkdownFormat::Strikethrough => {
+                Self::wrap_inline(&selected, "~~", "~~", "struck text")
+            }
+            MarkdownFormat::Highlight => Self::wrap_inline(
+                &selected,
+                r#"<mark style="background-color: #fef08a">"#,
+                "</mark>",
+                "highlighted text",
+            ),
+            MarkdownFormat::Footnote => return,
             MarkdownFormat::BulletList => Self::prefix_lines(&selected, "- ", "List item"),
             MarkdownFormat::OrderedList => Self::numbered_lines(&selected),
             MarkdownFormat::Quote => Self::prefix_lines(&selected, "> ", "Quote"),
@@ -607,6 +632,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn smart_markdown_formats_cover_headings_tasks_and_inline_marks() {
+        for (prefix, expected) in [
+            ("# ", "# Heading"),
+            ("## ", "## Heading"),
+            ("### ", "### Heading"),
+            ("#### ", "#### Heading"),
+            ("##### ", "##### Heading"),
+            ("###### ", "###### Heading"),
+        ] {
+            assert_eq!(
+                DocumentEditorView::prefix_block("Heading", prefix, "Heading"),
+                expected
+            );
+        }
+        assert_eq!(
+            format_task_lines("Draft\n- already"),
+            "- [ ] Draft\n- [ ] already"
+        );
+        assert_eq!(
+            DocumentEditorView::wrap_inline("important", "~~", "~~", "struck text"),
+            "~~important~~"
+        );
+        assert_eq!(
+            DocumentEditorView::wrap_inline(
+                "important",
+                r#"<mark style="background-color: #fef08a">"#,
+                "</mark>",
+                "highlighted text",
+            ),
+            r#"<mark style="background-color: #fef08a">important</mark>"#
+        );
+        assert_eq!(
+            DocumentEditorView::wrap_inline(
+                "first line\nsecond line",
+                r#"<mark style="background-color: #fef08a">"#,
+                "</mark>",
+                "highlighted text",
+            ),
+            r#"<mark style="background-color: #fef08a">first line
+second line</mark>"#
+        );
+    }
+
+    #[test]
     fn formats_json_with_prettier_compatible_layout() {
         let source = r#"{"alpha":1,"array":[1,2,3],"nested":{"x":true,"y":"value"}}"#;
         let Ok(Some(formatted)) = format_json(source) else {
@@ -757,6 +826,40 @@ mod tests {
             Some(MarkdownEnterEdit {
                 range: 11..11,
                 replacement: "- [ ] ".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn continues_all_markdown_list_markers_and_preserves_crlf() {
+        assert_eq!(markdown_newline_prefix("* item"), "* ");
+        assert_eq!(markdown_newline_prefix("+ item"), "+ ");
+        assert_eq!(markdown_newline_prefix("3) item\r\n"), "4) ");
+        assert_eq!(markdown_newline_prefix("- [X]\titem\r\n"), "- [ ] ");
+        assert_eq!(
+            markdown_enter_edit("+ item\r\n", "+ item\r\n".len()),
+            Some(MarkdownEnterEdit {
+                range: 8..8,
+                replacement: "+ ".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn exits_empty_ordered_lists_and_nested_blockquotes() {
+        assert_eq!(
+            markdown_enter_edit("12) \n", "12) \n".len()),
+            Some(MarkdownEnterEdit {
+                range: 0..5,
+                replacement: String::new(),
+            })
+        );
+        assert_eq!(markdown_newline_prefix("> > quote"), "> > ");
+        assert_eq!(
+            markdown_enter_edit("> > \n", "> > \n".len()),
+            Some(MarkdownEnterEdit {
+                range: 0..5,
+                replacement: String::new(),
             })
         );
     }
