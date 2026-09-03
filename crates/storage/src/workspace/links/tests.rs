@@ -1,5 +1,5 @@
 use super::*;
-use entity::{board, card, entry, note, project, workspace_reference_alias};
+use entity::{board, card, entry, note, project, saved_board_view, workspace_reference_alias};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, Database, QueryFilter, QueryOrder};
 
@@ -16,6 +16,75 @@ fn relation_signature_ignores_prose_and_duplicate_occurrences() {
         workspace_relation_signature(original),
         workspace_relation_signature("[[card:Different]]")
     );
+}
+
+#[test]
+fn relation_signature_parses_board_embeds_once() {
+    reset_board_view_embed_parse_call_count();
+
+    let signature = workspace_relation_signature(
+        "Before [[board:Roadmap]] and ![[board:Roadmap#Current]] and [[card:Launch]]",
+    );
+
+    assert_eq!(signature.len(), 3);
+    assert_eq!(board_view_embed_parse_call_count(), 1);
+}
+
+#[test]
+fn workspace_view_catalog_scans_items_once_per_load() {
+    reset_workspace_view_catalog_lookup_comparisons();
+
+    let mut items = (0..9)
+        .map(|id| WorkspaceCatalogEntry {
+            item: WorkspaceItemRef {
+                kind: WorkspaceItemKind::Note,
+                id,
+            },
+            title: format!("Note {id}"),
+            project_id: None,
+            project_name: None,
+            board_id: None,
+            board_title: None,
+            list_id: None,
+            list_title: None,
+        })
+        .collect::<Vec<_>>();
+    items.push(WorkspaceCatalogEntry {
+        item: WorkspaceItemRef {
+            kind: WorkspaceItemKind::Board,
+            id: 99,
+        },
+        title: "Roadmap".to_string(),
+        project_id: Some(7),
+        project_name: Some("Castle".to_string()),
+        board_id: Some(99),
+        board_title: Some("Roadmap".to_string()),
+        list_id: None,
+        list_title: None,
+    });
+    let saved_views = (0..3)
+        .map(|id| saved_board_view::Model {
+            id,
+            board_id: 99,
+            name: format!("View {id}"),
+            position: id as i32,
+            is_default: id == 0,
+            config_version: 1,
+            config_json: "{}".to_string(),
+            deleted_at: None,
+        })
+        .collect::<Vec<_>>();
+
+    let views = build_workspace_view_catalog(&items, saved_views);
+
+    assert_eq!(views.len(), 3);
+    assert_eq!(
+        views.iter().map(|view| view.id).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(views[0].project_id, Some(7));
+    assert_eq!(views[0].project_name.as_deref(), Some("Castle"));
+    assert_eq!(workspace_view_catalog_lookup_comparisons(), 10);
 }
 
 #[test]

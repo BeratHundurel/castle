@@ -313,6 +313,10 @@ pub async fn search_workspace(
         .await?
     };
 
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut search_rows = Vec::with_capacity(rows.len());
     for row in rows {
         let item_type: String = row.try_get("", "item_type")?;
@@ -625,6 +629,8 @@ pub async fn delete_search_item(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{
         SEARCH_INSERT_BODY_BUDGET, SearchResultKind, fts_query, rebuild_search_index,
         search_workspace, should_flush_search_document_chunk,
@@ -633,7 +639,10 @@ mod tests {
     use anyhow::{Context as _, Result};
     use entity::{board, card, entry, note, project};
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database};
+    use sea_orm::{
+        ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, DbBackend, MockDatabase,
+        Value,
+    };
 
     #[test]
     fn search_insert_batches_cap_accumulated_large_bodies() {
@@ -823,6 +832,30 @@ mod tests {
             card.parent_title.as_deref(),
             Some("Board title / List title")
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_workspace_preserves_empty_results_without_catalog_items() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        assert!(search_workspace(&db, "missing", 20).await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_workspace_skips_catalog_for_empty_results() -> Result<()> {
+        let empty_rows = || Vec::<BTreeMap<String, Value>>::new();
+        let db = MockDatabase::new(DbBackend::Sqlite)
+            .append_query_results([empty_rows(), empty_rows(), empty_rows(), empty_rows()])
+            .into_connection();
+
+        assert!(search_workspace(&db, "missing", 20).await?.is_empty());
+
+        assert_eq!(db.into_transaction_log().len(), 1);
 
         Ok(())
     }
@@ -1035,6 +1068,16 @@ mod tests {
     #[test]
     fn fts_query_keeps_two_letter_terms_exact_in_phrases() {
         assert_eq!(fts_query("ui state"), Some("ui state*".to_string()));
+    }
+
+    #[test]
+    fn fts_query_falls_back_to_exact_single_letter_terms() {
+        assert_eq!(fts_query("a i"), Some("a i".to_string()));
+    }
+
+    #[test]
+    fn fts_query_preserves_unicode_term_boundaries() {
+        assert_eq!(fts_query("café 東京"), Some("café* 東京".to_string()));
     }
 
     #[test]

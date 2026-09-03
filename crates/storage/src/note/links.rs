@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context as _, Result};
@@ -13,6 +15,21 @@ use sea_orm::{
 
 const MAX_LINK_TARGET_BYTES: usize = 512;
 const MAX_LINKS_PER_NOTE: usize = 10_000;
+
+#[cfg(test)]
+thread_local! {
+    static WIKILINK_PARSE_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_wikilink_parse_call_count() {
+    WIKILINK_PARSE_CALLS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn wikilink_parse_call_count() -> usize {
+    WIKILINK_PARSE_CALLS.with(Cell::get)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedWikiLink {
@@ -83,6 +100,9 @@ pub struct NoteLinkReference {
 }
 
 pub fn parse_wikilinks(content: &str) -> Vec<ParsedWikiLink> {
+    #[cfg(test)]
+    WIKILINK_PARSE_CALLS.with(|count| count.set(count.get().saturating_add(1)));
+
     let mut links = Vec::new();
     let mut offset = 0usize;
     let mut fence: Option<(u8, usize)> = None;
@@ -411,6 +431,7 @@ pub async fn index_note_links_in_connection(
         source.project_id,
         content,
         indexed_updated_at,
+        parsed,
         NoteIndexCatalogs {
             note_links: &catalog,
             aliases: &aliases,
@@ -426,13 +447,14 @@ pub(crate) async fn index_note_links_with_catalog(
     source_project_id: Option<i64>,
     content: &str,
     indexed_updated_at: i64,
+    parsed: Vec<ParsedWikiLink>,
     catalogs: NoteIndexCatalogs<'_>,
 ) -> Result<Vec<IndexedNoteLink>> {
     let embed_ranges = crate::board::projection::parse_board_view_embeds(content)
         .into_iter()
         .map(|embed| embed.start_byte..embed.end_byte)
         .collect::<Vec<_>>();
-    let indexed = parse_wikilinks(content)
+    let indexed = parsed
         .into_iter()
         .filter(|link| {
             !embed_ranges
@@ -689,6 +711,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parser_limits_note_links() {
+        let content = (0..=MAX_LINKS_PER_NOTE)
+            .map(|index| format!("[[Target {index}]]"))
+            .collect::<String>();
+
+        let links = parse_wikilinks(&content);
+
+        assert_eq!(links.len(), MAX_LINKS_PER_NOTE);
+        assert_eq!(
+            links.last().map(|link| link.raw_target.as_str()),
+            Some("Target 9999")
+        );
+    }
+
     #[tokio::test]
     async fn index_resolves_local_scoped_stable_and_alias_links() -> Result<()> {
         let db = Database::connect("sqlite::memory:").await?;
@@ -701,6 +738,7 @@ mod tests {
         let renamed = create_note(&db, "Current", None).await?;
         record_note_alias(&db, renamed.id, "Previous", 1).await?;
 
+        reset_wikilink_parse_call_count();
         let links = index_note_links(
             &db,
             source.id,
@@ -722,6 +760,7 @@ mod tests {
                 .len(),
             5
         );
+        assert_eq!(wikilink_parse_call_count(), 2);
         Ok(())
     }
 

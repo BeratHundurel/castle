@@ -156,32 +156,33 @@ pub async fn load_board_view_projection(
     let mut lists = Vec::new();
     let today = Local::now().date_naive();
     for list in snapshot.cards {
-        let mut entries = list
-            .entries
-            .into_iter()
-            .filter(|entry| {
-                entry_matches_view(entry, &config, &values, &properties.definitions, today)
-            })
-            .collect::<Vec<_>>();
-        if let Some(sort) = config.sort.as_ref() {
-            sort_entries_for_view(&mut entries, sort, &values, &properties.definitions);
-        }
-        matching_card_count = matching_card_count.saturating_add(entries.len());
-        let cards = entries
-            .into_iter()
-            .filter_map(|entry| {
-                if projected_count >= BOARD_VIEW_PROJECTION_LIMIT {
-                    return None;
-                }
-                projected_count = projected_count.saturating_add(1);
-                Some(projected_card(
-                    entry,
-                    &config.visible_properties,
-                    &values,
-                    &properties.definitions,
-                ))
-            })
-            .collect();
+        let entries = list.entries.into_iter().filter(|entry| {
+            entry_matches_view(entry, &config, &values, &properties.definitions, today)
+        });
+        let (list_matching_card_count, cards) = if projected_count >= BOARD_VIEW_PROJECTION_LIMIT {
+            (entries.count(), Vec::new())
+        } else {
+            let mut entries = entries.collect::<Vec<_>>();
+            if let Some(sort) = config.sort.as_ref() {
+                sort_entries_for_view(&mut entries, sort, &values, &properties.definitions);
+            }
+            let list_matching_card_count = entries.len();
+            let cards = entries
+                .into_iter()
+                .take(BOARD_VIEW_PROJECTION_LIMIT - projected_count)
+                .map(|entry| {
+                    projected_card(
+                        entry,
+                        &config.visible_properties,
+                        &values,
+                        &properties.definitions,
+                    )
+                })
+                .collect::<Vec<_>>();
+            (list_matching_card_count, cards)
+        };
+        matching_card_count = matching_card_count.saturating_add(list_matching_card_count);
+        projected_count = projected_count.saturating_add(cards.len());
         lists.push(ProjectedList {
             id: i64::from(list.id),
             title: list.title,
@@ -876,6 +877,88 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[ignore = "single-thread allocation probe; run with --ignored --exact --test-threads=1"]
+    async fn measure_projection_after_limit_allocations() -> Result<()> {
+        const LATER_LIST_ENTRY_COUNT: usize = 4_096;
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = board::ActiveModel {
+            title: Set("Roadmap".to_string()),
+            last_selected_view_id: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let first_list = card::ActiveModel {
+            title: Set("First".to_string()),
+            board_id: Set(board.id),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let later_list = card::ActiveModel {
+            title: Set("Later".to_string()),
+            board_id: Set(board.id),
+            position: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        for (list_id, entry_count) in [
+            (first_list.id, BOARD_VIEW_PROJECTION_LIMIT + 1),
+            (later_list.id, LATER_LIST_ENTRY_COUNT),
+        ] {
+            for position in 0..entry_count {
+                entry::ActiveModel {
+                    title: Set(format!("Card {position}")),
+                    description: Set(String::new()),
+                    card_id: Set(list_id),
+                    position: Set(i32::try_from(position)?),
+                    due_on: Set(Some("2026-09-01".to_string())),
+                    reminder_enabled: Set(false),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+            }
+        }
+        let view = crate::board::properties::create_board_view(
+            &db,
+            board.id,
+            "Sorted".to_string(),
+            crate::board::properties::BoardViewConfig {
+                sort: Some(ViewSort {
+                    property: PropertyKey::DueDate,
+                    direction: SortDirection::Ascending,
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let allocation = crate::test_alloc::start_measurement();
+        let projection = load_board_view_projection(&db, board.id, Some(view.id)).await?;
+        let allocation = allocation.finish();
+        let BoardViewProjectionResult::Available(projection) = projection else {
+            anyhow::bail!("sorted projection should be available");
+        };
+        eprintln!(
+            "later_list_entries={LATER_LIST_ENTRY_COUNT} matching_card_count={} projected_card_count={} allocated_bytes={} peak_heap_growth_bytes={} retained_heap_growth_bytes={}",
+            projection.matching_card_count,
+            projection
+                .lists
+                .iter()
+                .map(|list| list.cards.len())
+                .sum::<usize>(),
+            allocation.allocated_bytes,
+            allocation.peak_growth_bytes,
+            allocation.retained_growth_bytes,
+        );
+        Ok(())
+    }
+
     #[test]
     fn recognizes_only_standalone_readable_board_transclusions() {
         let content = "before ![[board:Roadmap]]\n  ![[board:Roadmap#Current]]\n```castle-board-view\nboard = 12\n```\n";
@@ -987,6 +1070,96 @@ mod tests {
         };
         assert_eq!(related_projection.matching_card_count, 1);
         assert_eq!(related_projection.lists[0].cards[0].related_note_count, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn projection_keeps_list_order_when_the_global_limit_hides_later_lists() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = board::ActiveModel {
+            title: Set("Roadmap".to_string()),
+            last_selected_view_id: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let first_list = card::ActiveModel {
+            title: Set("Ideas".to_string()),
+            board_id: Set(board.id),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let second_list = card::ActiveModel {
+            title: Set("Later".to_string()),
+            board_id: Set(board.id),
+            position: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        for position in 0..=BOARD_VIEW_PROJECTION_LIMIT {
+            entry::ActiveModel {
+                title: Set(format!("First {position}")),
+                description: Set(String::new()),
+                card_id: Set(first_list.id),
+                position: Set(i32::try_from(position)?),
+                due_on: Set(Some("2026-09-01".to_string())),
+                reminder_enabled: Set(false),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        for position in 0..2 {
+            entry::ActiveModel {
+                title: Set(format!("Second {position}")),
+                description: Set(String::new()),
+                card_id: Set(second_list.id),
+                position: Set(position),
+                due_on: Set(Some("2026-01-01".to_string())),
+                reminder_enabled: Set(false),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        let view = crate::board::properties::create_board_view(
+            &db,
+            board.id,
+            "Sorted".to_string(),
+            crate::board::properties::BoardViewConfig {
+                sort: Some(ViewSort {
+                    property: PropertyKey::DueDate,
+                    direction: SortDirection::Ascending,
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let BoardViewProjectionResult::Available(projection) =
+            load_board_view_projection(&db, board.id, Some(view.id)).await?
+        else {
+            anyhow::bail!("sorted projection should be available");
+        };
+        assert_eq!(
+            projection.matching_card_count,
+            BOARD_VIEW_PROJECTION_LIMIT + 3
+        );
+        assert_eq!(projection.remaining_card_count, 3);
+        assert_eq!(projection.lists.len(), 2);
+        assert_eq!(projection.lists[0].cards.len(), BOARD_VIEW_PROJECTION_LIMIT);
+        assert!(projection.lists[1].cards.is_empty());
+        assert!(
+            projection.lists[0]
+                .cards
+                .iter()
+                .all(|card| card.title.starts_with("First "))
+        );
         Ok(())
     }
 }

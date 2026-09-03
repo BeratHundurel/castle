@@ -14,6 +14,23 @@ use sea_orm::{
     EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
     TransactionSession, TransactionTrait,
 };
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static WORKSPACE_VIEW_CATALOG_LOOKUP_COMPARISONS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_workspace_view_catalog_lookup_comparisons() {
+    WORKSPACE_VIEW_CATALOG_LOOKUP_COMPARISONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn workspace_view_catalog_lookup_comparisons() -> usize {
+    WORKSPACE_VIEW_CATALOG_LOOKUP_COMPARISONS.with(Cell::get)
+}
 mod model;
 mod reference;
 
@@ -108,8 +125,9 @@ pub async fn load_existing_workspace_items(
 }
 
 pub fn workspace_relation_signature(content: &str) -> Vec<String> {
-    let embed_ranges = crate::board::projection::parse_board_view_embeds(content)
-        .into_iter()
+    let embeds = crate::board::projection::parse_board_view_embeds(content);
+    let embed_ranges = embeds
+        .iter()
         .map(|embed| embed.start_byte..embed.end_byte)
         .collect::<Vec<_>>();
     let mut signature = crate::note::links::parse_wikilinks(content)
@@ -123,7 +141,7 @@ pub fn workspace_relation_signature(content: &str) -> Vec<String> {
         .map(|link| format!("wikilink:{}", normalize_reference_key(&link.raw_target)))
         .collect::<std::collections::BTreeSet<_>>();
     signature.extend(
-        crate::board::projection::parse_board_view_embeds(content)
+        embeds
             .into_iter()
             .map(|embed| format!("embed:{}", normalize_reference_key(&embed.raw_target))),
     );
@@ -323,26 +341,7 @@ pub async fn load_workspace_reference_catalog(
             .all(db)
             .await?
     };
-    let views = boards
-        .into_iter()
-        .map(|view| WorkspaceViewCatalogEntry {
-            id: view.id,
-            board_id: view.board_id,
-            name: view.name,
-            project_id: items
-                .iter()
-                .find(|entry| {
-                    entry.item.kind == WorkspaceItemKind::Board && entry.item.id == view.board_id
-                })
-                .and_then(|entry| entry.project_id),
-            project_name: items
-                .iter()
-                .find(|entry| {
-                    entry.item.kind == WorkspaceItemKind::Board && entry.item.id == view.board_id
-                })
-                .and_then(|entry| entry.project_name.clone()),
-        })
-        .collect::<Vec<_>>();
+    let views = build_workspace_view_catalog(&items, boards);
     let aliases = WorkspaceReferenceAliasEntity::find()
         .all(db)
         .await?
@@ -388,6 +387,38 @@ pub async fn load_workspace_reference_catalog(
         views,
         aliases,
     })
+}
+
+fn build_workspace_view_catalog(
+    items: &[WorkspaceCatalogEntry],
+    boards: Vec<saved_board_view::Model>,
+) -> Vec<WorkspaceViewCatalogEntry> {
+    let mut board_by_id = HashMap::new();
+    for entry in items {
+        #[cfg(test)]
+        WORKSPACE_VIEW_CATALOG_LOOKUP_COMPARISONS
+            .with(|count| count.set(count.get().saturating_add(1)));
+
+        if entry.item.kind == WorkspaceItemKind::Board {
+            board_by_id.entry(entry.item.id).or_insert(entry);
+        }
+    }
+    boards
+        .into_iter()
+        .map(|view| {
+            let (project_id, project_name) = match board_by_id.get(&view.board_id) {
+                Some(entry) => (entry.project_id, entry.project_name.clone()),
+                None => (None, None),
+            };
+            WorkspaceViewCatalogEntry {
+                id: view.id,
+                board_id: view.board_id,
+                name: view.name,
+                project_id,
+                project_name,
+            }
+        })
+        .collect()
 }
 
 pub async fn record_reference_alias(
@@ -1116,12 +1147,14 @@ pub async fn repair_workspace_link_index_batch(
         let content = row.try_get::<String>("", "cached_content")?;
         let updated_at = row.try_get::<i64>("", "updated_at")?;
         let txn = db.begin().await?;
+        let parsed = crate::note::links::parse_wikilinks(&content);
         crate::note::links::index_note_links_with_catalog(
             &txn,
             note_id,
             project_id,
             &content,
             updated_at,
+            parsed,
             crate::note::links::NoteIndexCatalogs {
                 note_links: &note_catalog,
                 aliases: &aliases,

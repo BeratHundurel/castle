@@ -2,6 +2,24 @@ use std::fmt;
 
 use super::{WorkspaceCatalogEntry, WorkspaceItemKind, WorkspaceItemRef};
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static BOARD_VIEW_EMBED_PARSE_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_board_view_embed_parse_call_count() {
+    BOARD_VIEW_EMBED_PARSE_CALLS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn board_view_embed_parse_call_count() -> usize {
+    BOARD_VIEW_EMBED_PARSE_CALLS.with(Cell::get)
+}
+
 /// A saved board view exposed to the note reference resolver.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceViewCatalogEntry {
@@ -234,6 +252,9 @@ pub fn parse_reference_target(raw_target: &str) -> Option<WorkspaceReferencePath
 }
 
 pub fn parse_board_view_embeds(content: &str) -> Vec<ParsedBoardViewEmbed> {
+    #[cfg(test)]
+    BOARD_VIEW_EMBED_PARSE_CALLS.with(|count| count.set(count.get().saturating_add(1)));
+
     let mut embeds = Vec::new();
     let mut offset = 0usize;
     let mut fence: Option<(u8, usize)> = None;
