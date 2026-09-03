@@ -1,9 +1,9 @@
 {
-  "theme_name": "Ayu Dark",
+  "theme_name": "Jellybeans",
   "font_family": "IBM Plex Sans",
   "font_size": 16.0,
   "radius": 6.0,
-  "show_sidebar": true,
+  "show_sidebar": false,
   "sidebar_width": 297.6000061035156,
   "scrollbar_show": "scrolling",
   "editor_font_family": "IBM Plex Mono",
@@ -17,13 +17,35 @@
   "document_outline_visible": false,
   "close_to_tray": true,
   "tray_shortcut": "Ctrl+Alt+Space",
+  "quick_capture_shortcut": "Ctrl+Alt+N",
   "tab_session": {
     "tabs": [
       {
-        "kind": "chooser"
+        "kind": "note",
+        "note_id": 36,
+        "project_id": 1,
+        "title": "Refactor"
+      },
+      {
+        "kind": "note",
+        "note_id": 39,
+        "project_id": 1,
+        "title": "The Bug"
+      },
+      {
+        "kind": "note",
+        "note_id": 266,
+        "project_id": 1,
+        "title": "Mermaid"
+      },
+      {
+        "kind": "note",
+        "note_id": 20,
+        "project_id": 1,
+        "title": "Features"
       }
     ],
-    "active_tab_index": 0,
+    "active_tab_index": 3,
     "active_project_id": 1
   }
 }
