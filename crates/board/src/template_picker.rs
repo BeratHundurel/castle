@@ -265,6 +265,7 @@ impl BoardTemplatePicker {
                     .child(
                         v_flex()
                             .id("board-template-list")
+                            .debug_selector(|| "board-template-list".into())
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scrollbar()
@@ -470,28 +471,35 @@ impl BoardTemplatePicker {
                         .items_center()
                         .justify_between()
                         .child(
-                            div().flex_none().child(DialogClose::new().child(
-                                Button::new("cancel-board-template")
-                                    .label("Cancel")
-                                    .outline()
-                                    .disabled(creating),
-                            )),
+                            div()
+                                .debug_selector(|| "cancel-board-template".into())
+                                .flex_none()
+                                .child(DialogClose::new().child(
+                                    Button::new("cancel-board-template")
+                                        .label("Cancel")
+                                        .outline()
+                                        .disabled(creating),
+                                )),
                         )
                         .child(
-                            Button::new("create-board-from-template")
-                                .icon(IconName::Plus)
-                                .label(if creating {
-                                    "Creating…"
-                                } else {
-                                    "Create board"
-                                })
-                                .primary()
-                                .disabled(creating)
-                                .on_click(move |_, window, cx| {
-                                    picker_view.update(cx, |this, cx| {
-                                        this.create_selected_board_template(window, cx);
-                                    });
-                                }),
+                            div()
+                                .debug_selector(|| "create-board-from-template".into())
+                                .child(
+                                    Button::new("create-board-from-template")
+                                        .icon(IconName::Plus)
+                                        .label(if creating {
+                                            "Creating…"
+                                        } else {
+                                            "Create board"
+                                        })
+                                        .primary()
+                                        .disabled(creating)
+                                        .on_click(move |_, window, cx| {
+                                            picker_view.update(cx, |this, cx| {
+                                                this.create_selected_board_template(window, cx);
+                                            });
+                                        }),
+                                ),
                         ),
                     ),
             )
