@@ -477,17 +477,19 @@ fn render_block(
     } else {
         "Copy"
     };
+
     let scroll_handle = window
         .use_keyed_state(("mermaid-scroll-state", block.occurrence), cx, |_, _| {
             ScrollHandle::new()
         })
         .read(cx)
         .clone();
-    let zoom_controls = (!presentation.showing_code).then(|| {
+
+    let zoom_stepper = (!presentation.showing_code).then(|| {
         let occurrence = block.occurrence;
-        let available_width = presentation.available_width;
         h_flex()
             .gap_0p5()
+            .items_center()
             .child(mermaid_zoom_control(
                 ("zoom-out-mermaid", occurrence),
                 ("−", "Zoom out"),
@@ -542,26 +544,32 @@ fn render_block(
                     }
                 },
             ))
-            .child(mermaid_zoom_control(
-                ("fit-mermaid-zoom", occurrence),
-                ("Fit", "Fit diagram to width"),
-                true,
-                presentation.fit_to_width,
-                presentation
-                    .focus_handles
-                    .as_ref()
-                    .map(|handles| handles.fit.clone()),
-                cx,
-                {
-                    let editor = editor.clone();
-                    move |_, _, cx| {
-                        editor.update(cx, |this, cx| {
-                            this.fit_mermaid_to_width(occurrence, available_width, cx)
-                        });
-                    }
-                },
-            ))
     });
+
+    let fit_control = (!presentation.showing_code).then(|| {
+        let occurrence = block.occurrence;
+        let available_width = presentation.available_width;
+        mermaid_zoom_control(
+            ("fit-mermaid-zoom", occurrence),
+            ("Fit", "Fit diagram to width"),
+            true,
+            presentation.fit_to_width,
+            presentation
+                .focus_handles
+                .as_ref()
+                .map(|handles| handles.fit.clone()),
+            cx,
+            {
+                let editor = editor.clone();
+                move |_, _, cx| {
+                    editor.update(cx, |this, cx| {
+                        this.fit_mermaid_to_width(occurrence, available_width, cx)
+                    });
+                }
+            },
+        )
+    });
+
     let header = h_flex()
         .h_9()
         .px_2()
@@ -604,22 +612,29 @@ fn render_block(
                 ),
         )
         .child(
-            h_flex().gap_1().children(zoom_controls).child(
-                Button::new(("copy-mermaid", block.occurrence))
-                    .label(copied_label)
-                    .ghost()
-                    .xsmall()
-                    .on_click({
-                        let editor = editor.clone();
-                        let source = block.source.clone();
-                        move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(source.to_string()));
-                            editor.update(cx, |this, cx| {
-                                this.mark_mermaid_copied(block.occurrence, cx)
-                            });
-                        }
-                    }),
-            ),
+            h_flex()
+                .gap_4()
+                .items_center()
+                .children(zoom_stepper)
+                .children(fit_control)
+                .child(
+                    Button::new(("copy-mermaid", block.occurrence))
+                        .label(copied_label)
+                        .ghost()
+                        .xsmall()
+                        .on_click({
+                            let editor = editor.clone();
+                            let source = block.source.clone();
+                            move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    source.to_string(),
+                                ));
+                                editor.update(cx, |this, cx| {
+                                    this.mark_mermaid_copied(block.occurrence, cx)
+                                });
+                            }
+                        }),
+                ),
         );
 
     let body = if presentation.showing_code {
@@ -721,7 +736,7 @@ fn mermaid_zoom_control(
         .justify_center()
         .rounded(cx.theme().radius)
         .text_xs()
-        .text_color(cx.theme().muted_foreground)
+        .text_color(cx.theme().accent_foreground)
         .when(selected, |this| {
             this.bg(cx.theme().primary.opacity(0.14))
                 .text_color(cx.theme().primary)

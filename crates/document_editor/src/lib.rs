@@ -417,7 +417,8 @@ impl DocumentEditorView {
         };
         self.analysis.outline_rendered = kind.supports_outline() && self.analysis.outline_visible;
         self.editor.update(cx, |editor, cx| {
-            editor.set_highlighter(document_language(kind), cx)
+            editor.set_highlighter(document_language(kind), cx);
+            editor.refresh(cx);
         });
         kind
     }
@@ -1250,6 +1251,86 @@ mod tests {
         assert_eq!(
             first_frame_offset, centered_offset,
             "outline navigation must not paint an intermediate scroll position"
+        );
+    }
+
+    #[gpui::test]
+    fn markdown_plain_text_round_trip_restores_markdown_kind(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let markdown_path = directory.path().join("note.md").display().to_string();
+        let plain_path = directory.path().join("note.txt").display().to_string();
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("Kind round trip".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(Some(markdown_path.clone())),
+                    file_managed_by_app: Set(true),
+                    cached_content: Set("# Title\n".to_string()),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("kind round trip database should initialize");
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(AppSettings::load(directory.path()));
+            cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("kind round trip window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            view.read_with(&cx, |editor, _| editor.kind()),
+            DocumentKind::Markdown
+        );
+
+        cx.update(|_, cx| {
+            view.update(cx, |editor, cx| {
+                editor.apply_file_path(Some(plain_path.clone()), cx);
+            });
+        });
+        assert_eq!(
+            view.read_with(&cx, |editor, _| editor.kind()),
+            DocumentKind::PlainText
+        );
+
+        cx.update(|_, cx| {
+            view.update(cx, |editor, cx| {
+                let markdown_path = directory.path().join("note.md").display().to_string();
+                editor.apply_file_path(Some(markdown_path), cx);
+            });
+        });
+        assert_eq!(
+            view.read_with(&cx, |editor, _| editor.kind()),
+            DocumentKind::Markdown
         );
     }
 }

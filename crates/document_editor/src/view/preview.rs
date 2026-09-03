@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 impl DocumentEditorView {
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -190,6 +190,79 @@ struct PreviewFootnoteDefinition {
     body: Vec<String>,
 }
 
+struct PreviewFootnoteLookup<'a> {
+    definitions: &'a [PreviewFootnoteDefinition],
+    by_identifier_hash: HashMap<u64, Vec<usize>>,
+}
+
+impl<'a> PreviewFootnoteLookup<'a> {
+    fn new(definitions: &'a [PreviewFootnoteDefinition]) -> Self {
+        let mut by_identifier_hash = HashMap::with_capacity(definitions.len());
+        for (index, definition) in definitions.iter().enumerate() {
+            by_identifier_hash
+                .entry(footnote_identifier_hash(&definition.identifier))
+                .or_insert_with(Vec::new)
+                .push(index);
+        }
+
+        Self {
+            definitions,
+            by_identifier_hash,
+        }
+    }
+
+    fn find_index(&self, identifier: &str) -> Option<usize> {
+        let candidates = self
+            .by_identifier_hash
+            .get(&footnote_identifier_hash(identifier))?;
+        candidates
+            .iter()
+            .find(|&&index| {
+                self.definitions[index]
+                    .identifier
+                    .eq_ignore_ascii_case(identifier)
+            })
+            .copied()
+    }
+
+    #[cfg(test)]
+    fn find_index_with_work(&self, identifier: &str) -> (Option<usize>, usize) {
+        let Some(candidates) = self
+            .by_identifier_hash
+            .get(&footnote_identifier_hash(identifier))
+        else {
+            return (None, 0);
+        };
+
+        let mut comparisons = 0;
+        for &index in candidates {
+            comparisons += 1;
+            if self.definitions[index]
+                .identifier
+                .eq_ignore_ascii_case(identifier)
+            {
+                return (Some(index), comparisons);
+            }
+        }
+
+        (None, comparisons)
+    }
+}
+
+fn footnote_identifier_hash(identifier: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    identifier.bytes().fold(FNV_OFFSET, |hash, byte| {
+        let byte = if byte.is_ascii_uppercase() {
+            byte + (b'a' - b'A')
+        } else {
+            byte
+        };
+        (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+    })
+}
+
 pub(crate) fn prepare_markdown_preview_sections(
     source: &str,
     sections: Vec<SharedString>,
@@ -199,12 +272,13 @@ pub(crate) fn prepare_markdown_preview_sections(
         return sections;
     }
 
+    let lookup = PreviewFootnoteLookup::new(&definitions);
     let mut rendered_sections = sections
         .iter()
-        .map(|section| render_footnote_section(section, &definitions))
+        .map(|section| render_footnote_section(section, &lookup))
         .collect::<Vec<_>>();
     if let Some(last) = rendered_sections.last_mut() {
-        let footer = render_footnote_footer(&definitions);
+        let footer = render_footnote_footer(&lookup);
         if !last.trim().is_empty() {
             while last.ends_with('\n') {
                 last.pop();
@@ -260,7 +334,7 @@ fn collect_footnote_definitions(source: &str) -> Vec<PreviewFootnoteDefinition> 
     definitions
 }
 
-fn render_footnote_section(section: &str, definitions: &[PreviewFootnoteDefinition]) -> String {
+fn render_footnote_section(section: &str, lookup: &PreviewFootnoteLookup<'_>) -> String {
     let mut rendered = Vec::new();
     let mut active_definition = false;
     let mut fence = None;
@@ -295,26 +369,26 @@ fn render_footnote_section(section: &str, definitions: &[PreviewFootnoteDefiniti
             active_definition = false;
         }
 
-        rendered.push(replace_footnote_references(line, definitions));
+        rendered.push(replace_footnote_references(line, lookup));
     }
 
     rendered.join("\n")
 }
 
-fn render_footnote_footer(definitions: &[PreviewFootnoteDefinition]) -> String {
+fn render_footnote_footer(lookup: &PreviewFootnoteLookup<'_>) -> String {
     let mut footer = String::from("#### Footnotes");
 
-    for (index, definition) in definitions.iter().enumerate() {
+    for (index, definition) in lookup.definitions.iter().enumerate() {
         footer.push_str("\n\n");
         let first_line = definition.body.first().map(String::as_str).unwrap_or("");
         footer.push_str(&format!(
             "{}. {}",
             index + 1,
-            replace_footnote_references(first_line, definitions)
+            replace_footnote_references(first_line, lookup)
         ));
         for line in definition.body.iter().skip(1) {
             footer.push_str("\n   ");
-            footer.push_str(&replace_footnote_references(line, definitions));
+            footer.push_str(&replace_footnote_references(line, lookup));
         }
     }
 
@@ -370,7 +444,7 @@ fn markdown_fence(line: &str) -> Option<(char, usize)> {
     (length >= 3).then_some((character, length))
 }
 
-fn replace_footnote_references(line: &str, definitions: &[PreviewFootnoteDefinition]) -> String {
+fn replace_footnote_references(line: &str, lookup: &PreviewFootnoteLookup<'_>) -> String {
     let mut rendered = String::with_capacity(line.len());
     let mut index = 0;
     let mut code_ticks = 0;
@@ -397,10 +471,7 @@ fn replace_footnote_references(line: &str, definitions: &[PreviewFootnoteDefinit
         {
             let end = index + 2 + close;
             let identifier = &line[index + 2..end];
-            if let Some(footnote_index) = definitions
-                .iter()
-                .position(|definition| definition.identifier.eq_ignore_ascii_case(identifier))
-            {
+            if let Some(footnote_index) = lookup.find_index(identifier) {
                 rendered.push_str(&footnote_marker(footnote_index + 1));
                 index = end + 1;
                 continue;
@@ -436,7 +507,9 @@ fn footnote_marker(index: usize) -> String {
 mod tests {
     use gpui::SharedString;
 
-    use super::prepare_markdown_preview_sections;
+    use super::{
+        PreviewFootnoteLookup, collect_footnote_definitions, prepare_markdown_preview_sections,
+    };
 
     #[test]
     fn renders_footnotes_as_markers_and_a_footer() {
@@ -468,6 +541,17 @@ mod tests {
     }
 
     #[test]
+    fn preserves_first_definition_for_case_insensitive_duplicate_identifiers() {
+        let source =
+            "Claim[^Source].\n\n[^source]: First definition.\n[^SOURCE]: Second definition.";
+        let sections = prepare_markdown_preview_sections(source, vec![SharedString::from(source)]);
+
+        assert!(sections[0].starts_with("Claim¹."));
+        assert!(sections[0].contains("1. First definition."));
+        assert!(sections[0].contains("2. Second definition."));
+    }
+
+    #[test]
     fn removes_definitions_from_their_sections_and_appends_one_footer() {
         let source = "# Intro\nA claim[^1].\n\n# Sources\n[^1]: Primary source.";
         let sections = vec![
@@ -481,6 +565,57 @@ mod tests {
         assert_eq!(
             rendered[1],
             "# Sources\n\n#### Footnotes\n\n1. Primary source."
+        );
+    }
+
+    #[test]
+    fn large_footnote_preview_fixture_proves_indexed_definition_lookup_work() {
+        const DEFINITION_COUNT: usize = 2_048;
+        const REFERENCE_COUNT: usize = 2_048;
+
+        let references = (0..REFERENCE_COUNT)
+            .map(|index| format!("Claim [{0}][^note{0}].\n", index % DEFINITION_COUNT))
+            .collect::<String>();
+        let definitions = (0..DEFINITION_COUNT)
+            .map(|index| format!("[^note{index}]: Definition {index}.\n"))
+            .collect::<String>();
+        let source = format!("{references}\n{definitions}");
+        let started = std::time::Instant::now();
+        let rendered =
+            prepare_markdown_preview_sections(&source, vec![SharedString::from(source.as_str())]);
+        let elapsed = started.elapsed();
+        let definitions = collect_footnote_definitions(&source);
+        let lookup = PreviewFootnoteLookup::new(&definitions);
+        let mut linear_lookup_comparisons = 0;
+        let mut indexed_lookup_comparisons = 0;
+        for index in 0..REFERENCE_COUNT {
+            let expected_index = index % DEFINITION_COUNT;
+            let identifier = format!("note{expected_index}");
+            let mut linear_index = None;
+            let mut linear_comparisons = 0;
+            for (definition_index, definition) in definitions.iter().enumerate() {
+                linear_comparisons += 1;
+                if definition.identifier.eq_ignore_ascii_case(&identifier) {
+                    linear_index = Some(definition_index);
+                    break;
+                }
+            }
+            linear_lookup_comparisons += linear_comparisons;
+
+            let (actual_index, comparisons) = lookup.find_index_with_work(&identifier);
+            assert_eq!(linear_index, actual_index);
+            assert_eq!(linear_index, Some(expected_index));
+            assert_eq!(actual_index, Some(expected_index));
+            indexed_lookup_comparisons += comparisons;
+        }
+
+        assert_eq!(rendered.len(), 1);
+        assert!(rendered[0].contains("#### Footnotes"));
+        assert!(linear_lookup_comparisons > 2_000_000);
+        assert_eq!(indexed_lookup_comparisons, REFERENCE_COUNT);
+        println!(
+            "markdown_definitions={DEFINITION_COUNT} markdown_references={REFERENCE_COUNT} linear_body_lookup_comparisons={linear_lookup_comparisons} indexed_lookup_comparisons={indexed_lookup_comparisons} elapsed_micros={}",
+            elapsed.as_micros(),
         );
     }
 }

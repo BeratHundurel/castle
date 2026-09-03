@@ -281,11 +281,18 @@ impl MarkdownOutline {
 
     fn active_index_for_line(&self, line: usize) -> Option<usize> {
         self.items
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, item)| item.source_line <= line)
-            .map(|(index, _)| index)
+            .partition_point(|item| item.source_line <= line)
+            .checked_sub(1)
+    }
+
+    #[cfg(test)]
+    fn active_index_for_line_with_comparisons(&self, line: usize) -> (Option<usize>, usize) {
+        let mut comparisons = 0;
+        let insertion_index = self.items.partition_point(|item| {
+            comparisons += 1;
+            item.source_line <= line
+        });
+        (insertion_index.checked_sub(1), comparisons)
     }
 }
 
@@ -680,6 +687,65 @@ mod tests {
         assert_eq!(outline.section_offsets, vec![0, 7, 18]);
         assert_eq!(outline.items[1].preview_section_index, Some(2));
         assert_eq!(outline.items[1].depth, 1);
+    }
+
+    #[test]
+    fn active_markdown_index_tracks_the_latest_heading_at_each_boundary() {
+        let outline =
+            MarkdownOutline::parse("Preamble\n# One\nBody\n## Two\nMore\n### Three\nTail");
+
+        assert_eq!(outline.active_index_for_line(0), None);
+        assert_eq!(outline.active_index_for_line(1), Some(0));
+        assert_eq!(outline.active_index_for_line(3), Some(1));
+        assert_eq!(outline.active_index_for_line(6), Some(2));
+        assert_eq!(outline.active_index_for_line(100), Some(2));
+    }
+
+    #[test]
+    fn active_markdown_index_large_heading_fixture_proves_logarithmic_work() {
+        const HEADING_COUNT: usize = 16_384;
+        const LOOKUPS: usize = 64;
+        const LOOKUP_LINE: usize = 1;
+        const BINARY_SEARCH_COMPARISONS: usize = 15;
+
+        let source = (0..HEADING_COUNT)
+            .map(|index| format!("# Heading {index}\nBody\n"))
+            .collect::<String>();
+        let outline = MarkdownOutline::parse(&source);
+        let mut baseline_comparisons = 0;
+        let mut optimized_comparisons = 0;
+        for _ in 0..LOOKUPS {
+            let baseline_index = outline
+                .items
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| {
+                    baseline_comparisons += 1;
+                    item.source_line <= LOOKUP_LINE
+                })
+                .map(|(index, _)| index);
+            let (optimized_index, comparisons) =
+                outline.active_index_for_line_with_comparisons(LOOKUP_LINE);
+            optimized_comparisons += comparisons;
+
+            assert_eq!(optimized_index, baseline_index);
+        }
+
+        assert_eq!(outline.active_index_for_line(LOOKUP_LINE), Some(0));
+        assert_eq!(
+            baseline_comparisons,
+            HEADING_COUNT * LOOKUPS,
+            "reverse scan should inspect every heading for the first-heading lookup"
+        );
+        assert_eq!(
+            optimized_comparisons,
+            BINARY_SEARCH_COMPARISONS * LOOKUPS,
+            "upper-bound lookup should use the fixed binary-search work for this fixture"
+        );
+        println!(
+            "markdown_headings={HEADING_COUNT} active_index_lookups={LOOKUPS} reverse_scan_comparisons={baseline_comparisons} binary_search_comparisons={optimized_comparisons}",
+        );
     }
 
     #[test]
