@@ -125,6 +125,9 @@ impl AppShell {
             if self.tabs.active_tab_index > index {
                 self.tabs.active_tab_index -= 1;
             }
+            self.tabs
+                .tab_scroll_handle
+                .scroll_to_item(self.tabs.active_tab_index);
         }
     }
 
@@ -249,6 +252,7 @@ impl AppShell {
         }
 
         self.tabs.active_tab_index = index;
+        self.tabs.tab_scroll_handle.scroll_to_item(index);
         let tab = &self.tabs.open_tabs[index];
 
         match &tab.kind {
@@ -348,6 +352,9 @@ impl AppShell {
         } else if self.tabs.active_tab_index > index {
             self.tabs.active_tab_index -= 1;
         }
+        self.tabs
+            .tab_scroll_handle
+            .scroll_to_item(self.tabs.active_tab_index);
 
         if was_active || self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
             self.sync_sidebar_active(cx);
@@ -410,6 +417,7 @@ impl AppShell {
             self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         }
         self.tabs.active_tab_index = 0;
+        self.tabs.tab_scroll_handle.scroll_to_item(0);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
@@ -428,6 +436,7 @@ impl AppShell {
         });
         self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         self.tabs.active_tab_index = 0;
+        self.tabs.tab_scroll_handle.scroll_to_item(0);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);

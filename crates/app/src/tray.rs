@@ -1,20 +1,24 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
-use gpui::{AnyWindowHandle, App, Global, Window};
+use gpui::{AnyWindowHandle, App, Global, Window, WindowHandle};
 use raw_window_handle::RawWindowHandle;
 use tray_icon::{
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuId, MenuItem},
 };
 
+use quick_capture::{NoteCreatedHandler, QuickCaptureView, WindowVisibilityHandler};
 use settings::AppSettings;
 
 struct TrayController {
     window: AnyWindowHandle,
     hotkey_manager: GlobalHotKeyManager,
     hotkey: Option<HotKey>,
+    quick_capture_window: Option<WindowHandle<QuickCaptureView>>,
+    quick_capture_hotkey: Option<HotKey>,
+    note_created: NoteCreatedHandler,
     _tray_icon: TrayIcon,
     open_menu_id: MenuId,
     quit_menu_id: MenuId,
@@ -22,7 +26,11 @@ struct TrayController {
 
 impl Global for TrayController {}
 
-pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
+pub fn init(
+    window_handle: AnyWindowHandle,
+    note_created: NoteCreatedHandler,
+    cx: &mut App,
+) -> Result<()> {
     let menu = Menu::new();
     let open_item = MenuItem::new("Open Castle", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
@@ -49,6 +57,24 @@ pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
         }
     };
 
+    let quick_capture_hotkey: HotKey = AppSettings::quick_capture_shortcut(cx)
+        .as_ref()
+        .parse()
+        .context("invalid quick capture shortcut")?;
+
+    let quick_capture_hotkey = match hotkey_manager.register(quick_capture_hotkey) {
+        Ok(()) => Some(quick_capture_hotkey),
+        Err(err) => {
+            eprintln!("Failed to register quick capture shortcut: {err}");
+            None
+        }
+    };
+
+    let set_window_visible: WindowVisibilityHandler = Rc::new(set_window_visible);
+    let quick_capture_window =
+        quick_capture::open_window(note_created.clone(), set_window_visible, cx)
+            .context("failed to prewarm quick capture window")?;
+
     window_handle.update(cx, |_, window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             if !AppSettings::close_to_tray(cx) {
@@ -64,6 +90,9 @@ pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
         window: window_handle,
         hotkey_manager,
         hotkey,
+        quick_capture_window: Some(quick_capture_window),
+        quick_capture_hotkey,
+        note_created,
         _tray_icon: tray_icon,
         open_menu_id: open_item.id().clone(),
         quit_menu_id: quit_item.id().clone(),
@@ -72,7 +101,7 @@ pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor()
-                .timer(Duration::from_millis(100))
+                .timer(Duration::from_millis(50))
                 .await;
             cx.update(poll_events);
         }
@@ -83,45 +112,88 @@ pub fn init(window_handle: AnyWindowHandle, cx: &mut App) -> Result<()> {
 }
 
 pub fn update_shortcut(shortcut: &str, cx: &mut App) {
-    let Ok(new_hotkey) = shortcut.parse::<HotKey>() else {
-        return;
-    };
-
     if !cx.has_global::<TrayController>() {
         return;
     }
 
     let controller = cx.global_mut::<TrayController>();
-    if controller.hotkey == Some(new_hotkey) {
+    replace_hotkey(
+        &controller.hotkey_manager,
+        &mut controller.hotkey,
+        shortcut,
+        "global shortcut",
+    );
+}
+
+pub fn update_quick_capture_shortcut(shortcut: &str, cx: &mut App) {
+    if !cx.has_global::<TrayController>() {
         return;
     }
 
-    if let Some(hotkey) = controller.hotkey
-        && let Err(err) = controller.hotkey_manager.unregister(hotkey)
-    {
-        eprintln!("Failed to unregister global shortcut: {err}");
+    let controller = cx.global_mut::<TrayController>();
+    replace_hotkey(
+        &controller.hotkey_manager,
+        &mut controller.quick_capture_hotkey,
+        shortcut,
+        "quick capture shortcut",
+    );
+}
+
+fn replace_hotkey(
+    hotkey_manager: &GlobalHotKeyManager,
+    current_hotkey: &mut Option<HotKey>,
+    shortcut: &str,
+    label: &str,
+) {
+    let Ok(new_hotkey) = shortcut.parse::<HotKey>() else {
+        return;
+    };
+
+    if *current_hotkey == Some(new_hotkey) {
         return;
     }
 
-    if let Err(err) = controller.hotkey_manager.register(new_hotkey) {
-        eprintln!("Failed to register global shortcut {shortcut}: {err}");
-        if let Some(hotkey) = controller.hotkey
-            && let Err(restore_err) = controller.hotkey_manager.register(hotkey)
-        {
-            eprintln!("Failed to restore previous global shortcut: {restore_err}");
+    let previous_hotkey = *current_hotkey;
+    if let Some(hotkey) = previous_hotkey {
+        if let Err(err) = hotkey_manager.unregister(hotkey) {
+            eprintln!("Failed to unregister {label}: {err}");
+            return;
+        }
+        *current_hotkey = None;
+    }
+
+    if let Err(err) = hotkey_manager.register(new_hotkey) {
+        eprintln!("Failed to register {label} {shortcut}: {err}");
+        if let Some(hotkey) = previous_hotkey {
+            if let Err(restore_err) = hotkey_manager.register(hotkey) {
+                eprintln!("Failed to restore previous {label}: {restore_err}");
+            } else {
+                *current_hotkey = Some(hotkey);
+            }
         }
         return;
     }
 
-    controller.hotkey = Some(new_hotkey);
+    *current_hotkey = Some(new_hotkey);
 }
 
 fn poll_events(cx: &mut App) {
-    let (window, hotkey_id, open_menu_id, quit_menu_id) = {
+    let (
+        window,
+        hotkey_id,
+        quick_capture_window,
+        quick_capture_hotkey_id,
+        note_created,
+        open_menu_id,
+        quit_menu_id,
+    ) = {
         let controller = cx.global::<TrayController>();
         (
             controller.window,
             controller.hotkey.map(|hotkey| hotkey.id()),
+            controller.quick_capture_window,
+            controller.quick_capture_hotkey.map(|hotkey| hotkey.id()),
+            controller.note_created.clone(),
             controller.open_menu_id.clone(),
             controller.quit_menu_id.clone(),
         )
@@ -130,6 +202,8 @@ fn poll_events(cx: &mut App) {
     while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
         if Some(event.id) == hotkey_id && event.state == HotKeyState::Pressed {
             show_window(window, cx);
+        } else if Some(event.id) == quick_capture_hotkey_id && event.state == HotKeyState::Pressed {
+            show_quick_capture(quick_capture_window, note_created.clone(), cx);
         }
     }
 
@@ -165,13 +239,46 @@ fn show_window(window_handle: AnyWindowHandle, cx: &mut App) {
     }
 }
 
+fn show_quick_capture(
+    window_handle: Option<WindowHandle<QuickCaptureView>>,
+    note_created: NoteCreatedHandler,
+    cx: &mut App,
+) {
+    if let Some(window_handle) = window_handle {
+        match window_handle.update(cx, |view, window, cx| {
+            set_window_visible(window, true);
+            view.present(window, cx);
+        }) {
+            Ok(()) => return,
+            Err(err) => eprintln!("Failed to show quick capture window: {err}"),
+        }
+    }
+
+    let set_window_visible: WindowVisibilityHandler = Rc::new(set_window_visible);
+    let visibility_for_window = set_window_visible.clone();
+    let Ok(window_handle) = quick_capture::open_window(note_created, set_window_visible, cx) else {
+        eprintln!("Failed to create quick capture window");
+        return;
+    };
+
+    if let Err(err) = window_handle.update(cx, |view, window, cx| {
+        visibility_for_window(window, true);
+        view.present(window, cx);
+    }) {
+        eprintln!("Failed to present quick capture window: {err}");
+        return;
+    }
+
+    cx.global_mut::<TrayController>().quick_capture_window = Some(window_handle);
+}
+
 fn hide_window(window: &Window, cx: &App) {
     set_window_visible(window, false);
     cx.hide();
 }
 
 #[cfg(target_os = "windows")]
-fn set_window_visible(window: &Window, visible: bool) {
+pub fn set_window_visible(window: &Window, visible: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, ShowWindow};
 
     let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
@@ -187,7 +294,7 @@ fn set_window_visible(window: &Window, visible: bool) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn set_window_visible(_window: &Window, _visible: bool) {}
+pub fn set_window_visible(_window: &Window, _visible: bool) {}
 
 fn castle_icon() -> Result<Icon> {
     let image = image::load_from_memory(include_bytes!("../assets/icon/castle-tray.png"))

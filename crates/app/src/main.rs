@@ -5,12 +5,11 @@ use anyhow::Result;
 use dotenvy::dotenv;
 use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
-use std::borrow::Cow;
-use std::fs;
-use std::sync::Arc;
+use std::{borrow::Cow, cell::RefCell, fs, rc::Rc, sync::Arc};
 use storage::{Store, StoreOptions};
 
 use app::{app_paths::AppPaths, keymap, system_notifications, tray};
+use quick_capture::NoteCreatedHandler;
 use runtime::AppRuntime;
 use settings::AppSettings;
 use shell::{AppShell, ShellIntegration};
@@ -73,6 +72,8 @@ async fn main() -> Result<()> {
         cx.set_global(app_runtime);
         system_notifications::install_board_gateway(cx);
 
+        let note_created_handler = Rc::new(RefCell::new(None));
+        let note_created_handler_for_window = note_created_handler.clone();
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
         let window = cx
             .open_window(
@@ -82,19 +83,36 @@ async fn main() -> Result<()> {
                     ..Default::default()
                 },
                 |window, cx| {
+                    let note_created_handler_for_shell = note_created_handler_for_window.clone();
                     let integration = ShellIntegration::new(
                         app::tray::update_shortcut,
+                        app::tray::update_quick_capture_shortcut,
                         |cx| app::keymap::shortcuts(cx).to_vec(),
                         Arc::new(app::mcp_registration::McpAgentAccess),
                     );
                     let view = AppShell::view(window, integration, cx);
+                    let shell_for_capture = view.downgrade();
+                    let note_created: NoteCreatedHandler = Rc::new(move |cx| {
+                        if let Some(shell) = shell_for_capture.upgrade() {
+                            shell.update(cx, |shell, cx| {
+                                shell.refresh_after_quick_capture(cx);
+                            });
+                        }
+                    });
+                    note_created_handler_for_shell
+                        .borrow_mut()
+                        .replace(note_created);
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )
             .expect("Failed to open window");
 
-        if let Err(err) = tray::init(window.into(), cx) {
-            eprintln!("Failed to initialize tray mode: {err}");
+        if let Some(note_created) = note_created_handler.borrow_mut().take() {
+            if let Err(err) = tray::init(window.into(), note_created, cx) {
+                eprintln!("Failed to initialize tray mode: {err}");
+            }
+        } else {
+            eprintln!("Failed to initialize quick capture callback");
         }
     });
 

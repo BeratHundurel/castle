@@ -7,11 +7,14 @@ mod tabs;
 mod workspace;
 
 pub(crate) use action::{CloseAllTabsAction, CloseOtherTabsAction, CloseTabAction};
-pub use action::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
+pub use action::{
+    CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction, OpenSettingsAction,
+    ToggleSidebarAction,
+};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathPromptOptions, Pixels, Render, SharedString, Styled, Task,
-    Window, div, prelude::FluentBuilder as _, px,
+    MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString,
+    Styled, Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
@@ -39,6 +42,7 @@ use document_editor::{
 use runtime::AppRuntime;
 use settings::{
     AgentAccess, AppSettings, SettingsIntegration, SettingsView, ShortcutReference, StoredTab,
+    WorkspaceArchiveActions,
 };
 use storage::time::unix_timestamp_seconds as now_ts;
 use storage::workspace::home::WorkspaceHomeState;
@@ -47,11 +51,13 @@ use storage::workspace::trash::{TrashItem, TrashItemKind};
 const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
 
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
+type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 
 #[derive(Clone)]
 pub struct ShellIntegration {
     update_tray_shortcut: UpdateTrayShortcut,
+    update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
     shortcuts: ShortcutProvider,
     agent_access: Arc<dyn AgentAccess>,
 }
@@ -59,11 +65,13 @@ pub struct ShellIntegration {
 impl ShellIntegration {
     pub fn new(
         update_tray_shortcut: impl Fn(&str, &mut App) + 'static,
+        update_quick_capture_shortcut: impl Fn(&str, &mut App) + 'static,
         shortcuts: impl Fn(&App) -> Vec<ShortcutReference> + 'static,
         agent_access: Arc<dyn AgentAccess>,
     ) -> Self {
         Self {
             update_tray_shortcut: Rc::new(update_tray_shortcut),
+            update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
             shortcuts: Rc::new(shortcuts),
             agent_access,
         }
@@ -86,7 +94,12 @@ impl AgentAccess for TestAgentAccess {
 
 #[cfg(test)]
 fn test_shell_integration() -> ShellIntegration {
-    ShellIntegration::new(|_, _| {}, |_| Vec::new(), Arc::new(TestAgentAccess))
+    ShellIntegration::new(
+        |_, _| {},
+        |_, _| {},
+        |_| Vec::new(),
+        Arc::new(TestAgentAccess),
+    )
 }
 
 struct OpenTab {
@@ -149,6 +162,7 @@ struct TabsState {
     note_views: HashMap<u32, Entity<DocumentEditorView>>,
     active_tab_index: usize,
     next_tab_id: u64,
+    tab_scroll_handle: ScrollHandle,
 }
 
 #[derive(Clone)]
@@ -240,11 +254,19 @@ pub struct AppShell {
     external_changes: ExternalChangeState,
     last_card_destination: Option<i64>,
     record_opened_task: Option<Task<()>>,
+    update_tray_shortcut: UpdateTrayShortcut,
+    update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
+    workspace_archive_busy: bool,
 }
 
 impl AppShell {
     pub fn view(window: &mut Window, integration: ShellIntegration, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self::new(window, integration, cx))
+    }
+
+    pub fn refresh_after_quick_capture(&mut self, cx: &mut Context<Self>) {
+        self.refresh_workspace(cx);
+        self.load_home(cx);
     }
 
     fn observe_document_editor(
@@ -429,6 +451,8 @@ impl AppShell {
                     this.create_board_with_title(*project_id, title.clone(), window, cx)
                 }
                 CommandPaletteEvent::OpenFile => this.import_file(window, cx),
+                CommandPaletteEvent::ImportWorkspace => this.import_workspace(window, cx),
+                CommandPaletteEvent::ExportWorkspace => this.export_workspace(window, cx),
                 CommandPaletteEvent::NewTab => this.new_tab(window, cx),
                 CommandPaletteEvent::CloseAllTabs => this.close_all_tabs(window, cx),
                 CommandPaletteEvent::OpenSettings => this.open_settings(window, cx),
@@ -539,6 +563,8 @@ impl AppShell {
         }
         let active_tab_index = tab_session.active_tab_index.min(open_tabs.len() - 1);
         let active_title = open_tabs[active_tab_index].title.to_string();
+        let tab_scroll_handle = ScrollHandle::new();
+        tab_scroll_handle.scroll_to_item(active_tab_index);
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Home")
@@ -725,7 +751,12 @@ impl AppShell {
         let sidebar_for_visibility = sidebar.clone();
         let shell_for_sidebar = cx.entity().downgrade();
         let update_tray_shortcut = integration.update_tray_shortcut.clone();
+        let update_quick_capture_shortcut = integration.update_quick_capture_shortcut.clone();
+        let settings_update_tray_shortcut = update_tray_shortcut.clone();
+        let settings_update_quick_capture_shortcut = update_quick_capture_shortcut.clone();
         let shortcuts = integration.shortcuts.clone();
+        let settings_import_workspace = cx.entity().downgrade();
+        let settings_export_workspace = cx.entity().downgrade();
         let settings_view = cx.new(|_| {
             SettingsView::new(SettingsIntegration::new(
                 move |cx| !sidebar_for_visibility.read(cx).is_collapsed(),
@@ -736,8 +767,21 @@ impl AppShell {
                         });
                     }
                 },
-                move |shortcut, cx| update_tray_shortcut(shortcut, cx),
+                move |shortcut, cx| settings_update_tray_shortcut(shortcut, cx),
+                move |shortcut, cx| settings_update_quick_capture_shortcut(shortcut, cx),
                 move |cx| shortcuts(cx),
+                WorkspaceArchiveActions::new(
+                    move |window, cx| {
+                        if let Some(shell) = settings_import_workspace.upgrade() {
+                            shell.update(cx, |shell, cx| shell.import_workspace(window, cx));
+                        }
+                    },
+                    move |window, cx| {
+                        if let Some(shell) = settings_export_workspace.upgrade() {
+                            shell.update(cx, |shell, cx| shell.export_workspace(window, cx));
+                        }
+                    },
+                ),
                 integration.agent_access,
             ))
         });
@@ -768,6 +812,7 @@ impl AppShell {
                 note_views,
                 active_tab_index,
                 next_tab_id,
+                tab_scroll_handle,
             },
             workspace: WorkspaceState {
                 projects: vec![],
@@ -806,6 +851,9 @@ impl AppShell {
             },
             last_card_destination: None,
             record_opened_task: None,
+            update_tray_shortcut,
+            update_quick_capture_shortcut,
+            workspace_archive_busy: false,
         };
 
         let show_sidebar = AppSettings::show_sidebar(cx);

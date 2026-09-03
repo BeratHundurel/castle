@@ -6,6 +6,7 @@ members = [
     "crates/shell",
     "crates/board",
     "crates/command_palette",
+    "crates/quick_capture",
     "crates/document_editor",
     "crates/workspace",
     "crates/storage",
@@ -42,6 +43,7 @@ toml_edit = "0.25"
 image = "0.25.10"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 merman = { git = "https://github.com/zed-industries/merman", tag = "v0.7.0-with-patches", default-features = false, features = ["render"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [profile.dev]
 lto = false

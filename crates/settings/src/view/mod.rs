@@ -1,6 +1,7 @@
 use gpui::{
     App, AppContext as _, Axis, Context, Entity, IntoElement, Keystroke, ParentElement,
-    SharedString, StyleRefinement, Styled, Subscription, Window, div, px, rems,
+    SharedString, StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
+    px, rems,
 };
 use gpui_component::{
     ActiveTheme, Disableable as _, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry,
@@ -16,7 +17,9 @@ use gpui_component::{
 
 use std::{rc::Rc, sync::Arc};
 
-use crate::{AppSettings, DEFAULT_TRAY_SHORTCUT, scrollbar_show_key};
+use crate::{
+    AppSettings, DEFAULT_QUICK_CAPTURE_SHORTCUT, DEFAULT_TRAY_SHORTCUT, scrollbar_show_key,
+};
 
 const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
 const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
@@ -92,14 +95,36 @@ pub trait AgentAccess: Send + Sync {
 type SidebarVisible = Rc<dyn Fn(&App) -> bool>;
 type SetSidebarVisible = Rc<dyn Fn(bool, &mut App)>;
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
+type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
+type WorkspaceArchiveAction = Rc<dyn Fn(&mut Window, &mut App)>;
+
+pub struct WorkspaceArchiveActions {
+    import: WorkspaceArchiveAction,
+    export: WorkspaceArchiveAction,
+}
+
+impl WorkspaceArchiveActions {
+    pub fn new(
+        import: impl Fn(&mut Window, &mut App) + 'static,
+        export: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            import: Rc::new(import),
+            export: Rc::new(export),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct SettingsIntegration {
     sidebar_visible: SidebarVisible,
     set_sidebar_visible: SetSidebarVisible,
     update_tray_shortcut: UpdateTrayShortcut,
+    update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
     shortcuts: ShortcutProvider,
+    import_workspace: WorkspaceArchiveAction,
+    export_workspace: WorkspaceArchiveAction,
     agent_access: Arc<dyn AgentAccess>,
 }
 
@@ -108,14 +133,19 @@ impl SettingsIntegration {
         sidebar_visible: impl Fn(&App) -> bool + 'static,
         set_sidebar_visible: impl Fn(bool, &mut App) + 'static,
         update_tray_shortcut: impl Fn(&str, &mut App) + 'static,
+        update_quick_capture_shortcut: impl Fn(&str, &mut App) + 'static,
         shortcuts: impl Fn(&App) -> Vec<ShortcutReference> + 'static,
+        archive_actions: WorkspaceArchiveActions,
         agent_access: Arc<dyn AgentAccess>,
     ) -> Self {
         Self {
             sidebar_visible: Rc::new(sidebar_visible),
             set_sidebar_visible: Rc::new(set_sidebar_visible),
             update_tray_shortcut: Rc::new(update_tray_shortcut),
+            update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
             shortcuts: Rc::new(shortcuts),
+            import_workspace: archive_actions.import,
+            export_workspace: archive_actions.export,
             agent_access,
         }
     }
@@ -449,8 +479,32 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                     )
                     .description(
                         "Global shortcut used to restore Castle, for example Ctrl+Alt+Space.",
-                    ),
+                    )
+                    .layout(Axis::Vertical),
+                    SettingItem::new(
+                        "Quick Capture Shortcut",
+                        SettingField::input(AppSettings::quick_capture_shortcut, {
+                            let settings = settings.clone();
+                            move |shortcut, cx| {
+                                AppSettings::set_quick_capture_shortcut(shortcut.clone(), cx);
+                                let update_quick_capture_shortcut = settings
+                                    .read(cx)
+                                    .integration
+                                    .update_quick_capture_shortcut
+                                    .clone();
+                                update_quick_capture_shortcut(shortcut.as_ref(), cx);
+                            }
+                        })
+                        .default_value(DEFAULT_QUICK_CAPTURE_SHORTCUT),
+                    )
+                    .description(
+                        "Global shortcut that opens a focused note capture window, for example Ctrl+Alt+N.",
+                    )
+                    .layout(Axis::Vertical),
                 ]),
+                SettingGroup::new()
+                    .title("Workspace")
+                    .item(workspace_archive_item(settings.clone())),
             ]),
         SettingPage::new("Editor")
             .icon(Icon::new(IconName::BookOpen))
@@ -542,6 +596,7 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                     SettingField::dropdown(
                         vec![
                             ("source".into(), "Write".into()),
+                            ("split".into(), "Side by side".into()),
                             ("preview".into(), "Read".into()),
                         ],
                         AppSettings::markdown_editor_mode,
@@ -626,19 +681,26 @@ fn agent_access_item(settings: Entity<SettingsView>) -> SettingItem {
             ),
             AgentAccessState::Error(message) => (message.as_ref(), "Try again", false, true),
         };
+        let stacked = settings_row_is_stacked(options.layout());
 
         gpui_component::h_flex()
             .w_full()
-            .items_center()
-            .justify_between()
             .gap_4()
+            .when(stacked, |this| this.flex_col().items_start())
+            .when(!stacked, |this| this.items_center().justify_between())
             .child(
-                gpui_component::v_flex().gap_1().child("Castle MCP").child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(status.to_string()),
-                ),
+                gpui_component::v_flex()
+                    .min_w_0()
+                    .when(!stacked, |this| this.flex_1())
+                    .when(stacked, |this| this.w_full())
+                    .gap_1()
+                    .child("Castle MCP")
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(status.to_string()),
+                    ),
             )
             .child(
                 Button::new("settings-mcp-toggle")
@@ -654,6 +716,63 @@ fn agent_access_item(settings: Entity<SettingsView>) -> SettingItem {
                             });
                         }
                     }),
+            )
+            .into_any_element()
+    })
+}
+
+fn workspace_archive_item(settings: Entity<SettingsView>) -> SettingItem {
+    SettingItem::render(move |options, _, cx| {
+        let integration = settings.read(cx).integration.clone();
+        let import_workspace = integration.import_workspace.clone();
+        let export_workspace = integration.export_workspace.clone();
+        let stacked = settings_row_is_stacked(options.layout());
+
+        gpui_component::h_flex()
+            .w_full()
+            .gap_4()
+            .when(stacked, |this| this.flex_col().items_start())
+            .when(!stacked, |this| this.items_center().justify_between())
+            .child(
+                gpui_component::v_flex()
+                    .min_w_0()
+                    .when(!stacked, |this| this.flex_1())
+                    .when(stacked, |this| this.w_full())
+                    .gap_1()
+                    .child("Workspace archive")
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Move notes, boards, links, attachments, and settings between Castle installations."),
+                    ),
+            )
+            .child(
+                gpui_component::h_flex()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .child(
+                        Button::new("settings-import-workspace")
+                            .icon(IconName::FolderOpen)
+                            .label("Import")
+                            .outline()
+                            .with_size(options.size())
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                import_workspace(window, cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("settings-export-workspace")
+                            .icon(IconName::Folder)
+                            .label("Export")
+                            .outline()
+                            .with_size(options.size())
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                export_workspace(window, cx);
+                            }),
+                    ),
             )
             .into_any_element()
     })
@@ -685,6 +804,8 @@ fn shortcut_groups(settings: &Entity<SettingsView>, cx: &App) -> Vec<SettingGrou
                             .gap_4()
                             .child(
                                 div()
+                                    .min_w_0()
+                                    .flex_1()
                                     .text_sm()
                                     .text_color(cx.theme().foreground)
                                     .child(shortcut.action.clone()),
@@ -702,6 +823,10 @@ fn shortcut_groups(settings: &Entity<SettingsView>, cx: &App) -> Vec<SettingGrou
                 }))
         })
         .collect()
+}
+
+fn settings_row_is_stacked(layout: Axis) -> bool {
+    layout == Axis::Vertical
 }
 
 fn shortcut_context_name(context: &str) -> SharedString {
@@ -857,5 +982,11 @@ mod tests {
             Some(background.into())
         );
         assert_eq!(style.border_color, Some(border));
+    }
+
+    #[test]
+    fn custom_setting_rows_follow_the_settings_stack_layout() {
+        assert!(settings_row_is_stacked(Axis::Vertical));
+        assert!(!settings_row_is_stacked(Axis::Horizontal));
     }
 }

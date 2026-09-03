@@ -1,0 +1,15 @@
+[package]
+name = "quick_capture"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+runtime = { path = "../runtime" }
+storage = { path = "../storage" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

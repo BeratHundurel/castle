@@ -27,6 +27,7 @@ settings = { path = "../settings" }
 shell = { path = "../shell" }
 board = { path = "../board" }
 command_palette = { path = "../command_palette" }
+quick_capture = { path = "../quick_capture" }
 document_editor = { path = "../document_editor" }
 dotenvy = "0.15"
 global-hotkey = "0.8.0"

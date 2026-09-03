@@ -1,5 +1,10 @@
+use std::cell::Cell;
 use std::fs::{create_dir_all, remove_file, write};
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use super::*;
 use gpui_component::{
@@ -667,6 +672,353 @@ impl AppShell {
         .detach();
     }
 
+    pub(crate) fn export_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace_archive_busy {
+            return;
+        }
+        let settings_json = match AppSettings::export_json(cx) {
+            Ok(settings_json) => settings_json,
+            Err(error) => {
+                window.push_notification(
+                    Notification::error(format!("Could not prepare workspace export: {error}")),
+                    cx,
+                );
+                return;
+            }
+        };
+        let data_dir = cx.global::<AppRuntime>().data_dir().to_path_buf();
+        let receiver = cx.prompt_for_new_path(&data_dir, Some("castle-workspace.castle.zip"));
+        let view = cx.entity().downgrade();
+        let db = cx.global::<AppRuntime>().store();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        self.workspace_archive_busy = true;
+        cx.notify();
+
+        cx.spawn_in(window, async move |_, window| {
+            let Some(destination) = receiver.await.ok().and_then(Result::ok).flatten() else {
+                let view = view.clone();
+                window
+                    .update(|_, cx| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.workspace_archive_busy = false;
+                            cx.notify();
+                        });
+                    })
+                    .ok();
+                return;
+            };
+            let display_destination = destination.display().to_string();
+            let result = runtime
+                .spawn(async move {
+                    storage::workspace::archive::export_workspace(
+                        &db,
+                        &data_dir,
+                        &settings_json,
+                        &destination,
+                    )
+                    .await
+                })
+                .await;
+
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| {
+                        this.workspace_archive_busy = false;
+                        let notification = match result {
+                            Ok(Ok(summary)) => {
+                                let attachment_note = if summary.missing_attachments == 0 {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        " {} attachment files were missing.",
+                                        summary.missing_attachments
+                                    )
+                                };
+                                Notification::success(format!(
+                                    "Exported {} notes, {} boards, and {} projects to {}.{}",
+                                    summary.counts.notes,
+                                    summary.counts.boards,
+                                    summary.counts.projects,
+                                    display_destination,
+                                    attachment_note
+                                ))
+                            }
+                            Ok(Err(error)) => Notification::error(format!(
+                                "Could not export the workspace: {error}"
+                            )),
+                            Err(error) => Notification::error(format!(
+                                "Could not finish exporting the workspace: {error}"
+                            )),
+                        };
+                        window.push_notification(notification, cx);
+                        cx.notify();
+                    })
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn import_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace_archive_busy || window.has_active_dialog(cx) {
+            return;
+        }
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import workspace archive".into()),
+        });
+        let view = cx.entity().downgrade();
+
+        cx.spawn_in(window, async move |_, window| {
+            let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
+                return;
+            };
+            let Some(archive_path) = paths.first().cloned() else {
+                return;
+            };
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| {
+                        this.open_workspace_import_dialog(archive_path, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn open_workspace_import_dialog(
+        &mut self,
+        archive_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_archive_busy || window.has_active_dialog(cx) {
+            return;
+        }
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("workspace archive")
+            .to_string();
+        let app = cx.entity();
+        let merge_app = app.clone();
+        let merge_path = archive_path.clone();
+        let replace_app = app;
+        let replace_path = archive_path;
+        let import_submitted = Rc::new(Cell::new(false));
+
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .w(px(560.))
+                .child(
+                    DialogHeader::new()
+                        .child(DialogTitle::new().child("Import workspace"))
+                        .child(DialogDescription::new().child(format!(
+                            "Choose how to add {archive_name} to this Castle installation."
+                        ))),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .py_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .child("Merge")
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .child("Keep the current workspace and add the archive contents."),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .child("Replace workspace")
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .child("Clear current workspace data, including starter content, then restore the archive."),
+                                ),
+                        ),
+                )
+                .child(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new().child(
+                                Button::new("cancel-import-workspace")
+                                    .label("Cancel")
+                                    .outline(),
+                            ),
+                        )
+                        .child(
+                            Button::new("merge-import-workspace")
+                                .label("Merge")
+                                .primary()
+                                .on_click({
+                                    let merge_app = merge_app.clone();
+                                    let merge_path = merge_path.clone();
+                                    let import_submitted = import_submitted.clone();
+                                    move |_, window, cx| {
+                                        if !claim_workspace_import_submission(&import_submitted) {
+                                            return;
+                                        }
+                                        window.close_dialog(cx);
+                                        merge_app.update(cx, |this, cx| {
+                                            this.start_workspace_import(
+                                                merge_path.clone(),
+                                                storage::workspace::archive::ImportMode::Merge,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("replace-import-workspace")
+                                .label("Replace workspace")
+                                .danger()
+                                .on_click({
+                                    let replace_app = replace_app.clone();
+                                    let replace_path = replace_path.clone();
+                                    let import_submitted = import_submitted.clone();
+                                    move |_, window, cx| {
+                                        if !claim_workspace_import_submission(&import_submitted) {
+                                            return;
+                                        }
+                                        window.close_dialog(cx);
+                                        replace_app.update(cx, |this, cx| {
+                                            this.start_workspace_import(
+                                                replace_path.clone(),
+                                                storage::workspace::archive::ImportMode::Replace,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn start_workspace_import(
+        &mut self,
+        archive_path: PathBuf,
+        mode: storage::workspace::archive::ImportMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_archive_busy {
+            return;
+        }
+        self.workspace_archive_busy = true;
+        cx.notify();
+        let display_path = archive_path.display().to_string();
+        let data_dir = cx.global::<AppRuntime>().data_dir().to_path_buf();
+        let db = cx.global::<AppRuntime>().store();
+        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let view = cx.entity().downgrade();
+
+        cx.spawn_in(window, async move |_, window| {
+            let result = runtime
+                .spawn(async move {
+                    storage::workspace::archive::import_workspace(
+                        &db,
+                        &data_dir,
+                        &archive_path,
+                        mode,
+                    )
+                    .await
+                })
+                .await;
+
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| {
+                        this.workspace_archive_busy = false;
+                        let notification = match result {
+                            Ok(Ok(summary)) => {
+                                let settings_error =
+                                    AppSettings::import_json(&summary.settings_json, cx).err();
+                                if settings_error.is_none() {
+                                    let tray_shortcut = AppSettings::tray_shortcut(cx);
+                                    (this.update_tray_shortcut)(tray_shortcut.as_ref(), cx);
+                                    let quick_capture_shortcut =
+                                        AppSettings::quick_capture_shortcut(cx);
+                                    (this.update_quick_capture_shortcut)(
+                                        quick_capture_shortcut.as_ref(),
+                                        cx,
+                                    );
+                                }
+                                if mode == storage::workspace::archive::ImportMode::Replace {
+                                    this.workspace.active_project_id = None;
+                                    this.close_all_tabs(window, cx);
+                                }
+                                let show_sidebar = AppSettings::show_sidebar(cx);
+                                this.sidebar.update(cx, |sidebar, cx| {
+                                    sidebar.set_width(AppSettings::sidebar_width(cx), cx);
+                                });
+                                this.set_sidebar_visible(show_sidebar, cx);
+                                this.refresh_workspace(cx);
+                                this.load_home(cx);
+                                this.load_trash(cx);
+
+                                let mut message = format!(
+                                    "Imported {} notes, {} boards, and {} projects from {}.",
+                                    summary.counts.notes,
+                                    summary.counts.boards,
+                                    summary.counts.projects,
+                                    display_path
+                                );
+                                if mode == storage::workspace::archive::ImportMode::Merge {
+                                    message.push_str(" Existing workspace data was kept.");
+                                } else {
+                                    message.push_str(" The current workspace was replaced.");
+                                }
+                                if !summary.warnings.is_empty() {
+                                    message.push_str(&format!(
+                                        " {} attachment warning(s).",
+                                        summary.warnings.len()
+                                    ));
+                                }
+                                if let Some(error) = settings_error {
+                                    message.push_str(&format!(
+                                        " Workspace settings could not be applied: {error}."
+                                    ));
+                                }
+                                Notification::success(message)
+                            }
+                            Ok(Err(error)) => Notification::error(format!(
+                                "Could not import the workspace: {error}"
+                            )),
+                            Err(error) => Notification::error(format!(
+                                "Could not finish importing the workspace: {error}"
+                            )),
+                        };
+                        window.push_notification(notification, cx);
+                        cx.notify();
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     pub(super) fn create_board(
         &mut self,
         project_id: Option<u32>,
@@ -744,6 +1096,10 @@ fn remove_linked_note_file(path: &Path) -> std::io::Result<()> {
     remove_file(path)
 }
 
+fn claim_workspace_import_submission(submitted: &Cell<bool>) -> bool {
+    !submitted.replace(true)
+}
+
 async fn publish_change_revision(
     store: impl Into<storage::Store>,
     sender: &tokio::sync::watch::Sender<Option<ChangeRevision>>,
@@ -770,6 +1126,14 @@ mod tests {
         ActiveModelTrait, ActiveValue::Set, ConnectionTrait, Database, DbBackend, EntityTrait,
         PaginatorTrait, Statement,
     };
+
+    #[test]
+    fn workspace_import_confirmation_accepts_only_one_submission() {
+        let submitted = Cell::new(false);
+
+        assert!(claim_workspace_import_submission(&submitted));
+        assert!(!claim_workspace_import_submission(&submitted));
+    }
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     #[tokio::test]

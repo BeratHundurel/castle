@@ -74,6 +74,18 @@ impl CommandPaletteView {
                 kind: PaletteCommandKind::OpenFile,
             },
             PaletteCommand {
+                label: "Import workspace".into(),
+                subtitle: "Restore or merge a Castle workspace archive".into(),
+                icon: IconName::FolderOpen,
+                kind: PaletteCommandKind::ImportWorkspace,
+            },
+            PaletteCommand {
+                label: "Export workspace".into(),
+                subtitle: "Save notes, boards, links, and settings as a ZIP".into(),
+                icon: IconName::Folder,
+                kind: PaletteCommandKind::ExportWorkspace,
+            },
+            PaletteCommand {
                 label: "Open settings".into(),
                 subtitle: SharedString::from(format!(
                     "Change app preferences ({})",

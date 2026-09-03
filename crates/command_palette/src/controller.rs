@@ -151,6 +151,8 @@ impl CommandPaletteView {
                 CommandPaletteEvent::NewBoard { project_id, title }
             }
             PaletteCommandKind::OpenFile => CommandPaletteEvent::OpenFile,
+            PaletteCommandKind::ImportWorkspace => CommandPaletteEvent::ImportWorkspace,
+            PaletteCommandKind::ExportWorkspace => CommandPaletteEvent::ExportWorkspace,
             PaletteCommandKind::NewTab => CommandPaletteEvent::NewTab,
             PaletteCommandKind::CloseAllTabs => CommandPaletteEvent::CloseAllTabs,
             PaletteCommandKind::OpenSettings => CommandPaletteEvent::OpenSettings,

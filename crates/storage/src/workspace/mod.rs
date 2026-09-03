@@ -16,6 +16,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub mod archive;
 pub mod contracts;
 pub mod file_import;
 pub mod folder_import;

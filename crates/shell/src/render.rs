@@ -193,6 +193,8 @@ impl AppShell {
             .pill()
             .small()
             .bg(cx.theme().sidebar)
+            .track_scroll(&self.tabs.tab_scroll_handle)
+            .menu(self.tabs.open_tabs.len() > 1)
             .selected_index(active_index)
             .on_click(cx.listener(|this, index: &usize, window, cx| {
                 this.activate_tab(*index, window, cx);
@@ -296,6 +298,12 @@ impl Render for AppShell {
             }))
             .on_action(cx.listener(|this, _: &OpenSettingsAction, window, cx| {
                 this.open_settings(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ExportWorkspaceAction, window, cx| {
+                this.export_workspace(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ImportWorkspaceAction, window, cx| {
+                this.import_workspace(window, cx);
             }))
             .on_action(cx.listener(|this, _: &CommandPaletteAction, window, cx| {
                 this.on_command_palette_action(window, cx);
@@ -586,6 +594,8 @@ mod tests {
         let settings = cx
             .debug_bounds("title-bar-settings")
             .expect("settings action should render");
+        let tab_scroll_handle =
+            shell.read_with(&cx, |shell, _| shell.tabs.tab_scroll_handle.clone());
 
         let window_bounds = cx.update(|window, _| window.bounds());
 
@@ -600,6 +610,33 @@ mod tests {
         assert!(
             settings.right() <= window_bounds.right(),
             "fixed title-bar actions must remain inside the window: {settings:?} vs {window_bounds:?}"
+        );
+
+        assert!(
+            tab_scroll_handle.max_offset().x > px(0.),
+            "long tab strips should expose a horizontal scroll range"
+        );
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.activate_tab(11, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let tab_scroll_area = tab_scroll_handle.bounds();
+        let last_tab = tab_scroll_handle
+            .bounds_for_item(11)
+            .expect("last tab should be measured");
+        let painted_last_tab = last_tab.origin.x + tab_scroll_handle.offset().x;
+        let painted_last_tab_right = last_tab.right() + tab_scroll_handle.offset().x;
+        assert!(
+            painted_last_tab >= tab_scroll_area.left(),
+            "activating an overflowed tab should reveal its left edge"
+        );
+        assert!(
+            painted_last_tab_right <= tab_scroll_area.right(),
+            "activating an overflowed tab should reveal its right edge"
         );
     }
 }

@@ -31,6 +31,7 @@ const DEFAULT_EDITOR_VIM_MODE: bool = false;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
+pub const DEFAULT_QUICK_CAPTURE_SHORTCUT: &str = "Ctrl+Alt+N";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -89,6 +90,7 @@ pub(crate) struct StoredSettings {
     document_outline_visible: bool,
     close_to_tray: bool,
     tray_shortcut: String,
+    quick_capture_shortcut: String,
     tab_session: TabSession,
 }
 
@@ -113,6 +115,7 @@ impl Default for StoredSettings {
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
+            quick_capture_shortcut: DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string(),
             tab_session: TabSession::default(),
         }
     }
@@ -144,15 +147,28 @@ impl AppSettings {
     }
 
     pub fn apply_to_theme(&self, cx: &mut App) {
-        apply_theme_name(&self.values.theme_name, cx);
-        apply_font_family(&self.values.font_family, cx);
-        apply_font_size(self.values.font_size, cx);
-        apply_radius(self.values.radius, cx);
-        apply_scrollbar_show(&self.values.scrollbar_show, cx);
-        apply_editor_font_family(&self.values.editor_font_family, cx);
-        apply_editor_font_size(self.values.editor_font_size, cx);
-        Theme::sync_base(cx);
-        cx.refresh_windows();
+        apply_values_to_theme(&self.values, cx);
+    }
+
+    pub fn export_json(cx: &App) -> serde_json::Result<Vec<u8>> {
+        let mut values = cx.global::<Self>().values.clone();
+        values.tab_session = TabSession::default();
+        serde_json::to_vec_pretty(&values)
+    }
+
+    pub fn import_json(bytes: &[u8], cx: &mut App) -> serde_json::Result<()> {
+        let mut values: StoredSettings = serde_json::from_slice(bytes)?;
+        values.tab_session = TabSession::default();
+        values.normalize();
+
+        let write = {
+            let settings = cx.global_mut::<Self>();
+            settings.values = values.clone();
+            settings.prepare_write()
+        };
+        Self::schedule_write(write);
+        apply_values_to_theme(&values, cx);
+        Ok(())
     }
 
     pub fn show_sidebar(cx: &App) -> bool {
@@ -196,15 +212,7 @@ impl AppSettings {
         };
         Self::schedule_write(write);
 
-        apply_theme_name(&values.theme_name, cx);
-        apply_font_family(&values.font_family, cx);
-        apply_font_size(values.font_size, cx);
-        apply_radius(values.radius, cx);
-        apply_scrollbar_show(&values.scrollbar_show, cx);
-        apply_editor_font_family(&values.editor_font_family, cx);
-        apply_editor_font_size(values.editor_font_size, cx);
-        Theme::sync_base(cx);
-        cx.refresh_windows();
+        apply_values_to_theme(&values, cx);
     }
 
     pub fn font_family(cx: &App) -> SharedString {
@@ -369,6 +377,21 @@ impl AppSettings {
         });
     }
 
+    pub fn quick_capture_shortcut(cx: &App) -> SharedString {
+        cx.global::<Self>()
+            .values
+            .quick_capture_shortcut
+            .as_str()
+            .into()
+    }
+
+    pub fn set_quick_capture_shortcut(shortcut: SharedString, cx: &mut App) {
+        let shortcut = shortcut.to_string();
+        Self::update(cx, |settings| {
+            settings.values.quick_capture_shortcut = shortcut.clone();
+        });
+    }
+
     pub fn tab_session(cx: &App) -> TabSession {
         cx.global::<Self>().values.tab_session.clone()
     }
@@ -428,7 +451,10 @@ impl StoredSettings {
             self.scrollbar_show = DEFAULT_SCROLLBAR_SHOW.to_string();
         }
 
-        if !matches!(self.markdown_editor_mode.as_str(), "source" | "preview") {
+        if !matches!(
+            self.markdown_editor_mode.as_str(),
+            "source" | "split" | "preview"
+        ) {
             self.markdown_editor_mode = DEFAULT_MARKDOWN_EDITOR_MODE.to_string();
         }
 
@@ -438,6 +464,14 @@ impl StoredSettings {
             .is_err()
         {
             self.tray_shortcut = DEFAULT_TRAY_SHORTCUT.to_string();
+        }
+
+        if self
+            .quick_capture_shortcut
+            .parse::<global_hotkey::hotkey::HotKey>()
+            .is_err()
+        {
+            self.quick_capture_shortcut = DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string();
         }
 
         if self.tab_session.tabs.is_empty() {
@@ -467,6 +501,18 @@ fn apply_theme_name(theme_name: &str, cx: &mut App) {
     if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
         Theme::global_mut(cx).apply_config(&theme_config);
     }
+}
+
+fn apply_values_to_theme(values: &StoredSettings, cx: &mut App) {
+    apply_theme_name(&values.theme_name, cx);
+    apply_font_family(&values.font_family, cx);
+    apply_font_size(values.font_size, cx);
+    apply_radius(values.radius, cx);
+    apply_scrollbar_show(&values.scrollbar_show, cx);
+    apply_editor_font_family(&values.editor_font_family, cx);
+    apply_editor_font_size(values.editor_font_size, cx);
+    Theme::sync_base(cx);
+    cx.refresh_windows();
 }
 
 fn apply_font_family(font_family: &str, cx: &mut App) {
@@ -535,11 +581,17 @@ mod tests {
             settings.apply_to_theme(cx);
 
             assert_eq!(
-                gpui_base::Theme::global(cx).resizable.handle.expect("handle should be set"),
+                gpui_base::Theme::global(cx)
+                    .resizable
+                    .handle
+                    .expect("handle should be set"),
                 Theme::global(cx).border
             );
             assert_eq!(
-                gpui_base::Theme::global(cx).resizable.active_handle.expect("active handle should be set"),
+                gpui_base::Theme::global(cx)
+                    .resizable
+                    .active_handle
+                    .expect("active handle should be set"),
                 Theme::global(cx).drag_border
             );
         });
@@ -560,6 +612,10 @@ mod tests {
         assert!(!settings.editor_vim_mode);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
+        assert_eq!(
+            settings.quick_capture_shortcut,
+            DEFAULT_QUICK_CAPTURE_SHORTCUT
+        );
     }
 
     #[test]
@@ -720,7 +776,22 @@ mod tests {
     }
 
     #[test]
-    fn removed_split_editor_mode_is_reset_to_source() {
+    fn invalid_quick_capture_shortcut_is_reset_to_default() {
+        let mut settings = StoredSettings {
+            quick_capture_shortcut: "Ctrl+not-a-key".to_string(),
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+
+        assert_eq!(
+            settings.quick_capture_shortcut,
+            DEFAULT_QUICK_CAPTURE_SHORTCUT
+        );
+    }
+
+    #[test]
+    fn split_editor_mode_is_preserved_by_normalization() {
         let mut settings = StoredSettings {
             markdown_editor_mode: "split".to_string(),
             ..StoredSettings::default()
@@ -728,7 +799,7 @@ mod tests {
 
         settings.normalize();
 
-        assert_eq!(settings.markdown_editor_mode, DEFAULT_MARKDOWN_EDITOR_MODE);
+        assert_eq!(settings.markdown_editor_mode, "split");
     }
 
     #[test]
