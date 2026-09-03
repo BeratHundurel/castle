@@ -384,6 +384,35 @@ impl BoardView {
     }
 }
 
+fn board_card_draft(card: BoardCardState) -> storage::board::commands::BoardCardDraft {
+    storage::board::commands::BoardCardDraft {
+        title: card.title.to_string(),
+        description: card.description.to_string(),
+        list_id: card.card_id,
+        position: card.position,
+        due_on: card.due_on.map(|value| value.to_string()),
+        label_ids: card.labels.into_iter().map(|label| label.id).collect(),
+        checklist_items: card
+            .checklist_items
+            .into_iter()
+            .map(|item| storage::board::commands::ChecklistItemDraft {
+                title: item.title.to_string(),
+                checked: item.checked,
+                position: item.position,
+            })
+            .collect(),
+    }
+}
+
+fn board_list_draft(list: BoardListState) -> storage::board::commands::BoardListDraft {
+    storage::board::commands::BoardListDraft {
+        title: list.title.to_string(),
+        board_id: list.board_id,
+        position: list.position,
+        cards: list.entries.into_iter().map(board_card_draft).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::dialog_description_input;
@@ -446,34 +475,5 @@ mod tests {
                 "the description and title text should share the same left edge"
             );
         });
-    }
-}
-
-fn board_card_draft(card: BoardCardState) -> storage::board::commands::BoardCardDraft {
-    storage::board::commands::BoardCardDraft {
-        title: card.title.to_string(),
-        description: card.description.to_string(),
-        list_id: card.card_id,
-        position: card.position,
-        due_on: card.due_on.map(|value| value.to_string()),
-        label_ids: card.labels.into_iter().map(|label| label.id).collect(),
-        checklist_items: card
-            .checklist_items
-            .into_iter()
-            .map(|item| storage::board::commands::ChecklistItemDraft {
-                title: item.title.to_string(),
-                checked: item.checked,
-                position: item.position,
-            })
-            .collect(),
-    }
-}
-
-fn board_list_draft(list: BoardListState) -> storage::board::commands::BoardListDraft {
-    storage::board::commands::BoardListDraft {
-        title: list.title.to_string(),
-        board_id: list.board_id,
-        position: list.position,
-        cards: list.entries.into_iter().map(board_card_draft).collect(),
     }
 }

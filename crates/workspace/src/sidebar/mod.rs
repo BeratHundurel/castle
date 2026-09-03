@@ -210,6 +210,15 @@ impl SidebarView {
         self.width
     }
 
+    pub fn set_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        let width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        if self.width == width {
+            return;
+        }
+        self.width = width;
+        cx.notify();
+    }
+
     pub fn set_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
         if self.collapsed == collapsed {
             return;

@@ -35,6 +35,13 @@ const TEMPLATE_CARD_TITLE: &str = "Reuse a board as a template";
 const CONNECT_CARD_TITLE: &str = "Turn note text into a connected card";
 const MERMAID_CARD_TITLE: &str = "Draw an idea with Mermaid";
 const EMBED_CARD_TITLE: &str = "Embed a live board view in a note";
+const CAPTURE_CARD_TITLE: &str = "Capture a thought instantly";
+const SEARCH_CARD_TITLE: &str = "Find anything with workspace search";
+const MARKDOWN_CARD_TITLE: &str = "Edit faster with Markdown tools";
+const FILE_CARD_TITLE: &str = "Open files in their native format";
+const TRASH_CARD_TITLE: &str = "Recover work from Trash";
+const ARCHIVE_CARD_TITLE: &str = "Move a workspace between installs";
+const AGENT_CARD_TITLE: &str = "Connect a trusted local agent";
 const MAKE_IT_YOURS_CARD_TITLE: &str = "Make this workspace yours";
 
 fn docs_content(starter_board_title: &str, starter_view_name: &str) -> String {
@@ -44,6 +51,14 @@ fn docs_content(starter_board_title: &str, starter_view_name: &str) -> String {
         r#"# Welcome to Castle
 
 Castle is a local-first workspace where notes, files, and boards stay connected. This guide and [[board:{starter_board_title}]] are ordinary workspace items: edit them, move them, or delete them whenever you are ready.
+
+## Start anywhere
+
+Use **Quick Capture** with `Ctrl+Alt+N` to open a small note window from anywhere. Press **Enter** to save a note, **Shift+Enter** for a new line, or **Esc** to close it. You can change this global shortcut in **Settings → General → Tray**.
+
+Press `Ctrl+P` for the command palette. It can create notes and boards, open files, switch themes, search the workspace, open settings, and insert board views. Type `new: Launch`, `new note: Brief`, or `new board: Roadmap` to start with a title.
+
+Use `Ctrl+Shift+F` for full-text workspace search. Results include notes and board content, show a useful preview, and open at the matching item. The **Home** screen also gathers pinned and recent items plus cards due today or overdue.
 
 ## See Castle working
 
@@ -64,7 +79,7 @@ The projection below is read-only so the board remains the single editable sourc
 
 Use **Insert board view** from the command palette to embed any board or saved view without writing this reference by hand.
 
-## Notes are more than text
+## Notes, files, and Markdown
 
 | Try this | What Castle does |
 | --- | --- |
@@ -74,7 +89,13 @@ Use **Insert board view** from the command palette to embed any board or saved v
 | Add headings, tables, code, or Mermaid fences | Renders them in **Read** mode and builds a navigable outline |
 | Open a Markdown, JSON, or text file | Edits the original file with matching syntax and outline support |
 
-Use `Ctrl+Shift+O` for the outline and links inspector, or `Ctrl+Shift+F` to search across the workspace.
+Use `Ctrl+Shift+O` for the outline and links inspector. In **Write** mode, `Alt+Shift+F` formats the current document; Markdown also supports smart list and task continuation, task toggling, line movement, Emmet abbreviations, and optional Vim editing. Use **Read**, **Side by side**, or **Write** as the default note view in **Settings → Editor → Markdown**.
+
+The document type menu supports Markdown, JSON, and plain text. Save a file in place with `Ctrl+S`, or use `Ctrl+Shift+S` to choose a new path. Changes made by another process are picked up by the open workspace while unsaved editor changes remain protected.
+
+## Links that stay useful
+
+Type `[[` to complete references to notes, boards, lists, and cards. Castle displays readable labels in **Read** mode, supports explicit labels such as `[[board:Roadmap|Release plan]]`, and remembers previous names when an item is renamed. Use the **Links** inspector to review outbound links and backlinks, and click a resolved link to navigate.
 
 ## Boards can model more than tasks
 
@@ -86,19 +107,32 @@ Boards also support:
 - temporary filters and sorting, configurable fields, and compact cards;
 - named views that preserve a useful board perspective;
 - reusable templates for workflows, collections, queues, and plans;
-- linked notes created from a card or connected later.
+- linked notes created from a card or connected later;
+- duplicate, move, and reorder actions for cards and lists.
+
+## Recover and move your workspace
+
+Deleting a project, board, list, card, or note moves it to **Trash** first. Use the undo action or open Trash to restore it; permanent deletion and **Empty Trash** are separate, explicit actions. Archived projects from older Castle data are migrated into the same recovery flow.
+
+Use **Settings → General → Workspace** or the command palette to export a `.castle.zip` containing notes, boards, links, attachments, and settings. Import it later in **Merge** mode to keep current work, or **Replace workspace** mode to restore the archive as the current workspace.
+
+## Work with trusted agents
+
+Open **Settings → Agent Access** and enable MCP when you want a trusted local agent to work with Castle. Agents can read and search notes, create and update notes and board cards, manage projects, labels, checklists, due dates, and reminders, and move workspace items. Keep MCP disabled unless you trust the local clients that can access it.
 
 ## A five-minute tour
 
 1. Switch this note to **Read** and inspect the diagram and embedded board.
 2. Open the starter board, expand **Open this card: there is more inside**, and complete a checklist item.
 3. Drag **Drag me to another list** and change its label or custom property.
-4. Return here, select a sentence, and run **Create card from selection** from `Ctrl+P`.
-5. Create a new note and run **Insert board view** to connect your own dashboard.
+4. Press `Ctrl+Alt+N` to capture a note, then find it with `Ctrl+Shift+F`.
+5. Return here, select a sentence, and run **Create card from selection** from `Ctrl+P`.
+6. Create a new note and run **Insert board view** to connect your own dashboard.
+7. Move a disposable item to Trash and restore it, then inspect the archive options in Settings.
 
 ## Make it yours
 
-Press `Ctrl+P` to create or open anything quickly. Settings includes themes, typography, editor behavior, shortcuts, notification controls, and optional Vim mode. Castle starts with a tour; what replaces it is entirely yours.
+Press `Ctrl+P` to create or open anything quickly. Settings includes themes, typography, layout, editor behavior, shortcuts, tray and Quick Capture controls, workspace archives, Agent Access, and optional Vim mode. Castle starts with a tour; what replaces it is entirely yours.
 "#
     )
 }
@@ -319,6 +353,20 @@ async fn seed_starter_board_details(
         "purple".to_string(),
     )
     .await?;
+    let workflow = crate::board::properties::create_property_option(
+        transaction,
+        area.id,
+        "Workflow".to_string(),
+        "orange".to_string(),
+    )
+    .await?;
+    let workspace = crate::board::properties::create_property_option(
+        transaction,
+        area.id,
+        "Workspace".to_string(),
+        "red".to_string(),
+    )
+    .await?;
 
     for (title, option_id) in [
         (OPEN_CARD_TITLE, boards.id),
@@ -329,6 +377,13 @@ async fn seed_starter_board_details(
         (CONNECT_CARD_TITLE, connections.id),
         (MERMAID_CARD_TITLE, notes.id),
         (EMBED_CARD_TITLE, connections.id),
+        (CAPTURE_CARD_TITLE, notes.id),
+        (SEARCH_CARD_TITLE, workspace.id),
+        (MARKDOWN_CARD_TITLE, notes.id),
+        (FILE_CARD_TITLE, notes.id),
+        (TRASH_CARD_TITLE, workspace.id),
+        (ARCHIVE_CARD_TITLE, workspace.id),
+        (AGENT_CARD_TITLE, workflow.id),
         (MAKE_IT_YOURS_CARD_TITLE, notes.id),
     ] {
         entry_property_value::ActiveModel {
@@ -424,6 +479,44 @@ fn starter_board_definition() -> BoardTemplateDefinition {
                 ],
             },
             BoardTemplateColumn {
+                title: "Work faster".to_string(),
+                entries: vec![
+                    BoardTemplateEntry {
+                        title: CAPTURE_CARD_TITLE.to_string(),
+                        description: "Use the global Quick Capture shortcut (`Ctrl+Alt+N` by default) to save a focused note without leaving your current work. Change the shortcut in **Settings → General → Tray**.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: SEARCH_CARD_TITLE.to_string(),
+                        description: "Open workspace search with `Ctrl+Shift+F` to search note and board content, inspect a preview, and jump directly to the matching item.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: MARKDOWN_CARD_TITLE.to_string(),
+                        description: "In a Markdown source editor, format with `Alt+Shift+F`, continue lists and tasks automatically, move lines with `Alt+Up` or `Alt+Down`, or enable optional Vim mode in Settings.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: FILE_CARD_TITLE.to_string(),
+                        description: "Open Markdown, JSON, and plain text files directly. Castle preserves the source file, supports **Write**, **Read**, and **Side by side** views, and can save a copy to a new path.".to_string(),
+                    },
+                ],
+            },
+            BoardTemplateColumn {
+                title: "Keep it safe".to_string(),
+                entries: vec![
+                    BoardTemplateEntry {
+                        title: TRASH_CARD_TITLE.to_string(),
+                        description: "Deleted workspace items go to **Trash** first. Restore them with undo or from the Trash view, then use permanent delete only when you are sure.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: ARCHIVE_CARD_TITLE.to_string(),
+                        description: "Export notes, boards, links, attachments, and settings to a `.castle.zip` archive. Import it later by merging with current work or replacing the current workspace.".to_string(),
+                    },
+                    BoardTemplateEntry {
+                        title: AGENT_CARD_TITLE.to_string(),
+                        description: "Enable **Settings → Agent Access** to let a trusted local MCP client read and update Castle. Keep agent access disabled when you do not need it.".to_string(),
+                    },
+                ],
+            },
+            BoardTemplateColumn {
                 title: "Make it yours".to_string(),
                 entries: vec![BoardTemplateEntry {
                     title: MAKE_IT_YOURS_CARD_TITLE.to_string(),
@@ -463,6 +556,18 @@ mod tests {
         assert_eq!(seeded.docs_path, directory.path().join("notes/docs.md"));
         let seeded_docs = fs::read_to_string(&seeded.docs_path)?;
         assert!(seeded_docs.contains("```mermaid\nflowchart LR"));
+        for section in [
+            "## Start anywhere",
+            "## Notes, files, and Markdown",
+            "## Links that stay useful",
+            "## Recover and move your workspace",
+            "## Work with trusted agents",
+        ] {
+            assert!(
+                seeded_docs.contains(section),
+                "missing onboarding section: {section}"
+            );
+        }
         let embeds = crate::board::projection::parse_board_view_embeds(&seeded_docs);
         assert_eq!(embeds.len(), 1);
         assert_eq!(embeds[0].board_path, vec![STARTER_BOARD_TITLE]);
@@ -490,6 +595,8 @@ mod tests {
                 "Start here",
                 "Shape a workflow",
                 "Connect notes + boards",
+                "Work faster",
+                "Keep it safe",
                 "Make it yours"
             ]
         );
@@ -500,7 +607,7 @@ mod tests {
                 .all(&db)
                 .await?
                 .len(),
-            9
+            16
         );
 
         let snapshot = crate::board::load_board_snapshot(&db, seeded.starter_board.id).await?;
@@ -530,8 +637,8 @@ mod tests {
         assert_eq!(properties.definitions.len(), 1);
         assert_eq!(properties.definitions[0].name, "Area");
         assert_eq!(properties.definitions[0].kind, PropertyKind::Select);
-        assert_eq!(properties.definitions[0].options.len(), 3);
-        assert_eq!(properties.values.len(), 9);
+        assert_eq!(properties.definitions[0].options.len(), 5);
+        assert_eq!(properties.values.len(), 16);
 
         let views =
             crate::board::properties::load_board_views(&db, i64::from(seeded.starter_board.id))
@@ -560,7 +667,7 @@ mod tests {
             anyhow::bail!("starter board view should produce an embedded projection");
         };
         assert_eq!(projection.view_name.as_deref(), Some("Feature tour"));
-        assert_eq!(projection.matching_card_count, 9);
+        assert_eq!(projection.matching_card_count, 16);
         assert!(
             projection
                 .lists
