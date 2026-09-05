@@ -1,11 +1,15 @@
+# Testing
+
+**Contents:** [Overview](#overview) · [Core Testing Infrastructure](#core-testing-infrastructure) · [Additional Resources](#additional-resources)
 
 ## Overview
 
-GPUI provides a comprehensive testing framework that allows you to test UI components, async operations, and distributed systems. Tests run on a single-threaded executor that provides deterministic execution and the ability to test complex async scenarios. GPUI tests use the `#[gpui::test]` attribute and work with `TestAppContext` for basic testing and `VisualTestContext` for window-dependent tests.
+GPUI provides a comprehensive testing framework that allows you to test UI components, async operations, and distributed systems. Tests run on a single-threaded executor that provides deterministic execution and the ability to test complex async scenarios. GPUI tests use the `#[gpui_kit::test]` attribute and work with `TestAppContext` for basic testing and `VisualTestContext` for window-dependent tests.
 
 ### Rules
 
-- If test does not require windows or rendering, we can avoid use `[gpui::test]` and `TestAppContext`, just write simple rust test.
+- `#[gpui_kit::test]` is GPUI's test attribute reached through the umbrella crate. It needs the `test-support` feature: add `gpui-kit = { version = "...", features = ["test-support"] }` under `[dev-dependencies]`.
+- If the test does not need windows or rendering, skip `#[gpui_kit::test]` and `TestAppContext` and write a plain `#[test]`.
 
 ## Core Testing Infrastructure
 
@@ -14,7 +18,7 @@ GPUI provides a comprehensive testing framework that allows you to test UI compo
 #### Basic Test
 
 ```rust
-#[gpui::test]
+#[gpui_kit::test]
 fn my_test(cx: &mut TestAppContext) {
     // Test implementation
 }
@@ -23,7 +27,7 @@ fn my_test(cx: &mut TestAppContext) {
 #### Async Test
 
 ```rust
-#[gpui::test]
+#[gpui_kit::test]
 async fn my_async_test(cx: &mut TestAppContext) {
     // Async test implementation
 }
@@ -32,7 +36,7 @@ async fn my_async_test(cx: &mut TestAppContext) {
 #### Property Test with Iterations
 
 ```rust
-#[gpui::test(iterations = 10)]
+#[gpui_kit::test(iterations = 10)]
 fn my_property_test(cx: &mut TestAppContext, mut rng: StdRng) {
     // Property testing with random data
 }
@@ -45,7 +49,7 @@ fn my_property_test(cx: &mut TestAppContext, mut rng: StdRng) {
 `TestAppContext` provides access to GPUI's core functionality without windows:
 
 ```rust
-#[gpui::test]
+#[gpui_kit::test]
 fn test_entity_operations(cx: &mut TestAppContext) {
     // Create entities
     let entity = cx.new(|cx| MyComponent::new(cx));
@@ -67,7 +71,7 @@ fn test_entity_operations(cx: &mut TestAppContext) {
 `VisualTestContext` extends `TestAppContext` with window support:
 
 ```rust
-#[gpui::test]
+#[gpui_kit::test]
 fn test_with_window(cx: &mut TestAppContext) {
     // Create window with component
     let window = cx.update(|cx| {

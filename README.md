@@ -1,6 +1,6 @@
 # Castle
 
-Castle is a native note-taking and kanban board app built with Rust, [GPUI](https://www.gpui.rs/), and [GPUI Components](https://github.com/longbridge/gpui-component).
+Castle is a native note-taking and kanban board app built with Rust and [GPUI Kit](https://github.com/longbridge/gpui-kit).
 
 ## Download
 

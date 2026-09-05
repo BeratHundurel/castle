@@ -1,11 +1,19 @@
 ---
 name: gpui
-description: GPUI framework knowledge covering actions/keybindings, async/background tasks, context management (App/Window/Context<T>/AsyncApp), custom elements (low-level Element trait), entity state management, event system, focus handling, global state, layout/styling (flexbox/CSS-like), and testing. Use when working with any GPUI framework concept, building GPUI applications, or needing guidance on GPUI-specific APIs and patterns.
+description: Build and maintain Castle's GPUI Kit UI, including component state, themes, overlays, actions, async tasks, entities, focus, layout, custom elements, and tests. Use for GPUI framework work and dependency migrations; use design for visual direction.
 ---
+
+## GPUI Kit
+
+Castle consumes GPUI through `gpui-kit`. Read
+[GPUI Kit integration](references/gpui-kit.md) for dependency setup, bootstrap,
+component documentation, and the upstream skill sources. Use `gpui_kit::` for
+GPUI types and macros, `gpui_kit::component::` for styled components, and
+`gpui_kit::base::` for unstyled primitives.
 
 ## Castle Conventions
 
-For application work, use GPUI Component's semantic controls and Actions rather than custom clickable `div`s or duplicate command mutations. A desktop command should share its implementation across toolbar, menu, context menu, and shortcut.
+For application work, use GPUI Kit's semantic controls and Actions rather than custom clickable `div`s or duplicate command mutations. A desktop command should share its implementation across toolbar, menu, context menu, and shortcut.
 
 - Give repeated or retained interactive elements stable domain-based `ElementId`s. Never derive them from mutable labels, list indexes, or render-time generation.
 - Keep `render` declarative and side-effect-free. Do not recreate retained entities, subscriptions, focus handles, or expensive data per frame. Use `RenderOnce` for value-like presentation and `Entity<T>` only when behavior must persist.
@@ -34,7 +42,7 @@ Load the relevant reference file based on the task:
 | Layout, measurement & scrolling | [layout-measurement-scroll.md](references/layout-measurement-scroll.md) | Geometry-dependent behavior, prepaint bounds, alignment, overlays, scroll ownership                 |
 | Performance & failure modes     | [performance.md](references/performance.md)                             | Render hot paths, notification ownership, retained state, virtualization, caching, closure captures |
 | ElementId                       | [element-id.md](references/element-id.md)                               | `ElementId`, `.id()`, uniqueness rules, stateful elements                                           |
-| Testing                         | [test.md](references/test.md)                                           | `#[gpui::test]`, `TestAppContext`, `VisualTestContext`                                              |
+| Testing                         | [test.md](references/test.md)                                           | `#[gpui_kit::test]`, `TestAppContext`, `VisualTestContext`                                              |
 
 ## Extended References
 

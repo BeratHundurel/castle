@@ -89,9 +89,9 @@ for item in items {
     div().id(item.id)
 }
 
-// Use descriptive IDs for debugging
-Input::new("search-input")
-Select::new("country-select")
+// Stateful controls receive retained entities, not string IDs
+Input::new(&search_input)
+Select::new(&country_select)
 ```
 
 Numeric and index-based IDs remain valid API inputs, but use a list index only
