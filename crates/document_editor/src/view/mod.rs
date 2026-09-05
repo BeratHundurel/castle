@@ -6,9 +6,7 @@ mod status_bar;
 
 pub(super) use preview::prepare_markdown_preview_sections;
 
-use gpui::prelude::FluentBuilder as _;
-use gpui::*;
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, ElementExt as _, Icon, IconName, Selectable as _,
     Sizable as _,
     animation::ease_in_out_cubic,
@@ -22,6 +20,8 @@ use gpui_component::{
     tooltip::Tooltip,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
 use std::{collections::HashSet, ops::Range, path::Path};
 
 use super::action::{FormatDocument, ToggleFocusMode, ToggleTypewriterScrolling, ToggleZenMode};
@@ -793,7 +793,7 @@ fn reserves_disclosure_space(kind: DocumentKind, has_children: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Bounds, point, px, rems, size};
+    use gpui_kit::{Bounds, point, px, rems, size};
 
     use super::{
         DocumentKind, MarkdownPreviewVirtualization, SplitLayout, markdown_preview_block_gap,

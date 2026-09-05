@@ -1,4 +1,4 @@
-use gpui::{App, AsKeystroke as _, Global, KeyBinding, SharedString};
+use gpui_kit::{App, AsKeystroke as _, Global, KeyBinding, SharedString};
 use settings::ShortcutReference;
 
 use command_palette::{

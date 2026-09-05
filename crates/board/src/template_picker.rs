@@ -1,8 +1,4 @@
-use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, SharedString, Styled, Window, div, prelude::FluentBuilder as _, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable as _, IconName, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::{DialogClose, DialogFooter},
@@ -10,6 +6,10 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement as _,
     v_flex,
+};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
+    ParentElement, SharedString, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use storage::board::templates::{BoardTemplate, BoardTemplateId};
 
@@ -216,7 +216,7 @@ impl BoardTemplatePicker {
                     .child(
                         div()
                             .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child("Board name"),
                     )
                     .child(Input::new(&picker.title_input))
@@ -244,7 +244,7 @@ impl BoardTemplatePicker {
                                     .child(
                                         div()
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                             .child("Start from a template"),
                                     )
                                     .when(picker.loading_custom, |this| {
@@ -326,7 +326,7 @@ impl BoardTemplatePicker {
                                                     .child(
                                                         div()
                                                             .text_sm()
-                                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                                             .child(template.name),
                                                     )
                                                     .child(
@@ -671,8 +671,8 @@ impl BoardTemplatePicker {
 mod tests {
     use super::*;
 
-    use gpui::{Render, TestAppContext, VisualTestContext, size};
-    use gpui_component::Root;
+    use gpui_kit::component::Root;
+    use gpui_kit::{Render, TestAppContext, VisualTestContext, size};
 
     struct EmptyView;
 
@@ -685,12 +685,12 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn template_picker_footer_reaches_the_dialog_bottom(cx: &mut TestAppContext) {
         let mut picker = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.open_window(Default::default(), |window, cx| {
                 let templates = storage::board::templates::built_in_templates();
                 let selected_key = templates[0].id.key();

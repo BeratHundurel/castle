@@ -1,7 +1,7 @@
-use gpui::{Action, KeyBinding};
+use gpui_kit::{Action, KeyBinding};
 use serde::Deserialize;
 
-gpui::actions!(
+gpui_kit::actions!(
     document_editor,
     [
         FormatDocument,
@@ -109,7 +109,7 @@ pub enum VimKey {
     Escape,
 }
 
-gpui::actions!(
+gpui_kit::actions!(
     document_outline,
     [
         OutlinePrevious,

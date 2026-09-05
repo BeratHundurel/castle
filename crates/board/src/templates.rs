@@ -1,5 +1,4 @@
-use gpui::{AppContext as _, Context, ParentElement, Styled, Window};
-use gpui_component::{
+use gpui_kit::component::{
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::{
@@ -9,6 +8,7 @@ use gpui_component::{
     notification::Notification,
     v_flex,
 };
+use gpui_kit::{AppContext as _, Context, ParentElement, Styled, Window};
 
 use super::BoardView;
 use runtime::AppRuntime;
@@ -32,7 +32,7 @@ impl BoardView {
 
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .w(gpui::px(520.))
+                .w(gpui_kit::px(520.))
                 .on_ok({
                     let board_view = board_view.clone();
                     let name_input = dialog_input.clone();

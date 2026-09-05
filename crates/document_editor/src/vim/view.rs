@@ -16,7 +16,7 @@ impl DocumentEditorView {
         )
     }
 
-    pub(crate) fn vim_visual_range(&self, cx: &gpui::App) -> Option<Range<usize>> {
+    pub(crate) fn vim_visual_range(&self, cx: &gpui_kit::App) -> Option<Range<usize>> {
         if !self.vim_state.state.enabled || !self.vim_state.state.mode.is_visual() {
             return None;
         }
@@ -255,7 +255,7 @@ impl DocumentEditorView {
 
     pub(crate) fn on_action_vim_insert_escape(
         &mut self,
-        _: &gpui_component::input::Escape,
+        _: &gpui_kit::component::input::Escape,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

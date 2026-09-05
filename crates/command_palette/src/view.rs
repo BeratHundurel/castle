@@ -1,14 +1,14 @@
-use gpui::{
-    ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
-    relative,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::Input,
     v_flex,
+};
+use gpui_kit::{
+    ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder as _, px,
+    relative,
 };
 
 use crate::{CommandPaletteMode, CommandPaletteView, PaletteCommand};
@@ -17,7 +17,7 @@ impl CommandPaletteView {
     pub(crate) fn render_command_palette_overlay(
         &self,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         if self.mode == CommandPaletteMode::Search {
             return self.render_workspace_search_overlay(cx);
         }
@@ -73,7 +73,7 @@ impl CommandPaletteView {
                                 div()
                                     .flex_1()
                                     .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(theme.popover_foreground)
                                     .child(title),
                             )
@@ -132,7 +132,7 @@ impl CommandPaletteView {
             .into_any_element()
     }
 
-    fn render_command_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_command_results(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let commands = self.command_palette_commands();
         let theme = cx.theme().clone();
 
@@ -165,7 +165,7 @@ impl CommandPaletteView {
             .into_any_element()
     }
 
-    fn render_theme_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_theme_results(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let themes = self.filtered_theme_names(cx);
         let current_theme = cx.theme().theme_name().clone();
         let theme = cx.theme().clone();
@@ -212,7 +212,7 @@ impl CommandPaletteView {
         command: PaletteCommand,
         is_selected: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let label = command.label.clone();
         let subtitle = command.subtitle.clone();
@@ -279,7 +279,7 @@ impl CommandPaletteView {
         is_current: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let label = theme_name.clone();
 
@@ -335,7 +335,7 @@ impl CommandPaletteView {
 }
 
 impl Render for CommandPaletteView {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut gpui_kit::Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.open {
             self.render_command_palette_overlay(cx)
         } else {

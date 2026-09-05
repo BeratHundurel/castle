@@ -1,8 +1,4 @@
-use gpui::{
-    AppContext as _, Context, ParentElement as _, SharedString, Styled as _, Window,
-    prelude::FluentBuilder as _,
-};
-use gpui_component::{
+use gpui_kit::component::{
     IndexPath, WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::{
@@ -13,6 +9,10 @@ use gpui_component::{
     searchable_list::{SearchableListItem, SearchableVec},
     select::{Select, SelectState},
     v_flex,
+};
+use gpui_kit::{
+    AppContext as _, Context, ParentElement as _, SharedString, Styled as _, Window,
+    prelude::FluentBuilder as _,
 };
 
 use super::AppShell;
@@ -152,7 +152,7 @@ impl AppShell {
 
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .w(gpui::px(560.))
+                .w(gpui_kit::px(560.))
                 .on_ok({
                     let app = app.clone();
                     let select = dialog_select.clone();
@@ -403,7 +403,7 @@ impl AppShell {
         let dialog_choices = choices.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .w(gpui::px(560.))
+                .w(gpui_kit::px(560.))
                 .on_ok({
                     let app = app.clone();
                     let select = dialog_select.clone();

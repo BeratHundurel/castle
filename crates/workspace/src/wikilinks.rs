@@ -1,13 +1,13 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
-use gpui::{
-    App, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _, Styled as _,
-    StyledText, Task, UnderlineStyle, Window, div, prelude::FluentBuilder as _,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _,
     input::{CompletionProvider, Rope, RopeExt as _},
     text::{MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node},
+};
+use gpui_kit::{
+    App, FontWeight, HighlightStyle, InteractiveText, IntoElement, ParentElement as _, Styled as _,
+    StyledText, Task, UnderlineStyle, Window, div, prelude::FluentBuilder as _,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, TextEdit,
@@ -316,7 +316,12 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
         })
     }
 
-    fn render(&self, node: &MarkdownNode, _: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(
+        &self,
+        node: &MarkdownNode,
+        _: &mut Window,
+        cx: &mut gpui_kit::App,
+    ) -> impl IntoElement {
         let Some(block) = node.data::<WikiLinkPreviewBlock>() else {
             return div().into_any_element();
         };
@@ -353,7 +358,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
                     }),
                     font_weight: Some(FontWeight::MEDIUM),
                     underline: resolved.then_some(UnderlineStyle {
-                        thickness: gpui::px(1.),
+                        thickness: gpui_kit::px(1.),
                         color: Some(cx.theme().link),
                         wavy: false,
                     }),

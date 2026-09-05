@@ -1,4 +1,4 @@
-use gpui::{Hsla, Rgba};
+use gpui_kit::{Hsla, Rgba};
 
 const MINIMUM_TEXT_CONTRAST: f32 = 4.5;
 
@@ -58,7 +58,7 @@ fn linear_channel(channel: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use gpui::hsla;
+    use gpui_kit::hsla;
 
     use super::*;
 

@@ -1,6 +1,5 @@
 use chrono::NaiveDate;
-use gpui::{prelude::FluentBuilder, *};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants},
     calendar::Date,
@@ -14,6 +13,7 @@ use gpui_component::{
     scroll::ScrollableElement as _,
     v_flex,
 };
+use gpui_kit::{prelude::FluentBuilder, *};
 use storage::board::properties::{
     BoardViewConfig, FilterOperand, FilterOperator, PropertyKey, PropertyKind, PropertyValue,
     SortDirection, ViewFilter, ViewSort,

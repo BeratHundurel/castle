@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_kit::*;
 
 const ENTRY_PREVIEW_WIDTH: f32 = 304.;
 const CARD_PREVIEW_WIDTH: f32 = 320.;

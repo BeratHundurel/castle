@@ -16,7 +16,11 @@ members = [
     "crates/mcp_server",
 ]
 default-members = ["crates/app"]
+exclude = ["vendor/gpui-component"]
 resolver = "2"
+
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
 
 [workspace.package]
 version = "0.4.0"
@@ -24,11 +28,8 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-gpui = { git = "https://github.com/zed-industries/zed"}
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
-reqwest_client = { git = "https://github.com/zed-industries/zed"}
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+gpui-kit = "0.6.0"
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.1" }
 sea-orm = { version = "2.0.2", features = [ "sqlx-sqlite", "runtime-tokio", "macros" ] }
 tokio = { version = "1.53.1", features = ["fs", "macros", "rt-multi-thread"] }
 anyhow = "1.0"
@@ -53,8 +54,8 @@ debug = "limited"
 split-debuginfo = "unpacked"
 
 [profile.dev.package]
-gpui = { opt-level = 3 }
-gpui_platform = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
 
 [profile.release]
 opt-level = 3

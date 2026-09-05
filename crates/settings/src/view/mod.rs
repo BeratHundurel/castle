@@ -1,9 +1,4 @@
-use gpui::{
-    App, AppContext as _, Axis, Context, Entity, IntoElement, Keystroke, ParentElement,
-    SharedString, StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
-    px, rems,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable as _, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry,
     WindowExt as _,
     button::Button,
@@ -13,6 +8,11 @@ use gpui_component::{
     searchable_list::{SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+};
+use gpui_kit::{
+    App, AppContext as _, Axis, Context, Entity, IntoElement, Keystroke, ParentElement,
+    SharedString, StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
+    px, rems,
 };
 
 use std::{rc::Rc, sync::Arc};
@@ -341,7 +341,7 @@ fn settings_header_style(sidebar_width: f32) -> StyleRefinement {
     StyleRefinement::default().w(px(search_width)).max_w_full()
 }
 
-fn settings_sidebar_style(background: gpui::Hsla, border: gpui::Hsla) -> StyleRefinement {
+fn settings_sidebar_style(background: gpui_kit::Hsla, border: gpui_kit::Hsla) -> StyleRefinement {
     StyleRefinement::default()
         .bg(background)
         .border_color(border)
@@ -644,21 +644,21 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                 SettingGroup::new()
                     .title("Castle")
                     .items(vec![SettingItem::render(|options, _, cx| {
-                        gpui_component::h_flex()
+                        gpui_kit::component::h_flex()
                             .w_full()
                             .items_center()
                             .justify_between()
                             .gap_3()
                             .child(
-                                gpui_component::v_flex().gap_1().child("Castle").child(
-                                    gpui::div()
+                                gpui_kit::component::v_flex().gap_1().child("Castle").child(
+                                    gpui_kit::div()
                                         .text_sm()
                                         .text_color(cx.theme().muted_foreground)
                                         .child("A private notes and kanban workspace."),
                                 ),
                             )
                             .child(
-                                gpui_component::button::Button::new("settings-about-version")
+                                gpui_kit::component::button::Button::new("settings-about-version")
                                     .label(env!("CARGO_PKG_VERSION"))
                                     .outline()
                                     .with_size(options.size())
@@ -701,13 +701,13 @@ fn agent_access_item(settings: Entity<SettingsView>) -> SettingItem {
         };
         let stacked = settings_row_is_stacked(options.layout());
 
-        gpui_component::h_flex()
+        gpui_kit::component::h_flex()
             .w_full()
             .gap_4()
             .when(stacked, |this| this.flex_col().items_start())
             .when(!stacked, |this| this.items_center().justify_between())
             .child(
-                gpui_component::v_flex()
+                gpui_kit::component::v_flex()
                     .min_w_0()
                     .when(!stacked, |this| this.flex_1())
                     .when(stacked, |this| this.w_full())
@@ -746,13 +746,13 @@ fn workspace_archive_item(settings: Entity<SettingsView>) -> SettingItem {
         let export_workspace = integration.export_workspace.clone();
         let stacked = settings_row_is_stacked(options.layout());
 
-        gpui_component::h_flex()
+        gpui_kit::component::h_flex()
             .w_full()
             .gap_4()
             .when(stacked, |this| this.flex_col().items_start())
             .when(!stacked, |this| this.items_center().justify_between())
             .child(
-                gpui_component::v_flex()
+                gpui_kit::component::v_flex()
                     .min_w_0()
                     .when(!stacked, |this| this.flex_1())
                     .when(stacked, |this| this.w_full())
@@ -766,7 +766,7 @@ fn workspace_archive_item(settings: Entity<SettingsView>) -> SettingItem {
                     ),
             )
             .child(
-                gpui_component::h_flex()
+                gpui_kit::component::h_flex()
                     .flex_shrink_0()
                     .gap_2()
                     .child(
@@ -815,7 +815,7 @@ fn shortcut_groups(settings: &Entity<SettingsView>, cx: &App) -> Vec<SettingGrou
                 .title(shortcut_context_name(&context))
                 .items(shortcuts.into_iter().map(|shortcut| {
                     SettingItem::render(move |_, _, cx| {
-                        gpui_component::h_flex()
+                        gpui_kit::component::h_flex()
                             .w_full()
                             .min_h(rems(2.25))
                             .justify_between()
@@ -829,13 +829,16 @@ fn shortcut_groups(settings: &Entity<SettingsView>, cx: &App) -> Vec<SettingGrou
                                     .child(shortcut.action.clone()),
                             )
                             .child(
-                                gpui_component::h_flex().flex_shrink_0().gap_1().children(
-                                    shortcut
-                                        .keystrokes
-                                        .iter()
-                                        .cloned()
-                                        .map(|stroke| Kbd::new(stroke).outline()),
-                                ),
+                                gpui_kit::component::h_flex()
+                                    .flex_shrink_0()
+                                    .gap_1()
+                                    .children(
+                                        shortcut
+                                            .keystrokes
+                                            .iter()
+                                            .cloned()
+                                            .map(|stroke| Kbd::new(stroke).outline()),
+                                    ),
                             )
                     })
                 }))
@@ -991,8 +994,8 @@ mod tests {
 
     #[test]
     fn settings_sidebar_uses_the_dialog_background() {
-        let background = gpui::hsla(0.6, 0.2, 0.15, 1.0);
-        let border = gpui::hsla(0.6, 0.1, 0.3, 1.0);
+        let background = gpui_kit::hsla(0.6, 0.2, 0.15, 1.0);
+        let border = gpui_kit::hsla(0.6, 0.1, 0.3, 1.0);
         let style = settings_sidebar_style(background, border);
 
         assert_eq!(

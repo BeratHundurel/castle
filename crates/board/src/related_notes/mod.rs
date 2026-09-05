@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use gpui::{AppContext as _, prelude::FluentBuilder, *};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -9,6 +8,7 @@ use gpui_component::{
     popover::Popover,
     v_flex,
 };
+use gpui_kit::{AppContext as _, prelude::FluentBuilder, *};
 
 use runtime::AppRuntime;
 

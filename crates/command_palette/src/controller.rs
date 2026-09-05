@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use gpui::{Context, SharedString, Window};
-use gpui_component::ActiveTheme as _;
+use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::{Context, SharedString, Window};
 use runtime::AppRuntime;
 use settings::AppSettings;
 use storage::workspace::search;
@@ -348,14 +348,14 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use entity::note;
-    use gpui::AppContext as _;
+    use gpui_kit::AppContext as _;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
 
     use super::*;
 
-    #[gpui::test]
-    fn workspace_search_applies_results_after_input_changes(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn workspace_search_applies_results_after_input_changes(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -388,19 +388,19 @@ mod tests {
 
         let mut palette = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(app_runtime);
             cx.open_window(Default::default(), |window, cx| {
                 let view = CommandPaletteView::view(window, cx);
                 palette = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("search test window should open")
         });
         let palette = palette.expect("command palette should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|window, cx| {
             palette.update(cx, |palette, cx| {

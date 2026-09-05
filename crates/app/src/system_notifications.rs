@@ -25,7 +25,7 @@ impl NotificationGateway for SystemNotificationGateway {
     }
 }
 
-pub fn install_board_gateway(cx: &mut gpui::App) {
+pub fn install_board_gateway(cx: &mut gpui_kit::App) {
     ::board::init_with_notification_gateway(cx, Arc::new(SystemNotificationGateway));
 }
 

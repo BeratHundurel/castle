@@ -1,5 +1,4 @@
-use gpui::{Context, ParentElement, SharedString, Styled, Window};
-use gpui_component::{
+use gpui_kit::component::{
     WindowExt,
     button::{Button, ButtonVariants},
     dialog::{
@@ -8,6 +7,7 @@ use gpui_component::{
     input::{Input, Textarea},
     v_flex,
 };
+use gpui_kit::{Context, ParentElement, SharedString, Styled, Window};
 use runtime::AppRuntime;
 
 use super::{BoardView, BoardViewEvent, drag::*, model::*};
@@ -71,7 +71,7 @@ fn normalize_entry_positions(cards: &mut [BoardListState]) -> Vec<(u32, u32, i32
 mod tests {
     use anyhow::Result;
     use entity::{board, card, entry};
-    use gpui::SharedString;
+    use gpui_kit::SharedString;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use storage::board::positions::{BoardLayoutPersistence, BoardLayoutSnapshot};

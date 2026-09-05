@@ -9,11 +9,8 @@ name = "castle"
 path = "src/main.rs"
 
 [dependencies]
-gpui.workspace = true
-gpui_platform.workspace = true
+gpui-kit.workspace = true
 reqwest_client.workspace = true
-gpui-component.workspace = true
-gpui-component-assets.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true
@@ -40,7 +37,7 @@ windows = { version = "0.62.2", features = ["UI_Notifications"] }
 tauri-winrt-notification = "0.8.1"
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
 storage = { path = "../storage", features = ["test-support"] }
 tempfile = "3.23"
 sea-orm.workspace = true

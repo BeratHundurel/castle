@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use gpui::{Context, PathPromptOptions, SharedString, Window};
-use gpui_component::{WindowExt as _, notification::Notification};
+use gpui_kit::component::{WindowExt as _, notification::Notification};
+use gpui_kit::{Context, PathPromptOptions, SharedString, Window};
 
 use runtime::AppRuntime;
 use std::path::Path;

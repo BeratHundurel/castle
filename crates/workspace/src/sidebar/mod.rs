@@ -8,8 +8,8 @@ mod mutations;
 mod render;
 mod workspace_rows;
 
-use gpui::*;
-use gpui_component::input::{InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::*;
 use model::*;
 
 use settings::AppSettings;

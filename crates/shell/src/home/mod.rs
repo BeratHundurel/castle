@@ -1,6 +1,6 @@
 use chrono::{Local, TimeZone as _};
-use gpui::StatefulInteractiveElement as _;
-use gpui_component::{
+use gpui_kit::StatefulInteractiveElement as _;
+use gpui_kit::component::{
     Icon, Selectable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::DialogButtonProps,
@@ -47,7 +47,7 @@ fn section_title(
         .child(
             div()
                 .text_lg()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                 .child(title),
         )
         .child(
@@ -76,7 +76,7 @@ fn empty_state(
         .child(
             div()
                 .text_sm()
-                .font_weight(gpui::FontWeight::MEDIUM)
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
                 .text_color(cx.theme().foreground)
                 .child(title),
         )
@@ -85,7 +85,7 @@ fn empty_state(
 
 fn inline_retry(
     error: SharedString,
-    retry: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    retry: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut Context<AppShell>,
 ) -> impl IntoElement {
     h_flex()
@@ -183,8 +183,8 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    fn rapid_tab_churn_keeps_database_and_views_responsive(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn rapid_tab_churn_keeps_database_and_views_responsive(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -255,19 +255,19 @@ mod tests {
         let app_db = runtime::AppRuntime::new(db.clone(), PathBuf::new());
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(settings::AppSettings::load(settings_dir.path()));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("restore test window should open")
         });
         let shell = shell.expect("app shell should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
@@ -536,8 +536,10 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn reopening_many_note_tabs_keeps_the_ui_executor_responsive(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn reopening_many_note_tabs_keeps_the_ui_executor_responsive(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -577,19 +579,19 @@ mod tests {
 
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(settings::AppSettings::load(settings_dir.path()));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("many-note test window should open")
         });
         let shell = shell.expect("app shell should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for cycle in 0..2 {
             cx.update(|window, cx| {

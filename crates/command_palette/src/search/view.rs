@@ -1,10 +1,10 @@
-use gpui::{
-    Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, relative,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IconName, Sizable as _, h_flex, input::Input,
     scroll::ScrollableElement as _, text::TextView, v_flex,
+};
+use gpui_kit::{
+    Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    StatefulInteractiveElement, Styled, div, prelude::FluentBuilder, px, relative,
 };
 
 use super::preview::{
@@ -20,7 +20,7 @@ impl CommandPaletteView {
     pub(crate) fn render_workspace_search_overlay(
         &self,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let query_is_empty = self.query.trim().is_empty();
         let result_count = if query_is_empty {
@@ -76,7 +76,7 @@ impl CommandPaletteView {
                                     .items_center()
                                     .gap_2()
                                     .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(theme.primary)
                                     .child("find")
                                     .child(div().text_color(theme.muted_foreground).child(">")),
@@ -114,7 +114,7 @@ impl CommandPaletteView {
             .into_any_element()
     }
 
-    pub(crate) fn render_search_results(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(crate) fn render_search_results(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let query_is_empty = self.query.trim().is_empty();
         let result_count = self.search_results.len();
@@ -239,7 +239,7 @@ impl CommandPaletteView {
         &self,
         result: Option<SearchResult>,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let Some(result) = result else {
             return div().size_full().into_any_element();
@@ -312,7 +312,7 @@ impl CommandPaletteView {
         block_index: usize,
         block: SearchPreviewBlock,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
 
         if block.is_match {
@@ -342,7 +342,7 @@ impl CommandPaletteView {
                 "search-result-preview-markdown-{}-{}",
                 result.item_id, block_index
             ),
-            gpui::SharedString::from(block.markdown),
+            gpui_kit::SharedString::from(block.markdown),
         )
         .style(search_preview_markdown_style())
         .scrollable(false)
@@ -356,7 +356,7 @@ impl CommandPaletteView {
         result: SearchResult,
         is_selected: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let row_text = search_result_row_text(&result);
         let label = highlighted_exact_search_text(&row_text, &self.query, cx);
@@ -396,9 +396,9 @@ impl CommandPaletteView {
                     .gap_0p5()
                     .text_sm()
                     .font_weight(if is_selected {
-                        gpui::FontWeight::SEMIBOLD
+                        gpui_kit::FontWeight::SEMIBOLD
                     } else {
-                        gpui::FontWeight::NORMAL
+                        gpui_kit::FontWeight::NORMAL
                     })
                     .line_height(relative(1.35))
                     .text_ellipsis()
@@ -408,7 +408,7 @@ impl CommandPaletteView {
                         this.child(
                             div()
                                 .text_xs()
-                                .font_weight(gpui::FontWeight::NORMAL)
+                                .font_weight(gpui_kit::FontWeight::NORMAL)
                                 .text_color(theme.muted_foreground)
                                 .text_ellipsis()
                                 .overflow_hidden()
@@ -420,7 +420,7 @@ impl CommandPaletteView {
     }
 }
 
-fn search_footer_hint(icon: IconName, label: &'static str) -> gpui::AnyElement {
+fn search_footer_hint(icon: IconName, label: &'static str) -> gpui_kit::AnyElement {
     h_flex()
         .items_center()
         .gap_1()

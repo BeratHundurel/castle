@@ -22,10 +22,10 @@ use std::{
     sync::Arc,
 };
 
-use gpui::*;
-use gpui_component::calendar::Date;
-use gpui_component::date_picker::{DatePickerEvent, DatePickerState};
-use gpui_component::input::{EditorState, InputEvent, InputState, TextareaState};
+use gpui_kit::component::calendar::Date;
+use gpui_kit::component::date_picker::{DatePickerEvent, DatePickerState};
+use gpui_kit::component::input::{EditorState, InputEvent, InputState, TextareaState};
+use gpui_kit::*;
 use model::*;
 use state::*;
 

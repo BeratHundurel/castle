@@ -69,7 +69,7 @@ pub(super) struct AnalysisState {
     pub(super) preview_bounds: Option<Bounds<Pixels>>,
     pub(super) preview_bounds_mode: Option<EditorMode>,
     pub(super) preview_sections: Arc<Vec<SharedString>>,
-    pub(super) preview_list_state: gpui::ListState,
+    pub(super) preview_list_state: gpui_kit::ListState,
     pub(super) preview_font_size_bits: Cell<u64>,
     pub(super) outline_scroll_handle: UniformListScrollHandle,
     pub(super) outline_focus_handle: FocusHandle,
@@ -107,7 +107,7 @@ pub(super) struct WritingExperienceState {
     pub(super) focus_mode: bool,
     pub(super) typewriter_scrolling: bool,
     pub(super) focused_range: Option<Range<usize>>,
-    pub(super) focus_decorations: gpui_component::input::TextDecorationCollection,
+    pub(super) focus_decorations: gpui_kit::component::input::TextDecorationCollection,
 }
 
 pub(super) struct ZenModeState {

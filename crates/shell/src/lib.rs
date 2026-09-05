@@ -11,12 +11,7 @@ pub use action::{
     CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction, OpenSettingsAction,
     ToggleSidebarAction,
 };
-use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString,
-    Styled, Task, Window, div, prelude::FluentBuilder as _, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -28,6 +23,11 @@ use gpui_component::{
     notification::Notification,
     tab::{Tab, TabBar},
     v_flex,
+};
+use gpui_kit::{
+    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString,
+    Styled, Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 use storage::workspace::WorkspaceTitleTarget;

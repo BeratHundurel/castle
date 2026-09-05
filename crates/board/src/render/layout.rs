@@ -498,12 +498,12 @@ mod tests {
         BoardView,
         model::{BoardLabel, BoardListState},
     };
-    use gpui::{
+    use gpui_kit::component::v_flex;
+    use gpui_kit::{
         Context, Entity, InteractiveElement, IntoElement, ParentElement, Render, ScrollDelta,
         ScrollHandle, ScrollWheelEvent, Styled, TestAppContext, VisualTestContext, Window, div,
         point, px, size,
     };
-    use gpui_component::v_flex;
     use runtime::AppRuntime;
     use sea_orm::Database;
     use std::{path::PathBuf, sync::Arc};
@@ -541,7 +541,7 @@ mod tests {
     }
 
     fn open_board_viewport(cx: &mut TestAppContext) -> (ScrollHandle, &mut VisualTestContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::component::init);
         let scroll_handle = ScrollHandle::new();
         let test_scroll_handle = scroll_handle.clone();
         let (_, cx) = cx.add_window_view(move |_, _| HorizontalBoardViewportTest { scroll_handle });
@@ -569,8 +569,8 @@ mod tests {
         };
 
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppRuntime::new(database, PathBuf::new()));
             match cx.open_window(Default::default(), |window, cx| {
                 let view = BoardView::view(window, cx);
@@ -612,7 +612,7 @@ mod tests {
         (runtime, view, cx)
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn fixed_columns_overflow_and_add_list_can_be_revealed(cx: &mut TestAppContext) {
         let (scroll_handle, cx) = open_board_viewport(cx);
 
@@ -644,7 +644,7 @@ mod tests {
         assert!(painted_right <= scroll_area.right());
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn vertical_mouse_wheel_pans_horizontal_board(cx: &mut TestAppContext) {
         let (scroll_handle, cx) = open_board_viewport(cx);
         let viewport = scroll_handle.bounds();
@@ -662,7 +662,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn overscrolling_at_end_keeps_scroll_geometry_stable(cx: &mut TestAppContext) {
         let (scroll_handle, cx) = open_board_viewport(cx);
         let scroll_range = scroll_handle.max_offset().x;
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(scroll_handle.bounds(), viewport);
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn filter_options_have_bounded_scroll_range_and_respond_to_wheel(cx: &mut TestAppContext) {
         let (_runtime, view, mut cx) = open_filter_panel(cx);
         let scroll_handle = view.read_with(&cx, |board, _| board.filter_scroll_handle.clone());

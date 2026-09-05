@@ -548,7 +548,7 @@ impl BoardView {
 #[cfg(test)]
 mod tests {
     use super::entry_metadata_sections;
-    use gpui::{
+    use gpui_kit::{
         Context, IntoElement, Render, Styled, TestAppContext, VisualTestContext, Window, div, px,
         size,
     };
@@ -561,9 +561,9 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn metadata_sections_share_the_same_row_height(cx: &mut TestAppContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::component::init);
         let (_, cx) = cx.add_window_view(|_, _| EntryMetadataSectionsTest);
         let cx: &mut VisualTestContext = cx;
         cx.simulate_resize(size(px(800.), px(400.)));

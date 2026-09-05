@@ -1,4 +1,4 @@
-use gpui::{Context, SharedString};
+use gpui_kit::{Context, SharedString};
 use std::{future::Future, sync::Arc};
 
 use runtime::AppRuntime;
@@ -401,8 +401,8 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    fn restored_board_populates_gpui_view_without_restart(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn restored_board_populates_gpui_view_without_restart(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -455,8 +455,8 @@ mod tests {
 
         let db = AppRuntime::new(Arc::new(db), PathBuf::new());
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
@@ -481,8 +481,8 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    fn pending_reload_does_not_overwrite_a_local_card_move(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn pending_reload_does_not_overwrite_a_local_card_move(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -537,8 +537,8 @@ mod tests {
         let board_services = crate::BoardServices::new();
         let position_persistence = board_services.layout_persistence();
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(app_db);
             cx.set_global(board_services);
             cx.open_window(Default::default(), |window, cx| {
@@ -819,8 +819,8 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    fn rendered_card_drop_reorders_repeatedly_without_stalling(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn rendered_card_drop_reorders_repeatedly_without_stalling(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -871,8 +871,8 @@ mod tests {
             .expect("rendered drag setup should succeed");
 
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppRuntime::new(db, PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = super::BoardView::view(window, cx);
@@ -882,7 +882,7 @@ mod tests {
             .expect("board drag test window should open")
         });
         let view = window.root(cx).expect("board view should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..100 {
             cx.run_until_parked();
@@ -909,9 +909,21 @@ mod tests {
                 .expect("second rendered card should have bounds")
                 .center();
 
-            cx.simulate_mouse_down(source, gpui::MouseButton::Left, gpui::Modifiers::default());
-            cx.simulate_mouse_move(target, gpui::MouseButton::Left, gpui::Modifiers::default());
-            cx.simulate_mouse_up(target, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_down(
+                source,
+                gpui_kit::MouseButton::Left,
+                gpui_kit::Modifiers::default(),
+            );
+            cx.simulate_mouse_move(
+                target,
+                gpui_kit::MouseButton::Left,
+                gpui_kit::Modifiers::default(),
+            );
+            cx.simulate_mouse_up(
+                target,
+                gpui_kit::MouseButton::Left,
+                gpui_kit::Modifiers::default(),
+            );
 
             assert_eq!(
                 view.read_with(&cx, |board, _| {

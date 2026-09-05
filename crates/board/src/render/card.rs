@@ -463,7 +463,7 @@ impl BoardView {
 #[cfg(test)]
 mod tests {
     use super::{accepts_entry_card_drop, accepts_list_header_drop};
-    use gpui_component::IconName;
+    use gpui_kit::component::IconName;
     use workspace::{WorkspaceDragInfo, WorkspaceDragKind};
 
     fn workspace_drag(kind: WorkspaceDragKind) -> WorkspaceDragInfo {

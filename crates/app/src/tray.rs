@@ -2,7 +2,7 @@ use std::{rc::Rc, time::Duration};
 
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
-use gpui::{AnyWindowHandle, App, Global, Window, WindowHandle};
+use gpui_kit::{AnyWindowHandle, App, Global, Window, WindowHandle};
 use raw_window_handle::RawWindowHandle;
 use tray_icon::{
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,

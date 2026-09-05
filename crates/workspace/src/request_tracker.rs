@@ -1,4 +1,4 @@
-use gpui::Task;
+use gpui_kit::Task;
 
 #[derive(Default)]
 pub struct RequestTracker {

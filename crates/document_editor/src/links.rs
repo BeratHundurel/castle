@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, Task};
+use gpui_kit::{Context, Task};
 use runtime::AppRuntime;
 
 pub use workspace::{
@@ -141,15 +141,15 @@ impl DocumentEditorView {
 mod tests {
     use super::*;
     use entity::note;
-    use gpui::{AppContext as _, EntityInputHandler as _};
-    use gpui_component::input::{Enter, Position};
+    use gpui_kit::component::input::{Enter, Position};
+    use gpui_kit::{AppContext as _, EntityInputHandler as _};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use settings::AppSettings;
     use std::{path::PathBuf, sync::Arc};
 
-    #[gpui::test]
-    fn editor_change_populates_wikilink_completion(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn editor_change_populates_wikilink_completion(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -182,19 +182,19 @@ mod tests {
             std::env::temp_dir().join(format!("castle-wikilink-completion-{}", std::process::id()));
         let mut editor_view = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(source_id, window, cx);
                 editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("completion test window should open")
         });
         let view = editor_view.expect("document editor should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
         for _ in 0..100 {
             cx.run_until_parked();
             if view.read_with(&cx, |editor, _| {

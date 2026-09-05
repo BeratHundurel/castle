@@ -1,8 +1,8 @@
-use gpui::{
+use gpui_kit::component::{ActiveTheme, h_flex, text::TextViewStyle};
+use gpui_kit::{
     Context, HighlightStyle, IntoElement, ParentElement, SharedString, Styled, StyledText, div, px,
     relative,
 };
-use gpui_component::{ActiveTheme, h_flex, text::TextViewStyle};
 
 use storage::workspace::search::SearchResult;
 
@@ -59,7 +59,7 @@ pub(super) fn highlighted_exact_search_text(
 fn search_highlight_style(cx: &mut Context<CommandPaletteView>) -> HighlightStyle {
     HighlightStyle {
         color: Some(cx.theme().primary),
-        font_weight: Some(gpui::FontWeight::SEMIBOLD),
+        font_weight: Some(gpui_kit::FontWeight::SEMIBOLD),
         background_color: Some(cx.theme().primary.opacity(0.18)),
         ..Default::default()
     }
@@ -67,7 +67,7 @@ fn search_highlight_style(cx: &mut Context<CommandPaletteView>) -> HighlightStyl
 
 pub(super) fn search_preview_markdown_style() -> TextViewStyle {
     TextViewStyle::default()
-        .paragraph_gap(gpui::rems(0.65))
+        .paragraph_gap(gpui_kit::rems(0.65))
         .heading_font_size(|level, _| match level {
             1 => px(20.),
             2 => px(17.),
@@ -355,7 +355,7 @@ pub(super) fn render_highlighted_preview_line(
     line: &str,
     query: &str,
     cx: &mut Context<CommandPaletteView>,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let theme = cx.theme().clone();
     let trimmed = line.trim_start();
 
@@ -365,7 +365,7 @@ pub(super) fn render_highlighted_preview_line(
             .min_w_0()
             .whitespace_normal()
             .text_size(search_preview_heading_size(level))
-            .font_weight(gpui::FontWeight::BOLD)
+            .font_weight(gpui_kit::FontWeight::BOLD)
             .line_height(relative(1.28))
             .child(highlighted_preview_text(text, query, cx))
             .into_any_element();
@@ -451,7 +451,7 @@ fn highlighted_preview_text(
                 range,
                 HighlightStyle {
                     color: Some(cx.theme().primary),
-                    font_weight: Some(gpui::FontWeight::SEMIBOLD),
+                    font_weight: Some(gpui_kit::FontWeight::SEMIBOLD),
                     background_color: Some(cx.theme().primary.opacity(0.12)),
                     ..Default::default()
                 },
@@ -494,7 +494,7 @@ fn markdown_ordered_list_item(line: &str) -> Option<(String, &str)> {
     Some((format!("{marker}."), text.trim()))
 }
 
-fn search_preview_heading_size(level: usize) -> gpui::Pixels {
+fn search_preview_heading_size(level: usize) -> gpui_kit::Pixels {
     match level {
         1 => px(20.),
         2 => px(17.),

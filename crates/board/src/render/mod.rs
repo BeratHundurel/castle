@@ -1,6 +1,5 @@
 use chrono::{Local, NaiveDate};
-use gpui::{prelude::FluentBuilder, *};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     checkbox::Checkbox,
@@ -14,6 +13,7 @@ use gpui_component::{
     text::{TextView, TextViewStyle},
     v_flex,
 };
+use gpui_kit::{prelude::FluentBuilder, *};
 
 mod card;
 mod checklist;

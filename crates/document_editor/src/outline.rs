@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_kit::SharedString;
 use std::{collections::HashSet, sync::Arc};
 
 const JSON_OUTLINE_NODE_LIMIT: usize = 10_000;

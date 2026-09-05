@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::SharedString;
+use gpui_kit::SharedString;
 
 use super::renderer::is_supported_diagram;
 

@@ -1,5 +1,5 @@
-use gpui::{Context, EntityInputHandler, Focusable as _, KeyDownEvent, Window};
-use gpui_component::input::RopeExt as _;
+use gpui_kit::component::input::RopeExt as _;
+use gpui_kit::{Context, EntityInputHandler, Focusable as _, KeyDownEvent, Window};
 use std::ops::Range;
 
 use super::action::{MoveLineDown, MoveLineUp, ToggleTask};

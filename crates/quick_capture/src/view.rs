@@ -1,17 +1,17 @@
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
-use gpui::{
-    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Render, SharedString, Styled as _, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowDecorations, WindowKind, WindowOptions, div, px, size,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Escape as InputEscape, InputEvent, Textarea, TextareaState},
     v_flex,
+};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Render, SharedString, Styled as _, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowDecorations, WindowKind, WindowOptions, div, px, size,
 };
 use runtime::AppRuntime;
 use storage::{
@@ -193,7 +193,7 @@ impl QuickCaptureView {
                             .child(
                                 div()
                                     .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .child("Quick Capture"),
                             )
                             .child(
@@ -318,7 +318,7 @@ pub fn open_window(
     note_created: NoteCreatedHandler,
     set_window_visible: WindowVisibilityHandler,
     cx: &mut App,
-) -> Result<gpui::WindowHandle<QuickCaptureView>> {
+) -> Result<gpui_kit::WindowHandle<QuickCaptureView>> {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::centered(

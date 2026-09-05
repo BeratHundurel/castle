@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gpui::{App, Global, SharedString, px};
-use gpui_component::{Theme, ThemeRegistry, scroll::ScrollbarMode};
+use gpui_kit::component::{Theme, ThemeRegistry, scroll::ScrollbarMode};
+use gpui_kit::{App, Global, SharedString, px};
 use serde::{Deserialize, Serialize};
 
 use crate::persistence::{SettingsPersistence, SettingsWriteRequest};
@@ -200,11 +200,11 @@ impl AppSettings {
         self.persist_sync();
     }
 
-    pub fn sidebar_width(cx: &App) -> gpui::Pixels {
+    pub fn sidebar_width(cx: &App) -> gpui_kit::Pixels {
         px(cx.global::<Self>().values.sidebar_width as f32)
     }
 
-    pub fn set_sidebar_width(width: gpui::Pixels, cx: &mut App) {
+    pub fn set_sidebar_width(width: gpui_kit::Pixels, cx: &mut App) {
         Self::update(cx, |settings| {
             settings.values.sidebar_width = width.as_f32() as f64;
         });
@@ -592,10 +592,10 @@ fn scrollbar_show_from_key(value: &str) -> ScrollbarMode {
 mod tests {
     use super::*;
 
-    #[gpui::test]
-    fn applying_settings_updates_resizable_handle_colors(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn applying_settings_updates_resizable_handle_colors(cx: &mut gpui_kit::TestAppContext) {
         cx.update(|cx| {
-            gpui_component::init(cx);
+            gpui_kit::init(cx);
             ThemeRegistry::global_mut(cx)
                 .load_themes_from_str(include_str!("../../../themes/gruvbox.json"))
                 .expect("Gruvbox theme should load");
@@ -607,14 +607,14 @@ mod tests {
             settings.apply_to_theme(cx);
 
             assert_eq!(
-                gpui_base::Theme::global(cx)
+                gpui_kit::base::Theme::global(cx)
                     .resizable
                     .handle
                     .expect("handle should be set"),
                 Theme::global(cx).border
             );
             assert_eq!(
-                gpui_base::Theme::global(cx)
+                gpui_kit::base::Theme::global(cx)
                     .resizable
                     .active_handle
                     .expect("active handle should be set"),
@@ -741,9 +741,9 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn settings_writes_leave_foreground_free_and_latest_snapshot_wins(
-        cx: &mut gpui::TestAppContext,
+        cx: &mut gpui_kit::TestAppContext,
     ) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();

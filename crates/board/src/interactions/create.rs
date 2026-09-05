@@ -367,7 +367,7 @@ impl BoardView {
                         .gap_2()
                         .mb_3()
                         .child(Input::new(&dialog_title_input))
-                        .child(Textarea::new(&dialog_description_input).h(gpui::rems(6.))),
+                        .child(Textarea::new(&dialog_description_input).h(gpui_kit::rems(6.))),
                 )
                 .child(
                     DialogFooter::new()
@@ -420,13 +420,13 @@ fn board_list_draft(list: BoardListState) -> storage::board::commands::BoardList
 #[cfg(test)]
 mod tests {
     use crate::dialog_description_input;
-    use gpui::{
-        AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled,
-        TestAppContext, VisualTestContext, Window, div,
-    };
-    use gpui_component::{
+    use gpui_kit::component::{
         input::{Input, InputState, Textarea, TextareaState},
         v_flex,
+    };
+    use gpui_kit::{
+        AppContext as _, Context, Entity, IntoElement, ParentElement, Render, Styled,
+        TestAppContext, VisualTestContext, Window, div,
     };
 
     struct DescriptionInputHarness {
@@ -440,14 +440,14 @@ mod tests {
                 v_flex()
                     .gap_2()
                     .child(Input::new(&self.title))
-                    .child(Textarea::new(&self.description).h(gpui::rems(6.))),
+                    .child(Textarea::new(&self.description).h(gpui_kit::rems(6.))),
             )
         }
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn card_description_starts_on_the_same_line_as_the_title(cx: &mut TestAppContext) {
-        cx.update(gpui_component::init);
+        cx.update(gpui_kit::component::init);
         let mut inputs = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
             let title = cx.new(|cx| InputState::new(window, cx).default_value("Card title"));

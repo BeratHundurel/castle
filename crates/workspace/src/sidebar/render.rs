@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{prelude::FluentBuilder, *};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Collapsible, ElementExt as _, Icon, IconName, Sizable, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -12,6 +11,7 @@ use gpui_component::{
     },
     v_flex,
 };
+use gpui_kit::{prelude::FluentBuilder, *};
 
 use super::content_item::SidebarContentItem;
 use super::drag::{content_drag_info, project_drag_info};
@@ -46,7 +46,7 @@ struct DraggableProjectItem {
     default_open: bool,
     active: bool,
     is_renaming: bool,
-    rename_input: Entity<gpui_component::input::InputState>,
+    rename_input: Entity<gpui_kit::component::input::InputState>,
     is_first: bool,
     is_last: bool,
     children: Vec<DraggableContentItem>,
@@ -1075,7 +1075,7 @@ impl Render for SidebarView {
 }
 #[cfg(test)]
 mod tests {
-    use gpui::SharedString;
+    use gpui_kit::SharedString;
 
     use super::project_row_title;
 

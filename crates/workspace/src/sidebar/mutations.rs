@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{Context, SharedString, Window};
+use gpui_kit::{Context, SharedString, Window};
 
 use runtime::AppRuntime;
 use storage::time::unix_timestamp_seconds as now_ts;

@@ -1,10 +1,10 @@
-use gpui::{ClipboardItem, Context, Styled, Window};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IconName, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::DialogButtonProps,
     notification::Notification,
 };
+use gpui_kit::{ClipboardItem, Context, Styled, Window};
 use storage::workspace::trash;
 
 use super::{SidebarView, action::*};
@@ -272,7 +272,7 @@ impl SidebarView {
         &self,
         kind: trash::TrashItemKind,
         id: u32,
-        title: gpui::SharedString,
+        title: gpui_kit::SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

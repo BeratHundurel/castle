@@ -1,9 +1,9 @@
 use chrono::NaiveDate;
-use gpui::{ClipboardItem, Context, Styled, Window};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Icon, IconName, WindowExt, button::ButtonVariant, calendar::Date,
     dialog::DialogButtonProps,
 };
+use gpui_kit::{ClipboardItem, Context, Styled, Window};
 
 use crate::filters::DueDateFilter;
 use crate::{BoardView, action::*};

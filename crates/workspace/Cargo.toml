@@ -9,8 +9,7 @@ default = []
 test-support = []
 
 [dependencies]
-gpui.workspace = true
-gpui-component.workspace = true
+gpui-kit.workspace = true
 anyhow.workspace = true
 lsp-types.workspace = true
 storage = { path = "../storage" }
@@ -19,4 +18,4 @@ settings = { path = "../settings" }
 serde.workspace = true
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }

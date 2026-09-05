@@ -1,5 +1,5 @@
-use gpui::{Context, SharedString};
-use gpui_component::{IconName, ThemeRegistry};
+use gpui_kit::component::{IconName, ThemeRegistry};
+use gpui_kit::{Context, SharedString};
 
 use crate::{CommandPaletteView, PaletteCommand, PaletteCommandKind, SearchablePaletteCommand};
 

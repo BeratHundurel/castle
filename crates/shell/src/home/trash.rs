@@ -40,7 +40,7 @@ impl AppShell {
                             .child(
                                 v_flex()
                                     .gap_1()
-                                    .child(div().text_2xl().font_weight(gpui::FontWeight::SEMIBOLD).child("Trash"))
+                                    .child(div().text_2xl().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Trash"))
                                     .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Restore anything you removed, or delete it permanently.")),
                             )
                             .children((!self.trash.items.is_empty()).then(|| {
@@ -89,7 +89,7 @@ impl AppShell {
         &self,
         items: Vec<storage::workspace::trash::TrashItem>,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         if self.trash.phase.is_loading() && !self.trash.phase.has_content() {
             return v_flex()
                 .gap_2()
@@ -148,7 +148,7 @@ impl AppShell {
                                     .child(
                                         div()
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                                             .child(item.title.clone()),
                                     )
                                     .child(
@@ -231,7 +231,7 @@ impl AppShell {
                 Err(err) => {
                     this.load_trash(cx);
                     window.push_notification(
-                        gpui_component::notification::Notification::error(err.to_string()),
+                        gpui_kit::component::notification::Notification::error(err.to_string()),
                         cx,
                     );
                 }

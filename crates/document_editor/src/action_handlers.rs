@@ -1,5 +1,5 @@
-use gpui::{Context, EntityInputHandler, Window};
-use gpui_component::input::RopeExt;
+use gpui_kit::component::input::RopeExt;
+use gpui_kit::{Context, EntityInputHandler, Window};
 
 use super::action::*;
 use super::emmet::parse_emmet_abbreviation;
@@ -113,7 +113,7 @@ impl DocumentEditorView {
         if let Some(index) = self.analysis.outline_selected {
             self.analysis
                 .outline_scroll_handle
-                .scroll_to_item(index, gpui::ScrollStrategy::Top);
+                .scroll_to_item(index, gpui_kit::ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -136,7 +136,7 @@ impl DocumentEditorView {
         self.analysis.outline_selected = Some(next);
         self.analysis
             .outline_scroll_handle
-            .scroll_to_item(next, gpui::ScrollStrategy::Bottom);
+            .scroll_to_item(next, gpui_kit::ScrollStrategy::Bottom);
         cx.notify();
     }
 

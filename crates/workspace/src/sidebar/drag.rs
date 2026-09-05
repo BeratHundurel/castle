@@ -1,5 +1,5 @@
 use crate::{WorkspaceDragInfo, WorkspaceDragKind};
-use gpui::SharedString;
+use gpui_kit::SharedString;
 
 use super::content_item::SidebarContentItem;
 
@@ -18,7 +18,7 @@ pub(super) fn project_drag_info(
             item_count,
             if item_count == 1 { "item" } else { "items" }
         ),
-        gpui_component::IconName::FolderOpen,
+        gpui_kit::component::IconName::FolderOpen,
     )
 }
 

@@ -13,12 +13,12 @@ pub use action::{
 
 use std::{cell::Cell, collections::HashMap};
 
-use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, ScrollHandle, SharedString, Task, Window,
-};
-use gpui_component::{
+use gpui_kit::component::{
     IconName,
     input::{InputEvent, InputState},
+};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, EventEmitter, ScrollHandle, SharedString, Task, Window,
 };
 use storage::workspace::{WorkspaceRows, search::SearchResult};
 

@@ -1,5 +1,5 @@
-use gpui::{Context, SharedString, Task, Window};
-use gpui_component::{WindowExt as _, input::RopeExt as _, notification::Notification};
+use gpui_kit::component::{WindowExt as _, input::RopeExt as _, notification::Notification};
+use gpui_kit::{Context, SharedString, Task, Window};
 use std::{
     fs::read_to_string,
     fs::{create_dir_all, remove_file, write},

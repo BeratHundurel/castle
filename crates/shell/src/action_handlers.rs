@@ -1,4 +1,4 @@
-use gpui::{Context, Pixels, Window, px};
+use gpui_kit::{Context, Pixels, Window, px};
 
 use settings::AppSettings;
 

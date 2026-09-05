@@ -3,8 +3,8 @@
 use anyhow::Result;
 #[cfg(debug_assertions)]
 use dotenvy::dotenv;
-use gpui::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
-use gpui_component::{Root, Theme, ThemeRegistry, TitleBar};
+use gpui_kit::component::{Root, Theme, ThemeRegistry, TitleBar};
+use gpui_kit::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
 use std::{borrow::Cow, cell::RefCell, fs, rc::Rc, sync::Arc};
 use storage::{Store, StoreOptions};
 
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     #[cfg(debug_assertions)]
     let _ = dotenv();
 
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     system_notifications::start(store);
 
     app.run(move |cx| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         load_bundled_fonts(cx);
         keymap::init(cx);
 

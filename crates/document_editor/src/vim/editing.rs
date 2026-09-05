@@ -306,7 +306,7 @@ impl DocumentEditorView {
 
     pub(super) fn dispatch_input_action(
         &mut self,
-        action: Box<dyn gpui::Action>,
+        action: Box<dyn gpui_kit::Action>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

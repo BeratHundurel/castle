@@ -1,5 +1,5 @@
-use gpui::Hsla;
-use gpui_component::{
+use gpui_kit::Hsla;
+use gpui_kit::component::{
     Icon,
     menu::{DropdownMenu as _, PopupMenuItem},
 };
@@ -190,6 +190,7 @@ impl AppShell {
         let active_tab_id = self.tabs.open_tabs.get(active_index).map(|t| t.id);
 
         let tab_bar = TabBar::new("open-tabs")
+            .pill()
             .small()
             .bg(cx.theme().sidebar)
             .track_scroll(&self.tabs.tab_scroll_handle)
@@ -472,8 +473,8 @@ mod tests {
     use sea_orm::Database;
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
-    #[gpui::test]
-    fn app_shell_renders_mermaid_and_board_markdown_preview(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn app_shell_renders_mermaid_and_board_markdown_preview(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -493,8 +494,8 @@ mod tests {
 
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             let mut settings = settings::AppSettings::load(directory.path());
             settings.set_first_run_note(note_id, note_title);
             cx.set_global(settings);
@@ -506,7 +507,7 @@ mod tests {
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("preview test window should open")
         });
@@ -514,8 +515,8 @@ mod tests {
         let note_view =
             shell.read_with(cx, |shell, _| shell.tabs.note_views.get(&note_id).cloned());
         let note_view = note_view.expect("seeded note should be open");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
-        cx.simulate_resize(gpui::size(px(1_200.), px(800.)));
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(px(1_200.), px(800.)));
 
         let mut loaded = false;
         for _ in 0..150 {
@@ -533,8 +534,8 @@ mod tests {
         assert!(loaded, "seeded Markdown note should finish loading");
     }
 
-    #[gpui::test]
-    fn tab_strip_stays_before_title_bar_actions(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn tab_strip_stays_before_title_bar_actions(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -558,20 +559,20 @@ mod tests {
 
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(settings::AppSettings::load(settings_dir));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("tab layout test window should open")
         });
         let shell = shell.expect("app shell should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
-        cx.simulate_resize(gpui::size(px(1_200.), px(800.)));
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(px(1_200.), px(800.)));
 
         cx.update(|_, cx| {
             shell.update(cx, |shell, cx| {
@@ -622,7 +623,7 @@ mod tests {
         );
 
         for width in [1_200., 1_918.] {
-            cx.simulate_resize(gpui::size(px(width), px(800.)));
+            cx.simulate_resize(gpui_kit::size(px(width), px(800.)));
             for (index, selector) in [
                 (11, "document-tab-12"),
                 (0, "document-tab-1"),
@@ -637,9 +638,7 @@ mod tests {
                 cx.run_until_parked();
 
                 let tab_scroll_area = tab_scroll_handle.bounds();
-                let active_tab = cx
-                    .debug_bounds(selector)
-                    .expect("active tab should render");
+                let active_tab = cx.debug_bounds(selector).expect("active tab should render");
                 assert!(
                     active_tab.left() >= tab_scroll_area.left(),
                     "active tab {index} must reveal its left edge at width {width}: {active_tab:?} vs {tab_scroll_area:?}"

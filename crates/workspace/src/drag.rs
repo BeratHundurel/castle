@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_kit::*;
 
 const PREVIEW_WIDTH: f32 = 196.;
 const PREVIEW_OFFSET_X: f32 = 12.;
@@ -176,7 +176,7 @@ impl Render for WorkspaceDragInfo {
 #[cfg(test)]
 mod tests {
     use super::{WorkspaceDragInfo, WorkspaceDragKind};
-    use gpui_component::IconName;
+    use gpui_kit::component::IconName;
 
     fn drag(kind: WorkspaceDragKind) -> WorkspaceDragInfo {
         WorkspaceDragInfo::new(kind, "Item", "Type", "From workspace", IconName::File)

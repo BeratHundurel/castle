@@ -505,7 +505,7 @@ fn footnote_marker(index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gpui::SharedString;
+    use gpui_kit::SharedString;
 
     use super::{
         PreviewFootnoteLookup, collect_footnote_definitions, prepare_markdown_preview_sections,

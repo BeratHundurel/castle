@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_kit::SharedString;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BoardListState {

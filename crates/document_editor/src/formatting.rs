@@ -1,5 +1,5 @@
-use gpui::{Context, EntityInputHandler, Window};
-use gpui_component::{WindowExt as _, input::RopeExt, notification::Notification};
+use gpui_kit::component::{WindowExt as _, input::RopeExt, notification::Notification};
+use gpui_kit::{Context, EntityInputHandler, Window};
 use std::ops::Range;
 use std::path::Path;
 

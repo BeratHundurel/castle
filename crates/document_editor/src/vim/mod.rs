@@ -1,10 +1,10 @@
-use gpui::{
-    AppContext as _, ClipboardItem, Context, EntityInputHandler, Focusable as _, KeyDownEvent,
-    MouseDownEvent, Window,
-};
-use gpui_component::{
+use gpui_kit::component::{
     highlighter::Language,
     input::{EditorState, Position, Redo, Rope, RopeExt as _, Search, Undo},
+};
+use gpui_kit::{
+    AppContext as _, ClipboardItem, Context, EntityInputHandler, Focusable as _, KeyDownEvent,
+    MouseDownEvent, Window,
 };
 use std::ops::Range;
 

@@ -7,8 +7,7 @@ use std::{
 };
 
 use super::*;
-use gpui::relative;
-use gpui_component::{
+use gpui_kit::component::{
     WindowExt as _,
     dialog::{
         DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -16,6 +15,7 @@ use gpui_component::{
     input::Input,
     notification::Notification,
 };
+use gpui_kit::relative;
 use runtime::AppRuntime;
 use storage::workspace::ChangeRevision;
 use storage::workspace::load_workspace_rows;
@@ -1223,9 +1223,9 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     #[ignore = "performance proof; run explicitly with one test thread"]
-    fn startup_workspace_load_count(cx: &mut gpui::TestAppContext) {
+    fn startup_workspace_load_count(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -1254,19 +1254,19 @@ mod tests {
         storage::workspace::reset_workspace_load_count();
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(settings::AppSettings::load(settings_dir));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("workspace load-count window should open")
         });
         let shell = shell.expect("app shell should exist");
-        let cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..50 {
             cx.run_until_parked();
@@ -1296,9 +1296,11 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     #[ignore = "performance proof; run explicitly with one test thread"]
-    fn rapid_title_edits_save_latest_value_with_one_workspace_load(cx: &mut gpui::TestAppContext) {
+    fn rapid_title_edits_save_latest_value_with_one_workspace_load(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -1329,19 +1331,19 @@ mod tests {
 
         let mut shell = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(settings::AppSettings::load(settings_dir));
             cx.set_global(app_db);
             cx.open_window(Default::default(), |window, cx| {
                 let view = AppShell::view(window, test_shell_integration(), cx);
                 shell = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("title-save window should open")
         });
         let shell = shell.expect("app shell should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..50 {
             cx.run_until_parked();

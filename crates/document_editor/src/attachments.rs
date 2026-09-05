@@ -1,10 +1,10 @@
-use gpui::{
+use gpui_kit::component::input::Paste;
+use gpui_kit::component::text::{
+    MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node,
+};
+use gpui_kit::{
     App, ClipboardEntry, Context, ImageFormat, IntoElement, ObjectFit, Styled as _,
     StyledImage as _, Window, div, img, relative,
-};
-use gpui_component::input::Paste;
-use gpui_component::text::{
-    MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node,
 };
 use std::{
     fs::{self, File, OpenOptions},

@@ -2,7 +2,7 @@ use crate::document_state::EditorMode;
 
 use super::super::*;
 use entity::note;
-use gpui_component::input::{InputEvent, Paste};
+use gpui_kit::component::input::{InputEvent, Paste};
 use migration::{Migrator, MigratorTrait};
 use runtime::AppRuntime;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
@@ -13,9 +13,9 @@ use crate::DocumentKind;
 use crate::action::{MoveLineDown, ToggleTask};
 
 fn with_vim_editor(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
     initial_content: &str,
-    test: impl FnOnce(gpui::Entity<DocumentEditorView>, &mut gpui::VisualTestContext),
+    test: impl FnOnce(gpui_kit::Entity<DocumentEditorView>, &mut gpui_kit::VisualTestContext),
 ) {
     let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
     let _runtime_guard = runtime.enter();
@@ -46,8 +46,8 @@ fn with_vim_editor(
     ));
     let mut editor_view = None;
     let window = cx.update(|cx| {
-        cx.set_global(gpui_component::Theme::default());
-        gpui_component::init(cx);
+        cx.set_global(gpui_kit::component::Theme::default());
+        gpui_kit::init(cx);
         cx.set_global(AppSettings::load(settings_dir));
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
@@ -56,12 +56,12 @@ fn with_vim_editor(
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);
             editor_view = Some(view.clone());
-            cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
         })
         .expect("Vim test window should open")
     });
     let view = editor_view.expect("document editor should exist");
-    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
     for _ in 0..100 {
         cx.run_until_parked();
@@ -86,19 +86,19 @@ fn with_vim_editor(
     test(view, &mut cx);
 }
 
-#[gpui::test]
-fn source_context_menu_does_not_reenter_input_state(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn source_context_menu_does_not_reenter_input_state(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "Right click this text", |_view, cx| {
         cx.simulate_mouse_down(
-            gpui::point(gpui::px(100.), gpui::px(100.)),
-            gpui::MouseButton::Right,
-            gpui::Modifiers::default(),
+            gpui_kit::point(gpui_kit::px(100.), gpui_kit::px(100.)),
+            gpui_kit::MouseButton::Right,
+            gpui_kit::Modifiers::default(),
         );
     });
 }
 
-#[gpui::test]
-fn disabling_focus_mode_clears_source_decorations(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn disabling_focus_mode_clears_source_decorations(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "First paragraph\n\nSecond paragraph", |view, cx| {
         cx.update(|_, cx| {
             view.update(cx, |editor, cx| editor.apply_focus_mode(true, cx));
@@ -117,10 +117,10 @@ fn disabling_focus_mode_clears_source_decorations(cx: &mut gpui::TestAppContext)
 }
 
 fn set_vim_test_content(
-    view: &gpui::Entity<DocumentEditorView>,
+    view: &gpui_kit::Entity<DocumentEditorView>,
     content: &str,
     position: Position,
-    cx: &mut gpui::VisualTestContext,
+    cx: &mut gpui_kit::VisualTestContext,
 ) {
     cx.update(|window, cx| {
         view.update(cx, |editor, cx| {
@@ -134,12 +134,15 @@ fn set_vim_test_content(
     });
 }
 
-fn vim_test_value(view: &gpui::Entity<DocumentEditorView>, cx: &gpui::VisualTestContext) -> String {
+fn vim_test_value(
+    view: &gpui_kit::Entity<DocumentEditorView>,
+    cx: &gpui_kit::VisualTestContext,
+) -> String {
     view.read_with(cx, |editor, cx| editor.editor.read(cx).value().to_string())
 }
 
-#[gpui::test]
-fn smart_pairing_respects_vim_mode_and_skips_existing_closers(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn smart_pairing_respects_vim_mode_and_skips_existing_closers(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         cx.simulate_keystrokes("shift-9->(");
         assert_eq!(vim_test_value(&view, cx), "");
@@ -189,8 +192,8 @@ fn smart_pairing_respects_vim_mode_and_skips_existing_closers(cx: &mut gpui::Tes
     });
 }
 
-#[gpui::test]
-fn smart_link_paste_wraps_selected_markdown_text(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn smart_link_paste_wraps_selected_markdown_text(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "Read this", |view, cx| {
         cx.update(|window, cx| {
             AppSettings::set_editor_vim_mode(false, cx);
@@ -202,7 +205,7 @@ fn smart_link_paste_wraps_selected_markdown_text(cx: &mut gpui::TestAppContext) 
                 editor.select_source_range(0..9, window, cx);
                 editor.focus_source_mode(window, cx);
             });
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
                 "https://example.com/read-this".to_string(),
             ));
             let _ = window.draw(cx);
@@ -221,8 +224,8 @@ fn smart_link_paste_wraps_selected_markdown_text(cx: &mut gpui::TestAppContext) 
     });
 }
 
-#[gpui::test]
-fn line_move_action_updates_text_and_cursor_in_source_mode(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn line_move_action_updates_text_and_cursor_in_source_mode(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         cx.update(|window, cx| {
             AppSettings::set_editor_vim_mode(false, cx);
@@ -253,8 +256,8 @@ fn line_move_action_updates_text_and_cursor_in_source_mode(cx: &mut gpui::TestAp
     });
 }
 
-#[gpui::test]
-fn task_toggle_action_updates_the_current_markdown_task(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn task_toggle_action_updates_the_current_markdown_task(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         cx.update(|window, cx| {
             AppSettings::set_editor_vim_mode(false, cx);
@@ -287,8 +290,8 @@ fn task_toggle_action_updates_the_current_markdown_task(cx: &mut gpui::TestAppCo
     });
 }
 
-#[gpui::test]
-fn counted_linewise_yank_and_paste_execute_through_the_keymap(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn counted_linewise_yank_and_paste_execute_through_the_keymap(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "one two\nthree four\nfive", |view, cx| {
         cx.simulate_keystrokes("2 y y");
 
@@ -311,8 +314,8 @@ fn counted_linewise_yank_and_paste_execute_through_the_keymap(cx: &mut gpui::Tes
     });
 }
 
-#[gpui::test]
-fn insert_line_start_open_line_and_direct_changes_round_trip(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn insert_line_start_open_line_and_direct_changes_round_trip(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "  alpha\nbeta", |view, cx| {
         cx.simulate_keystrokes("shift-i");
         cx.simulate_input("X");
@@ -345,8 +348,8 @@ fn insert_line_start_open_line_and_direct_changes_round_trip(cx: &mut gpui::Test
     });
 }
 
-#[gpui::test]
-fn visual_paste_replaces_the_inclusive_selection(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn visual_paste_replaces_the_inclusive_selection(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "abcd", |view, cx| {
         cx.update(|_, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
@@ -369,9 +372,9 @@ fn visual_paste_replaces_the_inclusive_selection(cx: &mut gpui::TestAppContext) 
     });
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn explicit_line_counts_distinguish_g_from_bare_g_in_motions_and_operators(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
 ) {
     with_vim_editor(cx, "first\nmiddle\nlast", |view, cx| {
         cx.simulate_keystrokes("shift-g");
@@ -403,8 +406,8 @@ fn explicit_line_counts_distinguish_g_from_bare_g_in_motions_and_operators(
     });
 }
 
-#[gpui::test]
-fn invalid_operator_sequences_consume_the_key_and_clear_counts(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn invalid_operator_sequences_consume_the_key_and_clear_counts(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "abc", |view, cx| {
         cx.update(|_, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
@@ -435,8 +438,8 @@ fn invalid_operator_sequences_consume_the_key_and_clear_counts(cx: &mut gpui::Te
     });
 }
 
-#[gpui::test]
-fn open_line_preserves_crlf_above_below_and_at_the_final_line(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn open_line_preserves_crlf_above_below_and_at_the_final_line(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "one\r\ntwo", |view, cx| {
         cx.simulate_keystrokes("o");
         assert_eq!(vim_test_value(&view, cx), "one\r\n\r\ntwo");
@@ -467,8 +470,8 @@ fn open_line_preserves_crlf_above_below_and_at_the_final_line(cx: &mut gpui::Tes
     });
 }
 
-#[gpui::test]
-fn character_find_repeats_reverses_and_composes_with_operators(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn character_find_repeats_reverses_and_composes_with_operators(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "a-b-a-b tail", Position::new(0, 0), cx);
         cx.simulate_keystrokes("f b");
@@ -511,9 +514,9 @@ fn character_find_repeats_reverses_and_composes_with_operators(cx: &mut gpui::Te
     });
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn replace_character_handles_counts_unicode_crlf_visual_ranges_and_failure(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
 ) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "a中bc", Position::new(0, 0), cx);
@@ -542,8 +545,8 @@ fn replace_character_handles_counts_unicode_crlf_visual_ranges_and_failure(
     });
 }
 
-#[gpui::test]
-fn dot_repeats_normal_operator_find_and_visual_changes(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn dot_repeats_normal_operator_find_and_visual_changes(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
         cx.simulate_keystrokes("x");
@@ -566,8 +569,8 @@ fn dot_repeats_normal_operator_find_and_visual_changes(cx: &mut gpui::TestAppCon
     });
 }
 
-#[gpui::test]
-fn dot_replays_insert_change_open_line_unicode_and_replacement(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn dot_replays_insert_change_open_line_unicode_and_replacement(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
         cx.simulate_keystrokes("3 i");
@@ -599,9 +602,9 @@ fn dot_replays_insert_change_open_line_unicode_and_replacement(cx: &mut gpui::Te
     });
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn dot_count_overrides_the_original_count_and_failed_commands_do_not_replace_it(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
 ) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "abcdefghij", Position::new(0, 0), cx);
@@ -614,8 +617,8 @@ fn dot_count_overrides_the_original_count_and_failed_commands_do_not_replace_it(
     });
 }
 
-#[gpui::test]
-fn dot_repeats_text_objects_line_changes_paste_and_join(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn dot_repeats_text_objects_line_changes_paste_and_join(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "say \"one\" then \"two\"", Position::new(0, 6), cx);
         cx.simulate_keystrokes("d i shift-'->\" w w .");
@@ -637,9 +640,9 @@ fn dot_repeats_text_objects_line_changes_paste_and_join(cx: &mut gpui::TestAppCo
     });
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn dot_captures_insert_backspace_markdown_continuation_and_insert_counts(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
 ) {
     with_vim_editor(cx, "", |view, cx| {
         set_vim_test_content(&view, "one two", Position::new(0, 0), cx);
@@ -678,8 +681,10 @@ fn dot_captures_insert_backspace_markdown_continuation_and_insert_counts(
     });
 }
 
-#[gpui::test]
-fn visual_line_dot_is_one_modal_undo_step_and_redoes_as_one_step(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn visual_line_dot_is_one_modal_undo_step_and_redoes_as_one_step(
+    cx: &mut gpui_kit::TestAppContext,
+) {
     with_vim_editor(cx, "one\ntwo\nthree\nfour\n", |view, cx| {
         cx.simulate_keystrokes("shift-v j d .");
         assert_eq!(vim_test_value(&view, cx), "");
@@ -690,8 +695,8 @@ fn visual_line_dot_is_one_modal_undo_step_and_redoes_as_one_step(cx: &mut gpui::
     });
 }
 
-#[gpui::test]
-fn compound_dot_replay_emits_one_editor_change(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn compound_dot_replay_emits_one_editor_change(cx: &mut gpui_kit::TestAppContext) {
     with_vim_editor(cx, "one two", |view, cx| {
         let changes = Rc::new(Cell::new(0));
         cx.update(|_, cx| {
@@ -716,9 +721,9 @@ fn compound_dot_replay_emits_one_editor_change(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn cancelled_and_failed_character_arguments_preserve_the_last_change(
-    cx: &mut gpui::TestAppContext,
+    cx: &mut gpui_kit::TestAppContext,
 ) {
     with_vim_editor(cx, "abcdef", |view, cx| {
         cx.simulate_keystrokes("x f escape l .");
@@ -730,8 +735,8 @@ fn cancelled_and_failed_character_arguments_preserve_the_last_change(
     });
 }
 
-#[gpui::test]
-fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::TestAppContext) {
+#[gpui_kit::test]
+fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui_kit::TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
     let _runtime_guard = runtime.enter();
     cx.executor().allow_parking();
@@ -761,8 +766,8 @@ fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::T
     ));
     let mut editor_view = None;
     let window = cx.update(|cx| {
-        cx.set_global(gpui_component::Theme::default());
-        gpui_component::init(cx);
+        cx.set_global(gpui_kit::component::Theme::default());
+        gpui_kit::init(cx);
         cx.set_global(AppSettings::load(settings_dir));
         AppSettings::set_editor_vim_mode(true, cx);
         AppSettings::set_editor_status_line_visible(false, cx);
@@ -771,12 +776,12 @@ fn modal_focus_edits_history_clipboard_search_and_live_settings(cx: &mut gpui::T
         cx.open_window(Default::default(), |window, cx| {
             let view = DocumentEditorView::view(note_id, window, cx);
             editor_view = Some(view.clone());
-            cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
         })
         .expect("Vim test window should open")
     });
     let view = editor_view.expect("document editor should exist");
-    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
     for _ in 0..100 {
         cx.run_until_parked();

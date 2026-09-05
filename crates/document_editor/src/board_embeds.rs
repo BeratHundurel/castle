@@ -5,17 +5,17 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{
-    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     text::{MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node},
     v_flex,
+};
+use gpui_kit::{
+    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _,
 };
 
 use runtime::AppRuntime;
@@ -183,7 +183,12 @@ impl MarkdownPlugin for BoardViewEmbedPlugin {
         )
     }
 
-    fn render(&self, node: &MarkdownNode, _: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(
+        &self,
+        node: &MarkdownNode,
+        _: &mut Window,
+        cx: &mut gpui_kit::App,
+    ) -> impl IntoElement {
         let Some(block) = node.data::<EmbedBlock>() else {
             return div().into_any_element();
         };
@@ -242,8 +247,8 @@ fn render_projection(
     editor: Entity<DocumentEditorView>,
     projection: Arc<storage::board::projection::BoardViewProjection>,
     occurrence: usize,
-    cx: &mut gpui::App,
-) -> gpui::AnyElement {
+    cx: &mut gpui_kit::App,
+) -> gpui_kit::AnyElement {
     let board_id = u32::try_from(projection.board_id).ok();
     let title = projection
         .view_name
@@ -337,9 +342,9 @@ fn render_projection(
                                 .gap_0p5()
                                 .px_2()
                                 .py(if projection.compact_cards {
-                                    gpui::px(4.)
+                                    gpui_kit::px(4.)
                                 } else {
-                                    gpui::px(7.)
+                                    gpui_kit::px(7.)
                                 })
                                 .rounded(cx.theme().radius)
                                 .bg(cx.theme().background)
@@ -401,8 +406,8 @@ fn render_status(
     block: EmbedBlock,
     message: &str,
     actions: bool,
-    cx: &mut gpui::App,
-) -> gpui::AnyElement {
+    cx: &mut gpui_kit::App,
+) -> gpui_kit::AnyElement {
     let fallback = block.key.raw_target.clone();
     v_flex()
         .id(("castle-board-view", block.source_range.start as u64))

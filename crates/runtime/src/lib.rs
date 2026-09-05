@@ -6,7 +6,7 @@ use std::{
     task::{Context as TaskContext, Poll},
 };
 
-use gpui::{BackgroundExecutor, Global, Task};
+use gpui_kit::{BackgroundExecutor, Global, Task};
 use storage::Store;
 
 #[derive(Clone)]

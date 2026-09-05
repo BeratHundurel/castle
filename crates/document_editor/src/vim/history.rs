@@ -9,7 +9,7 @@ impl DocumentEditorView {
             || self.vim_state.state.pending_char.is_some()
     }
 
-    pub(super) fn prepare_vim_change_candidate(&mut self, key: VimKey, cx: &gpui::App) {
+    pub(super) fn prepare_vim_change_candidate(&mut self, key: VimKey, cx: &gpui_kit::App) {
         if self.vim_state.state.mode.is_visual() {
             self.vim_state.state.change_candidate.clear();
             self.vim_state.state.candidate_visual = self.vim_visual_repeat(cx);
@@ -28,7 +28,7 @@ impl DocumentEditorView {
         before_mode: VimMode,
         before_text: Rope,
         before_cursor: usize,
-        cx: &gpui::App,
+        cx: &gpui_kit::App,
     ) {
         let changed = before_text != *self.editor.read(cx).text();
         if self.vim_state.state.mode == VimMode::Insert && before_mode != VimMode::Insert {
@@ -53,7 +53,7 @@ impl DocumentEditorView {
         }
     }
 
-    pub(super) fn vim_visual_repeat(&self, cx: &gpui::App) -> Option<VimVisualRepeat> {
+    pub(super) fn vim_visual_repeat(&self, cx: &gpui_kit::App) -> Option<VimVisualRepeat> {
         let range = self.vim_visual_range(cx)?;
         if self.vim_state.state.mode == VimMode::VisualLine {
             let rope = self.editor.read(cx).text();
@@ -125,7 +125,12 @@ impl DocumentEditorView {
         self.push_vim_history(capture.history_before, capture.history_cursor, cx);
     }
 
-    pub(super) fn push_vim_history(&mut self, before: Rope, cursor_before: usize, cx: &gpui::App) {
+    pub(super) fn push_vim_history(
+        &mut self,
+        before: Rope,
+        cursor_before: usize,
+        cx: &gpui_kit::App,
+    ) {
         let after = self.editor.read(cx).text().clone();
         if before == after {
             return;

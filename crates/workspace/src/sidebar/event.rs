@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_kit::SharedString;
 
 #[derive(Clone)]
 pub enum SidebarEvent {

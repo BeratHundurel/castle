@@ -15,14 +15,14 @@ mod state;
 mod view;
 mod vim;
 
-use gpui::{
-    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, HighlightStyle, Pixels,
-    SharedString, Subscription, Task, UniformListScrollHandle, Window, point, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     Theme,
     highlighter::Language,
     input::{EditorState, InputEvent, InputState, Rope, RopeExt as _, TabSize, TextDecoration},
+};
+use gpui_kit::{
+    App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, HighlightStyle, Pixels,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, point, px,
 };
 use std::{
     cell::Cell,
@@ -78,7 +78,7 @@ pub struct DocumentEditorView {
     _theme_subscription: Subscription,
     _settings_subscription: Subscription,
     pending_navigation_offset: Option<usize>,
-    view_width: gpui::Pixels,
+    view_width: gpui_kit::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
     view_layout_refresh_task: Option<Task<()>>,
     view_layout_refresh_epoch: u64,
@@ -223,10 +223,10 @@ impl DocumentEditorView {
                 preview_bounds: None,
                 preview_bounds_mode: None,
                 preview_sections: Arc::new(Vec::new()),
-                preview_list_state: gpui::ListState::new(
+                preview_list_state: gpui_kit::ListState::new(
                     0,
-                    gpui::ListAlignment::Top,
-                    gpui::px(2_048.),
+                    gpui_kit::ListAlignment::Top,
+                    gpui_kit::px(2_048.),
                 )
                 .measure_all(),
                 preview_font_size_bits: Cell::new(preview_font_size_bits),
@@ -260,7 +260,7 @@ impl DocumentEditorView {
             _theme_subscription: theme_subscription,
             _settings_subscription: settings_subscription,
             pending_navigation_offset: None,
-            view_width: gpui::px(0.),
+            view_width: gpui_kit::px(0.),
             view_bounds: None,
             view_layout_refresh_task: None,
             view_layout_refresh_epoch: 0,
@@ -299,7 +299,7 @@ impl DocumentEditorView {
             let rope = editor.text();
             let start = rope.offset_to_offset_utf16(range.start);
             let end = rope.offset_to_offset_utf16(range.end);
-            gpui::EntityInputHandler::replace_text_in_range(
+            gpui_kit::EntityInputHandler::replace_text_in_range(
                 editor,
                 Some(start..end),
                 text,
@@ -709,9 +709,9 @@ impl DocumentEditorView {
                 {
                     self.analysis
                         .preview_list_state
-                        .scroll_to(gpui::ListOffset {
+                        .scroll_to(gpui_kit::ListOffset {
                             item_ix: section,
-                            offset_in_item: gpui::px(0.),
+                            offset_in_item: gpui_kit::px(0.),
                         });
                 }
             }
@@ -721,9 +721,9 @@ impl DocumentEditorView {
                 if let Some(section) = item.preview_section_index {
                     self.analysis
                         .preview_list_state
-                        .scroll_to(gpui::ListOffset {
+                        .scroll_to(gpui_kit::ListOffset {
                             item_ix: section,
-                            offset_in_item: gpui::px(0.),
+                            offset_in_item: gpui_kit::px(0.),
                         });
                 }
             }
@@ -812,7 +812,7 @@ impl DocumentEditorView {
         if let Some(index) = self.analysis.outline_selected {
             self.analysis
                 .outline_scroll_handle
-                .scroll_to_item(index, gpui::ScrollStrategy::Top);
+                .scroll_to_item(index, gpui_kit::ScrollStrategy::Top);
         }
         cx.notify();
     }
@@ -1072,8 +1072,8 @@ mod tests {
         source_row_centers_at_document_start,
     };
     use entity::note;
-    use gpui::AppContext as _;
-    use gpui_component::highlighter::Language;
+    use gpui_kit::AppContext as _;
+    use gpui_kit::component::highlighter::Language;
     use migration::{Migrator, MigratorTrait};
     use runtime::AppRuntime;
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
@@ -1081,8 +1081,8 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use test_support as test_alloc;
 
-    #[gpui::test]
-    fn json_autosave_preserves_unformatted_content(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn json_autosave_preserves_unformatted_content(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -1120,19 +1120,19 @@ mod tests {
         let db = Arc::new(db);
         let mut editor_view = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(directory.path()));
             cx.set_global(AppRuntime::new(db.clone(), directory.path().to_path_buf()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("autosave test window should open")
         });
         let view = editor_view.expect("document editor should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..100 {
             cx.run_until_parked();
@@ -1168,8 +1168,8 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn delayed_analysis_does_not_copy_content_before_debounce(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn delayed_analysis_does_not_copy_content_before_debounce(cx: &mut gpui_kit::TestAppContext) {
         const CONTENT_BYTES: usize = 512 * 1024;
         const RESCHEDULES: usize = 8;
 
@@ -1206,14 +1206,14 @@ mod tests {
         ));
         let mut editor_view = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("analysis test window should open")
         });
@@ -1325,30 +1325,30 @@ mod tests {
     #[test]
     fn source_rows_in_the_top_half_viewport_clamp_to_document_start() {
         assert!(source_row_centers_at_document_start(
-            Some(gpui::px(20.)),
-            gpui::px(400.),
+            Some(gpui_kit::px(20.)),
+            gpui_kit::px(400.),
             8
         ));
         assert!(source_row_centers_at_document_start(
-            Some(gpui::px(20.)),
-            gpui::px(400.),
+            Some(gpui_kit::px(20.)),
+            gpui_kit::px(400.),
             9
         ));
         assert!(!source_row_centers_at_document_start(
-            Some(gpui::px(20.)),
-            gpui::px(400.),
+            Some(gpui_kit::px(20.)),
+            gpui_kit::px(400.),
             10
         ));
         assert!(!source_row_centers_at_document_start(
             None,
-            gpui::px(400.),
+            gpui_kit::px(400.),
             0
         ));
     }
 
     #[test]
     fn focus_mode_tracks_the_paragraph_containing_the_cursor() {
-        let text = gpui_component::input::Rope::from(
+        let text = gpui_kit::component::input::Rope::from(
             "First paragraph\ncontinues here\n\nSecond paragraph with café\ncontinues too\n",
         );
         let cursor = "First paragraph\ncontinues here\n\nSecond paragraph with ca".len();
@@ -1362,7 +1362,7 @@ mod tests {
     #[test]
     fn focus_mode_keeps_every_paragraph_touched_by_a_selection() {
         let source = "One\n\nTwo\ncontinued\n\nThree";
-        let text = gpui_component::input::Rope::from(source);
+        let text = gpui_kit::component::input::Rope::from(source);
         let selection = source.find("ne").expect("selection start should exist")
             ..source
                 .find("continued")
@@ -1378,7 +1378,7 @@ mod tests {
     #[test]
     fn focus_mode_on_a_blank_line_only_keeps_that_separator() {
         let source = "One\n\nTwo";
-        let text = gpui_component::input::Rope::from(source);
+        let text = gpui_kit::component::input::Rope::from(source);
         let cursor = source.find("\n\n").expect("blank separator should exist") + 1;
 
         assert_eq!(focused_paragraph_range(&text, cursor..cursor), 4..5);
@@ -1412,9 +1412,9 @@ mod tests {
         assert_eq!(document_language(DocumentKind::PlainText), Language::Plain);
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn outline_navigation_to_document_start_has_no_intermediate_scroll_frame(
-        cx: &mut gpui::TestAppContext,
+        cx: &mut gpui_kit::TestAppContext,
     ) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
@@ -1444,19 +1444,19 @@ mod tests {
             std::env::temp_dir().join(format!("castle-outline-navigation-{}", std::process::id()));
         let mut editor_view = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(settings_dir));
             cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("outline test window should open")
         });
         let view = editor_view.expect("document editor should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..100 {
             cx.run_until_parked();
@@ -1474,7 +1474,7 @@ mod tests {
                 editor.rebuild_outline_rows();
                 editor.editor.update(cx, |input, cx| {
                     input.set_cursor_position(
-                        gpui_component::input::Position::new(350, 0),
+                        gpui_kit::component::input::Position::new(350, 0),
                         window,
                         cx,
                     );
@@ -1512,8 +1512,8 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn markdown_plain_text_round_trip_restores_markdown_kind(cx: &mut gpui::TestAppContext) {
+    #[gpui_kit::test]
+    fn markdown_plain_text_round_trip_restores_markdown_kind(cx: &mut gpui_kit::TestAppContext) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -1543,19 +1543,19 @@ mod tests {
             .expect("kind round trip database should initialize");
         let mut editor_view = None;
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.set_global(AppSettings::load(directory.path()));
             cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
             cx.open_window(Default::default(), |window, cx| {
                 let view = DocumentEditorView::view(note_id, window, cx);
                 editor_view = Some(view.clone());
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
             })
             .expect("kind round trip window should open")
         });
         let view = editor_view.expect("document editor should exist");
-        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
 
         for _ in 0..100 {
             cx.run_until_parked();

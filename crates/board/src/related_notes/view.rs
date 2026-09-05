@@ -15,7 +15,7 @@ fn render_related_note_candidate(
     project_name: String,
     selected: bool,
     disabled: bool,
-    theme: &gpui_component::Theme,
+    theme: &gpui_kit::component::Theme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let theme = theme.clone();
@@ -75,7 +75,7 @@ fn render_linked_related_note(
     title: String,
     manually_linked: bool,
     pending: bool,
-    theme: &gpui_component::Theme,
+    theme: &gpui_kit::component::Theme,
     on_open: RelatedNoteRowClick,
     on_unlink: RelatedNoteRowClick,
 ) -> AnyElement {
@@ -620,12 +620,12 @@ mod tests {
         LinkedRelatedNoteRowIds, RELATED_NOTE_ROW_HEIGHT, related_note_candidate_list_height,
         render_linked_related_note,
     };
-    use gpui::{
+    use gpui_kit::component::{ActiveTheme as _, v_flex};
+    use gpui_kit::{
         App, AppContext as _, Context, InteractiveElement as _, ParentElement as _, Render,
         StatefulInteractiveElement as _, Styled as _, TestAppContext, VisualTestContext, Window,
         px,
     };
-    use gpui_component::{ActiveTheme as _, v_flex};
 
     #[test]
     fn candidate_list_height_uses_compact_rows_and_respects_the_viewport_limit() {
@@ -636,11 +636,11 @@ mod tests {
     }
 
     struct LinkedNoteListTestView {
-        scroll_handle: gpui::ScrollHandle,
+        scroll_handle: gpui_kit::ScrollHandle,
     }
 
     impl Render for LinkedNoteListTestView {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui_kit::IntoElement {
             let theme = cx.theme().clone();
             v_flex()
                 .id("candidate-list-test")
@@ -665,12 +665,12 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn linked_rows_keep_their_scannable_height_inside_the_scroll_viewport(cx: &mut TestAppContext) {
-        let scroll_handle = gpui::ScrollHandle::new();
+        let scroll_handle = gpui_kit::ScrollHandle::new();
         let window = cx.update(|cx| {
-            cx.set_global(gpui_component::Theme::default());
-            gpui_component::init(cx);
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
             cx.open_window(Default::default(), |_, cx| {
                 cx.new(|_| LinkedNoteListTestView {
                     scroll_handle: scroll_handle.clone(),

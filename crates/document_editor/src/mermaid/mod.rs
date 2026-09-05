@@ -1,18 +1,18 @@
 use self::renderer::{MermaidTheme, PreparedMermaidRenderer, is_supported_diagram};
-use gpui::{
-    App, AppContext as _, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle,
-    ImageSource, InteractiveElement as _, IntoElement, ParentElement as _, ParsedSvg, RenderImage,
-    SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, Window, accesskit::Role, div, img, point,
-    prelude::FluentBuilder as _, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     scroll::ScrollableElement as _,
     theme::Colorize as _,
     v_flex,
+};
+use gpui_kit::{
+    App, AppContext as _, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle,
+    ImageSource, InteractiveElement as _, IntoElement, ParentElement as _, ParsedSvg, RenderImage,
+    SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Task, Window, accesskit::Role, div, img, point,
+    prelude::FluentBuilder as _, px,
 };
 pub(super) use parser::{MermaidDescriptor, parse_mermaid_blocks};
 use parser::{is_closed_mermaid_fence, parse_mermaid_info};
@@ -174,7 +174,7 @@ pub(super) struct MermaidState {
     pending_rasters: HashSet<(CacheKey, u32)>,
     active_jobs: usize,
     active_tasks: HashMap<u64, Task<()>>,
-    images_pending_release: HashMap<gpui::ImageId, Arc<RenderImage>>,
+    images_pending_release: HashMap<gpui_kit::ImageId, Arc<RenderImage>>,
     next_job_id: u64,
     generation: u64,
     theme_fingerprint: Option<u64>,
@@ -330,7 +330,7 @@ impl MermaidPlugin {
     }
 }
 
-impl gpui_component::text::MarkdownPlugin for MermaidPlugin {
+impl gpui_kit::component::text::MarkdownPlugin for MermaidPlugin {
     fn is_block(&self) -> bool {
         true
     }
@@ -341,10 +341,10 @@ impl gpui_component::text::MarkdownPlugin for MermaidPlugin {
 
     fn parse(
         &self,
-        node: &gpui_component::text::markdown_ast::Node,
-        cx: &gpui_component::text::MarkdownParseContext<'_>,
-    ) -> Option<gpui_component::text::MarkdownNode> {
-        use gpui_component::text::markdown_ast::Node;
+        node: &gpui_kit::component::text::markdown_ast::Node,
+        cx: &gpui_kit::component::text::MarkdownParseContext<'_>,
+    ) -> Option<gpui_kit::component::text::MarkdownNode> {
+        use gpui_kit::component::text::markdown_ast::Node;
         let Node::Code(code) = node else {
             return None;
         };
@@ -364,7 +364,7 @@ impl gpui_component::text::MarkdownPlugin for MermaidPlugin {
         let position = node.position()?;
         let occurrence = self.section_offset.saturating_add(position.start.offset);
         Some(
-            gpui_component::text::MarkdownNode::new(
+            gpui_kit::component::text::MarkdownNode::new(
                 self.name(),
                 MermaidBlock {
                     source: code.value.clone().into(),
@@ -378,7 +378,7 @@ impl gpui_component::text::MarkdownPlugin for MermaidPlugin {
 
     fn render(
         &self,
-        node: &gpui_component::text::MarkdownNode,
+        node: &gpui_kit::component::text::MarkdownNode,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
@@ -467,7 +467,7 @@ fn render_block(
     snapshot: Option<(CacheSnapshot, PresentationSnapshot)>,
     window: &mut Window,
     cx: &mut App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let Some((cache, presentation)) = snapshot else {
         return render_source(&block.source, Some("Rendering…"), cx);
     };
@@ -721,7 +721,7 @@ fn mermaid_zoom_control(
     focus_handle: Option<FocusHandle>,
     cx: &App,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let (label, aria_label) = content;
     div()
         .id(id)
@@ -758,7 +758,7 @@ fn render_source(
     source: &SharedString,
     status: Option<&'static str>,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     v_flex()
         .relative()
         .p_3()
@@ -783,7 +783,7 @@ fn render_image_body(
     presentation: &PresentationSnapshot,
     scroll_handle: &ScrollHandle,
     cx: &App,
-) -> gpui::AnyElement {
+) -> gpui_kit::AnyElement {
     let display_width = raster.natural_width * presentation.zoom;
     let display_height = raster.natural_height * presentation.zoom;
     let occurrence = block.occurrence;
@@ -1410,7 +1410,7 @@ fn take_entry_raster(entry: CacheEntry, state: &mut MermaidState) -> Option<Rast
 }
 
 fn rasterize(
-    renderer: &gpui::SvgRenderer,
+    renderer: &gpui_kit::SvgRenderer,
     parsed: &Arc<ParsedSvg>,
     fence_scale: u16,
     zoom: f32,
@@ -1557,7 +1557,7 @@ mod tests {
             "mindmap\n root((Castle))\n  Notes",
             "stateDiagram-v2\n[*] --> Ready",
         ];
-        let renderer = gpui::SvgRenderer::new(Arc::new(()));
+        let renderer = gpui_kit::SvgRenderer::new(Arc::new(()));
         let mermaid_renderer = theme.prepare();
         for source in samples {
             let svg = mermaid_renderer
@@ -1599,7 +1599,7 @@ mod tests {
             .prepare()
             .render_to_svg(source)
             .expect("representative Mermaid should render");
-        let renderer = gpui::SvgRenderer::new(Arc::new(()));
+        let renderer = gpui_kit::SvgRenderer::new(Arc::new(()));
         let parsed = Arc::new(
             renderer
                 .parse_svg(svg.as_bytes())

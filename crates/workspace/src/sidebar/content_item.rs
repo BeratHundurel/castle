@@ -1,5 +1,5 @@
-use gpui::{Action, Context, Entity, SharedString};
-use gpui_component::{IconName, input::InputState};
+use gpui_kit::component::{IconName, input::InputState};
+use gpui_kit::{Action, Context, Entity, SharedString};
 
 use super::{SidebarView, action::*, model::*};
 use crate::DocumentKind;
@@ -175,7 +175,7 @@ impl SidebarContentItem {
 mod tests {
     use super::SidebarContentItem;
     use crate::DocumentKind;
-    use gpui_component::{IconName, IconNamed as _};
+    use gpui_kit::component::{IconName, IconNamed as _};
 
     #[test]
     fn move_targets_exclude_the_current_location() {

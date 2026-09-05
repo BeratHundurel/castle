@@ -33,7 +33,7 @@ impl AppShell {
                                     .child(
                                         div()
                                             .text_2xl()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                             .child("Home"),
                                     )
                                     .child(
@@ -118,7 +118,7 @@ impl AppShell {
             )
     }
 
-    pub(crate) fn render_today(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(crate) fn render_today(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         if self.home.phase.is_loading() && !self.home.phase.has_content() {
             return v_flex()
                 .gap_2()
@@ -204,7 +204,7 @@ impl AppShell {
                                     .child(
                                         div()
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                                             .child(entry.title.clone()),
                                     )
                                     .child(
@@ -225,7 +225,7 @@ impl AppShell {
                             .child(
                                 div()
                                     .text_xs()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .font_weight(gpui_kit::FontWeight::MEDIUM)
                                     .text_color(if overdue {
                                         cx.theme().danger
                                     } else {
@@ -247,7 +247,7 @@ impl AppShell {
         items: &[WorkspaceHomeItem],
         empty_copy: &'static str,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         if items.is_empty() {
             return div()
                 .id(id)
