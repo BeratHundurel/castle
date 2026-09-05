@@ -16,6 +16,7 @@ use gpui_component::{
     input::Input,
     notification::Notification,
 };
+use runtime::AppRuntime;
 use storage::workspace::ChangeRevision;
 use storage::workspace::load_workspace_rows;
 
@@ -23,12 +24,11 @@ const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::
 
 impl AppShell {
     pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
-        let store = cx.global::<AppRuntime>().store();
-        let db = store.clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
                     storage::workspace::links::repair_workspace_link_index_batch(&db, 32).await
                 })
                 .await;
@@ -51,15 +51,14 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let store = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
         let (revision_sender, mut revision_receiver) = tokio::sync::watch::channel(None);
 
-        let poller = runtime.spawn(watch_change_revisions(
-            store,
-            revision_sender,
-            EXTERNAL_CHANGE_POLL_INTERVAL,
-        ));
-        drop(poller);
+        cx.global::<AppRuntime>()
+            .spawn_tokio_detached(watch_change_revisions(
+                store,
+                revision_sender,
+                EXTERNAL_CHANGE_POLL_INTERVAL,
+            ));
 
         self.external_changes.task = Some(cx.spawn_in(window, async move |this, cx| {
             while revision_receiver.changed().await.is_ok() {
@@ -149,13 +148,15 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         self.workspace.refreshing = true;
 
         cx.spawn(async move |this, cx| {
-            let rows = match runtime
-                .spawn(async move { load_workspace_rows(&db).await })
+            let rows = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    load_workspace_rows(&db).await
+                })
                 .await
             {
                 Ok(Ok(rows)) => rows,
@@ -301,16 +302,15 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let view = cx.entity().downgrade();
         let path = unique_note_path(cx.global::<AppRuntime>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
-        let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
 
         cx.spawn_in(window, async move |_, window| {
             let write_path = path.clone();
-            background_executor
+            window
+                .background_executor()
                 .spawn(async move {
                     if let Some(parent) = write_path.parent() {
                         create_dir_all(parent)?;
@@ -320,10 +320,10 @@ impl AppShell {
                 .await
                 .ok()?;
 
-            let inserted = runtime
-                .spawn(async move {
+            let inserted = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
                     storage::workspace::create_managed_note(
-                        &db,
+                        &store,
                         project_id,
                         title,
                         path_string,
@@ -444,21 +444,17 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let view = cx.entity().downgrade();
         let path = unique_note_path(cx.global::<AppRuntime>().data_dir().join("notes"), &title);
         let path_string = path.display().to_string();
-        let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
         let display_title = title.replace(['\r', '\n', '|'], " ");
         let fallback_link = storage::workspace::links::stable_workspace_link(item, &source_title);
-        let catalog_runtime = runtime.clone();
-        let catalog_db = db.clone();
 
         cx.spawn_in(window, async move |_, window| {
-            let source_link = match catalog_runtime
-                .spawn(async move {
-                    storage::workspace::links::load_workspace_reference_catalog(&catalog_db).await
+            let source_link = match app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
+                    storage::workspace::links::load_workspace_reference_catalog(&store).await
                 })
                 .await
             {
@@ -473,7 +469,8 @@ impl AppShell {
             );
             let write_path = path.clone();
             let write_content = content.clone();
-            if background_executor
+            if window
+                .background_executor()
                 .spawn(async move {
                     if let Some(parent) = write_path.parent() {
                         create_dir_all(parent)?;
@@ -494,11 +491,10 @@ impl AppShell {
                 return None;
             }
 
-            let db_for_insert = db.clone();
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
                     let inserted = storage::workspace::create_managed_linked_note(
-                        &db_for_insert,
+                        &store,
                         project_id,
                         title,
                         path_string,
@@ -507,7 +503,7 @@ impl AppShell {
                     )
                     .await?;
                     let board_id = storage::workspace::links::load_workspace_link_catalog(
-                        &db_for_insert,
+                        &store,
                     )
                     .await?
                     .into_iter()
@@ -520,7 +516,8 @@ impl AppShell {
 
             let cleanup_error = if matches!(&result, Ok(Err(_)) | Err(_)) {
                 let cleanup_path = path.clone();
-                background_executor
+                window
+                    .background_executor()
                     .spawn(async move { remove_linked_note_file(&cleanup_path) })
                     .await
                     .err()
@@ -596,10 +593,8 @@ impl AppShell {
             prompt: Some("Import file".into()),
         });
 
-        let background_executor = cx.background_executor().clone();
-        let db = cx.global::<AppRuntime>().store();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let view = cx.entity().downgrade();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
 
         cx.spawn_in(window, async move |_, window| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -609,7 +604,8 @@ impl AppShell {
                 return;
             };
             let display_path = path.clone();
-            let file = match background_executor
+            let file = match window
+                .background_executor()
                 .spawn(async move { storage::workspace::file_import::scan_file(&path) })
                 .await
             {
@@ -625,8 +621,10 @@ impl AppShell {
                 }
             };
 
-            let persisted = runtime
-                .spawn(async move { storage::workspace::file_import::import_file(&db, file).await })
+            let persisted = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
+                    storage::workspace::file_import::import_file(&store, file).await
+                })
                 .await;
 
             let note = match persisted {
@@ -687,11 +685,11 @@ impl AppShell {
                 return;
             }
         };
-        let data_dir = cx.global::<AppRuntime>().data_dir().to_path_buf();
-        let receiver = cx.prompt_for_new_path(&data_dir, Some("castle-workspace.castle.zip"));
+        let data_dir = cx.global::<AppRuntime>().data_dir_handle();
+        let receiver =
+            cx.prompt_for_new_path(data_dir.as_path(), Some("castle-workspace.castle.zip"));
         let view = cx.entity().downgrade();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         self.workspace_archive_busy = true;
         cx.notify();
 
@@ -709,11 +707,11 @@ impl AppShell {
                 return;
             };
             let display_destination = destination.display().to_string();
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
                     storage::workspace::archive::export_workspace(
-                        &db,
-                        &data_dir,
+                        &store,
+                        data_dir.as_path(),
                         &settings_json,
                         &destination,
                     )
@@ -938,17 +936,16 @@ impl AppShell {
         self.workspace_archive_busy = true;
         cx.notify();
         let display_path = archive_path.display().to_string();
-        let data_dir = cx.global::<AppRuntime>().data_dir().to_path_buf();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let data_dir = cx.global::<AppRuntime>().data_dir_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let view = cx.entity().downgrade();
 
         cx.spawn_in(window, async move |_, window| {
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
                     storage::workspace::archive::import_workspace(
-                        &db,
-                        &data_dir,
+                        &store,
+                        data_dir.as_path(),
                         &archive_path,
                         mode,
                     )
@@ -1047,15 +1044,14 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let view = cx.entity().downgrade();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
 
         cx.spawn_in(window, async move |_, window| {
-            let inserted = runtime
-                .spawn(
-                    async move { storage::workspace::create_board(&db, project_id, title).await },
-                )
+            let inserted = app_runtime
+                .spawn_store(window.background_executor(), move |store| async move {
+                    storage::workspace::create_board(&store, project_id, title).await
+                })
                 .await
                 .ok()?
                 .ok()?;
@@ -1130,8 +1126,7 @@ async fn publish_change_revision(
     last_published: &mut Option<ChangeRevision>,
 ) -> anyhow::Result<bool> {
     let store = store.into();
-    let db = store.clone();
-    let revision = storage::workspace::load_change_revision(&db).await?;
+    let revision = storage::workspace::load_change_revision(&store).await?;
     if *last_published == Some(revision) {
         return Ok(true);
     }
@@ -1411,7 +1406,7 @@ mod tests {
                 shell.flush_pending_workspace_title_saves(cx)
             })
         });
-        runtime.block_on(flush);
+        cx.foreground_executor().block_on(flush);
 
         let saved = runtime
             .block_on(entity::note::Entity::find_by_id(note_id as i64).one(&db))

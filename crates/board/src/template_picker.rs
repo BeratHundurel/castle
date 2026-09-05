@@ -152,12 +152,13 @@ impl BoardTemplatePicker {
     }
 
     fn load_custom_board_templates(&mut self, cx: &mut Context<Self>) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx
+            .global::<AppRuntime>()
+            .spawn_store(cx.background_executor(), move |store| async move {
+                storage::board::templates::load_custom_templates(&store).await
+            });
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move { storage::board::templates::load_custom_templates(&db).await })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 let Some(picker) = this.state.as_mut() else {
                     return;
@@ -546,23 +547,23 @@ impl BoardTemplatePicker {
         picker.creating = true;
         picker.error = None;
         let project_id = picker.project_id;
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                storage::board::templates::create_board_from_template(
+                    &store,
+                    project_id,
+                    title,
+                    template.definition,
+                )
+                .await
+            },
+        );
         let picker_view = cx.entity().downgrade();
         cx.notify();
 
         cx.spawn_in(window, async move |_, window| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board::templates::create_board_from_template(
-                        &db,
-                        project_id,
-                        title,
-                        template.definition,
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             window
                 .update(|window, cx| match result {
@@ -621,16 +622,16 @@ impl BoardTemplatePicker {
         }
         picker.deleting_template_id = Some(template_id);
         picker.error = None;
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                storage::board::templates::delete_custom_template(&store, template_id).await
+            },
+        );
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::board::templates::delete_custom_template(&db, template_id).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 let Some(picker) = this.state.as_mut() else {
                     return;

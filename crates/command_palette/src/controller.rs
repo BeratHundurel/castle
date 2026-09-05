@@ -188,7 +188,7 @@ impl CommandPaletteView {
                 .timer(WORKSPACE_SEARCH_DEBOUNCE)
                 .await;
             let result = app_runtime
-                .spawn_store(move |store| async move {
+                .spawn_store(cx.background_executor(), move |store| async move {
                     search::search_workspace(&store, &query, 20).await
                 })
                 .await;
@@ -228,7 +228,9 @@ impl CommandPaletteView {
         let app_runtime = cx.global::<AppRuntime>().clone();
         cx.spawn(async move |this, cx| {
             let result = app_runtime
-                .spawn_store(|store| async move { search::rebuild_search_index(&store).await })
+                .spawn_store(cx.background_executor(), |store| async move {
+                    search::rebuild_search_index(&store).await
+                })
                 .await;
 
             this.update(cx, |this, cx| {

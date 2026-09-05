@@ -831,7 +831,6 @@ impl DocumentEditorView {
         let generation = self.analysis.request.begin();
         let kind = self.kind;
         let analyze_json_outline = self.analysis.outline_visible;
-        let background = cx.background_executor().clone();
 
         let task = cx.spawn(async move |this, cx| {
             if delayed {
@@ -856,7 +855,8 @@ impl DocumentEditorView {
                 return;
             };
 
-            let analysis = background
+            let analysis = cx
+                .background_executor()
                 .spawn(async move { analyze_document(kind, content, analyze_json_outline) })
                 .await;
             this.update(cx, |this, cx| {

@@ -15,20 +15,20 @@ impl DocumentEditorView {
         generation: u64,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        Self::load_note_links_with_runtime(note_id, generation, runtime, cx)
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        Self::load_note_links_with_runtime(note_id, generation, app_runtime, cx)
     }
 
     fn load_note_links_with_runtime(
         note_id: u32,
         generation: u64,
-        runtime: tokio::runtime::Handle,
+        app_runtime: AppRuntime,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppRuntime>().store();
+        let db = app_runtime.store();
         cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let load = runtime.spawn(async move {
+            let load = app_runtime.spawn_tokio(cx.background_executor(), async move {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
@@ -110,18 +110,18 @@ impl DocumentEditorView {
     }
 
     pub fn refresh_note_links(&mut self, cx: &mut Context<Self>) {
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        self.refresh_note_links_with_runtime(runtime, cx);
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        self.refresh_note_links_with_runtime(app_runtime, cx);
     }
 
     pub(super) fn refresh_note_links_with_runtime(
         &mut self,
-        runtime: tokio::runtime::Handle,
+        app_runtime: AppRuntime,
         cx: &mut Context<Self>,
     ) {
         let generation = self.inspector_links.request.begin();
         self.inspector_links.loading = true;
-        let task = Self::load_note_links_with_runtime(self.note_id, generation, runtime, cx);
+        let task = Self::load_note_links_with_runtime(self.note_id, generation, app_runtime, cx);
         self.inspector_links.request.set_task(task);
         cx.notify();
     }

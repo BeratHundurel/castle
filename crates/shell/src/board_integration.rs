@@ -51,16 +51,15 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                storage::workspace::links::load_workspace_link_catalog(&store).await
+            },
+        );
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
-            let result =
-                runtime
-                    .spawn(async move {
-                        storage::workspace::links::load_workspace_link_catalog(&db).await
-                    })
-                    .await;
+            let result = task.await;
             window
                 .update(|window, cx| match result {
                     Ok(Ok(catalog)) => app.update(cx, |this, cx| {
@@ -174,24 +173,24 @@ impl AppShell {
                                 .push_notification(Notification::error("Enter a card title."), cx);
                             return false;
                         }
-                        let db = cx.global::<AppRuntime>().store();
-                        let runtime = cx.global::<AppRuntime>().tokio_handle();
+                        let task = cx.global::<AppRuntime>().spawn_store(
+                            cx.background_executor(),
+                            move |store| async move {
+                                storage::workspace::links::create_card_from_note_selection(
+                                    &store,
+                                    i64::from(note_id),
+                                    list_id,
+                                    title,
+                                    storage::time::unix_timestamp_seconds(),
+                                )
+                                .await
+                            },
+                        );
                         let app_for_result = app.clone();
                         app.update(cx, |this, cx| {
                             this.last_card_destination = Some(list_id);
                             cx.spawn_in(window, async move |_, window| {
-                                let result = runtime
-                                    .spawn(async move {
-                                        storage::workspace::links::create_card_from_note_selection(
-                                            &db,
-                                            i64::from(note_id),
-                                            list_id,
-                                            title,
-                                            storage::time::unix_timestamp_seconds(),
-                                        )
-                                        .await
-                                    })
-                                    .await;
+                                let result = task.await;
                                 window
                                     .update(|window, cx| match result {
                                         Ok(Ok(created)) => {
@@ -299,52 +298,52 @@ impl AppShell {
         if window.has_active_dialog(cx) {
             return;
         }
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                let catalog =
+                    storage::workspace::links::load_workspace_reference_catalog(&store).await?;
+                let boards = catalog
+                    .items
+                    .iter()
+                    .filter(|entry| {
+                        entry.item.kind == storage::workspace::links::WorkspaceItemKind::Board
+                    })
+                    .collect::<Vec<_>>();
+                let mut choices = Vec::new();
+                for board in boards {
+                    let board_path = catalog.item_path(board).join(" / ");
+                    choices.push((
+                        board.item.id,
+                        None,
+                        board_path.clone(),
+                        "All cards".to_string(),
+                        catalog
+                            .format_board_view(board.item.id, None)
+                            .unwrap_or_default(),
+                    ));
+                    choices.extend(
+                        catalog
+                            .views
+                            .iter()
+                            .filter(|view| view.board_id == board.item.id)
+                            .filter_map(|view| {
+                                Some((
+                                    board.item.id,
+                                    Some(view.id),
+                                    board_path.clone(),
+                                    view.name.clone(),
+                                    catalog.format_board_view(board.item.id, Some(view.id))?,
+                                ))
+                            }),
+                    );
+                }
+                Ok::<_, anyhow::Error>(choices)
+            },
+        );
         let app = cx.entity();
         cx.spawn_in(window, async move |_, window| {
-            let result = runtime
-                .spawn(async move {
-                    let catalog =
-                        storage::workspace::links::load_workspace_reference_catalog(&db).await?;
-                    let boards = catalog
-                        .items
-                        .iter()
-                        .filter(|entry| {
-                            entry.item.kind == storage::workspace::links::WorkspaceItemKind::Board
-                        })
-                        .collect::<Vec<_>>();
-                    let mut choices = Vec::new();
-                    for board in boards {
-                        let board_path = catalog.item_path(board).join(" / ");
-                        choices.push((
-                            board.item.id,
-                            None,
-                            board_path.clone(),
-                            "All cards".to_string(),
-                            catalog
-                                .format_board_view(board.item.id, None)
-                                .unwrap_or_default(),
-                        ));
-                        choices.extend(
-                            catalog
-                                .views
-                                .iter()
-                                .filter(|view| view.board_id == board.item.id)
-                                .filter_map(|view| {
-                                    Some((
-                                        board.item.id,
-                                        Some(view.id),
-                                        board_path.clone(),
-                                        view.name.clone(),
-                                        catalog.format_board_view(board.item.id, Some(view.id))?,
-                                    ))
-                                }),
-                        );
-                    }
-                    Ok::<_, anyhow::Error>(choices)
-                })
-                .await;
+            let result = task.await;
             window
                 .update(|window, cx| match result {
                     Ok(Ok(choices)) => app.update(cx, |this, cx| {

@@ -1,4 +1,5 @@
 use super::*;
+use runtime::AppRuntime;
 use settings::{StoredTab, TabSession};
 
 impl AppShell {
@@ -571,8 +572,8 @@ impl AppShell {
                 title: title.clone(),
             })
             .generation;
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         let save_lock = self.workspace.title_save_lock.clone();
 
         cx.spawn(async move |this, cx| {
@@ -591,8 +592,8 @@ impl AppShell {
                 return;
             }
 
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
                     let _guard = save_lock.lock().await;
                     storage::workspace::persist_workspace_title(&db, target, title).await
                 })
@@ -651,17 +652,18 @@ impl AppShell {
             .into_iter()
             .map(|(target, pending)| (target, pending.title))
             .collect::<Vec<_>>();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         let save_lock = self.workspace.title_save_lock.clone();
+        let background_executor = cx.background_executor().clone();
 
         async move {
             if pending.is_empty() {
                 return;
             }
 
-            let result = runtime
-                .spawn(async move {
+            let result = app_runtime
+                .spawn_tokio(&background_executor, async move {
                     let _guard = save_lock.lock().await;
                     for (target, title) in pending {
                         storage::workspace::persist_workspace_title(&db, target, title).await?;

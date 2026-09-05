@@ -85,10 +85,9 @@ pub(super) struct SearchPreviewBlock {
 
 pub(super) fn search_preview_blocks(value: &str, query: &str) -> Vec<SearchPreviewBlock> {
     let raw_blocks = split_search_preview_blocks(value);
-    let normalized_query = normalized_search_phrase(query);
+    let terms = search_query_terms(query);
     let mut blocks = Vec::with_capacity(raw_blocks.len());
-    let mut marker_match_index = None;
-    let mut exact_match_index = None;
+    let mut best: Option<(bool, usize, usize)> = None;
 
     for raw in raw_blocks {
         let marker_match = has_search_marker_match(raw);
@@ -98,13 +97,15 @@ pub(super) fn search_preview_blocks(value: &str, query: &str) -> Vec<SearchPrevi
         }
 
         let block_index = blocks.len();
-        if marker_match_index.is_none() && marker_match {
-            marker_match_index = Some(block_index);
-        }
-        if exact_match_index.is_none()
-            && contains_exact_search(&markdown, normalized_query.as_deref())
-        {
-            exact_match_index = Some(block_index);
+        let overlap = block_term_overlap(&markdown, &terms);
+        let is_better = match best {
+            None => marker_match || overlap > 0,
+            Some((best_marked, best_overlap, _)) => {
+                (marker_match, overlap) > (best_marked, best_overlap)
+            }
+        };
+        if is_better {
+            best = Some((marker_match, overlap, block_index));
         }
         blocks.push(SearchPreviewBlock {
             markdown,
@@ -112,14 +113,70 @@ pub(super) fn search_preview_blocks(value: &str, query: &str) -> Vec<SearchPrevi
         });
     }
 
-    if let Some(block) = marker_match_index
-        .or(exact_match_index)
-        .and_then(|index| blocks.get_mut(index))
+    if let Some((_, _, index)) = best
+        && let Some(block) = blocks.get_mut(index)
     {
         block.is_match = true;
     }
 
     blocks
+}
+
+fn search_query_terms(query: &str) -> Vec<String> {
+    let raw = query
+        .split_whitespace()
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if raw.len() <= 1 {
+        return raw.into_iter().map(|word| word.to_lowercase()).collect();
+    }
+    let mut terms = raw
+        .iter()
+        .filter(|word| word.chars().count() > 1)
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        terms = raw.into_iter().map(|word| word.to_lowercase()).collect();
+    }
+    terms
+}
+
+fn block_term_overlap(markdown: &str, terms: &[String]) -> usize {
+    terms
+        .iter()
+        .filter(|term| block_contains_term(markdown, term))
+        .count()
+}
+
+fn block_contains_term(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return false;
+    }
+    if needle_lower.is_ascii() {
+        return contains_ascii_case_insensitive(haystack, needle_lower.as_bytes());
+    }
+    haystack.to_lowercase().contains(needle_lower)
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle_lower: &[u8]) -> bool {
+    let haystack = haystack.as_bytes();
+    if needle_lower.len() > haystack.len() {
+        return false;
+    }
+
+    let first = needle_lower[0];
+    let last_start = haystack.len() - needle_lower.len();
+    let mut start = 0;
+    while start <= last_start {
+        if haystack[start].to_ascii_lowercase() == first
+            && haystack[start..start + needle_lower.len()].eq_ignore_ascii_case(needle_lower)
+        {
+            return true;
+        }
+        start += 1;
+    }
+
+    false
 }
 
 fn split_search_preview_blocks(value: &str) -> Vec<&str> {
@@ -197,36 +254,101 @@ fn has_search_marker_match(value: &str) -> bool {
     marker_has_text == Some(true)
 }
 
-fn contains_exact_search(haystack: &str, needle: Option<&str>) -> bool {
-    let Some(needle) = needle else {
-        return false;
-    };
+fn exact_search_ranges(haystack: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    if let Some(needle) = normalized_search_phrase(query)
+        && !needle.is_empty()
+        && haystack.is_ascii()
+        && needle.is_ascii()
+    {
+        let mut haystack_lower = haystack.to_string();
+        haystack_lower.make_ascii_lowercase();
 
-    if needle.is_empty() || !haystack.is_ascii() || !needle.is_ascii() {
-        return false;
-    }
+        let mut needle_lower = needle;
+        needle_lower.make_ascii_lowercase();
 
-    let haystack = haystack.as_bytes();
-    let needle = needle.as_bytes();
-    if needle.len() > haystack.len() {
-        return false;
-    }
-
-    let first_lower = needle[0].to_ascii_lowercase();
-    let first_upper = needle[0].to_ascii_uppercase();
-    let last_start = haystack.len() - needle.len();
-    let mut start = 0;
-    while start <= last_start {
-        let first = haystack[start];
-        if (first == first_lower || first == first_upper)
-            && haystack[start..start + needle.len()].eq_ignore_ascii_case(needle)
-        {
-            return true;
+        let mut ranges = Vec::new();
+        let mut search_start = 0;
+        while let Some(offset) = haystack_lower[search_start..].find(&needle_lower) {
+            let start = search_start + offset;
+            let end = start + needle_lower.len();
+            ranges.push(start..end);
+            search_start = end;
         }
-        start += 1;
+        if !ranges.is_empty() {
+            return ranges;
+        }
     }
 
-    false
+    longest_term_run_ranges(haystack, &search_query_terms(query))
+}
+
+fn longest_term_run_ranges(haystack: &str, query_terms: &[String]) -> Vec<std::ops::Range<usize>> {
+    if query_terms.len() < 2 {
+        return Vec::new();
+    }
+
+    let words = haystack_word_spans(haystack);
+    if words.is_empty() {
+        return Vec::new();
+    }
+
+    let mut best_len = 1;
+    let mut spans = Vec::new();
+    for run_start in 0..query_terms.len() {
+        for run_end in run_start + 2..=query_terms.len() {
+            let run = &query_terms[run_start..run_end];
+            let mut matched = false;
+            for window in words.windows(run.len()) {
+                if window
+                    .iter()
+                    .zip(run)
+                    .all(|((word, _, _), term)| word == term)
+                {
+                    let start = window.first().map(|(_, start, _)| *start).unwrap_or(0);
+                    let end = window.last().map(|(_, _, end)| *end).unwrap_or(0);
+                    if run.len() > best_len {
+                        best_len = run.len();
+                        spans.clear();
+                        spans.push(start..end);
+                    } else if run.len() == best_len {
+                        spans.push(start..end);
+                    }
+                    matched = true;
+                }
+            }
+            if !matched {
+                break;
+            }
+        }
+    }
+
+    spans.sort_by_key(|range| (range.start, range.end));
+    let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        if let Some(last) = merged.last_mut()
+            && span.start <= last.end
+        {
+            last.end = last.end.max(span.end);
+            continue;
+        }
+        merged.push(span);
+    }
+    merged
+}
+
+fn haystack_word_spans(haystack: &str) -> Vec<(String, usize, usize)> {
+    let mut words = Vec::new();
+    let mut word_start = None;
+    for (index, ch) in haystack.char_indices().chain([(haystack.len(), '\0')]) {
+        if ch.is_alphanumeric() || ch == '_' {
+            if word_start.is_none() {
+                word_start = Some(index);
+            }
+        } else if let Some(start) = word_start.take() {
+            words.push((haystack[start..index].to_lowercase(), start, index));
+        }
+    }
+    words
 }
 
 pub(super) fn render_highlighted_preview_line(
@@ -416,33 +538,6 @@ fn normalized_search_phrase(query: &str) -> Option<String> {
     Some(phrase)
 }
 
-fn exact_search_ranges(haystack: &str, query: &str) -> Vec<std::ops::Range<usize>> {
-    let Some(needle) = normalized_search_phrase(query) else {
-        return Vec::new();
-    };
-
-    if needle.is_empty() || !haystack.is_ascii() || !needle.is_ascii() {
-        return Vec::new();
-    }
-
-    let mut haystack_lower = haystack.to_string();
-    haystack_lower.make_ascii_lowercase();
-
-    let mut needle_lower = needle;
-    needle_lower.make_ascii_lowercase();
-
-    let mut ranges = Vec::new();
-    let mut search_start = 0;
-    while let Some(offset) = haystack_lower[search_start..].find(&needle_lower) {
-        let start = search_start + offset;
-        let end = start + needle_lower.len();
-        ranges.push(start..end);
-        search_start = end;
-    }
-
-    ranges
-}
-
 pub(super) fn search_result_preview_source(result: &SearchResult) -> &str {
     if result.preview.trim().is_empty() {
         search_result_snippet_source(result)
@@ -453,7 +548,7 @@ pub(super) fn search_result_preview_source(result: &SearchResult) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::search_preview_blocks;
+    use super::{exact_search_ranges, search_preview_blocks};
     use std::{hint::black_box, time::Instant};
     use test_support as test_alloc;
 
@@ -601,6 +696,99 @@ mod tests {
                 ("A normalized search phrase appears here.", true),
             ],
         );
+    }
+
+    #[test]
+    fn multi_word_query_selects_block_where_terms_cooccur() {
+        assert_preview_blocks(
+            "The preface was filler.\n\n## Why the first root fix was still not enough",
+            "the root fix was",
+            &[
+                ("The preface was filler.", false),
+                ("## Why the first root fix was still not enough", true),
+            ],
+        );
+    }
+
+    #[test]
+    fn marked_multi_word_query_prefers_cooccurrence_over_earlier_marker() {
+        assert_preview_blocks(
+            "The \u{1}preamble\u{2} \u{1}was\u{2} filler.\n\n## Why \u{1}the\u{2} first \u{1}root\u{2} \u{1}fix\u{2} \u{1}was\u{2} still not enough",
+            "the root fix was",
+            &[
+                ("The preamble was filler.", false),
+                ("## Why the first root fix was still not enough", true),
+            ],
+        );
+    }
+
+    #[test]
+    fn multi_word_highlight_falls_back_to_longest_term_run() {
+        let ranges = exact_search_ranges(
+            "Why the first root fix was still not enough",
+            "the root fix was",
+        );
+        assert_eq!(ranges, vec![14..26]);
+
+        let single = exact_search_ranges("root and Root", "root");
+        assert_eq!(single, vec![0..4, 9..13]);
+    }
+
+    #[tokio::test]
+    async fn multi_word_search_selects_cooccurrence_from_storage_preview() {
+        use entity::note;
+        use migration::{Migrator, MigratorTrait};
+        use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("search chain test database should connect");
+        Migrator::up(&db, None)
+            .await
+            .expect("search chain test database should migrate");
+        let filler = "The preliminary note was just filler text. ".repeat(160);
+        note::ActiveModel {
+            title: Set("The Bug".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(format!(
+                "{filler}\n\n## Why the first root fix was still not enough\n\nThe first repair attempt was incomplete."
+            )),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("search chain test note should insert");
+        storage::workspace::search::rebuild_search_index(&db)
+            .await
+            .expect("search chain test index should build");
+        let results = storage::workspace::search::search_workspace(&db, "the root fix was", 10)
+            .await
+            .expect("search chain test search should run");
+        assert_eq!(results.len(), 1);
+
+        let blocks = search_preview_blocks(&results[0].preview, "the root fix was");
+        let selected = blocks
+            .iter()
+            .find(|block| block.is_match)
+            .expect("search chain should select a block");
+        assert!(
+            selected.markdown.contains("first root fix"),
+            "selected block should be the co-occurrence, got: {}",
+            selected.markdown
+        );
+        let line = selected
+            .markdown
+            .lines()
+            .find(|line| line.contains("root fix"))
+            .expect("selected block should contain the term run");
+        let ranges = exact_search_ranges(line, "the root fix was");
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(&line[ranges[0].clone()], "root fix was");
     }
 
     #[test]

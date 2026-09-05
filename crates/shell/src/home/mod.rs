@@ -24,7 +24,7 @@ fn today_entry_navigation_target(entry: &TodayEntry) -> ::workspace::WorkspaceNa
     }
 }
 
-fn remove_purged_artifacts(artifacts: PurgedArtifacts, attachments_dir: std::path::PathBuf) {
+fn remove_purged_artifacts(artifacts: PurgedArtifacts, attachments_dir: &std::path::Path) {
     for path in artifacts.managed_files {
         let _ = std::fs::remove_file(path);
     }
@@ -171,7 +171,7 @@ mod tests {
                 attachment_note_ids: vec![41],
                 attachment_entry_ids: vec![51],
             },
-            attachments_dir,
+            &attachments_dir,
         );
 
         assert!(!managed_file.exists());
@@ -533,6 +533,120 @@ mod tests {
         assert!(
             closed_dirty_note.upgrade().is_none(),
             "a closed editor must be released after autosave succeeds"
+        );
+    }
+
+    #[gpui::test]
+    fn reopening_many_note_tabs_keeps_the_ui_executor_responsive(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let db = runtime
+            .block_on(async {
+                let mut options = ConnectOptions::new("sqlite::memory:");
+                options.max_connections(1).min_connections(1);
+                let db = Database::connect(options).await?;
+                Migrator::up(&db, None).await?;
+                for index in 0..15 {
+                    note::ActiveModel {
+                        title: Set(format!("Reopen note {index}")),
+                        project_id: Set(None),
+                        file_path: Set(None),
+                        file_managed_by_app: Set(false),
+                        cached_content: Set(format!("# Reopen note {index}")),
+                        file_missing_since: Set(None),
+                        created_at: Set(index),
+                        updated_at: Set(index),
+                        ..Default::default()
+                    }
+                    .insert(&db)
+                    .await?;
+                }
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("many-note database setup should succeed");
+        let note_ids = runtime
+            .block_on(note::Entity::find().all(&db))
+            .expect("many-note rows should load")
+            .into_iter()
+            .map(|note| note.id as u32)
+            .collect::<Vec<_>>();
+        let app_db = runtime::AppRuntime::new(Arc::new(db), PathBuf::new());
+        let settings_dir = tempfile::tempdir().expect("settings directory should be created");
+
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_component::Theme::default());
+            gpui_component::init(cx);
+            cx.set_global(settings::AppSettings::load(settings_dir.path()));
+            cx.set_global(app_db);
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, test_shell_integration(), cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+            })
+            .expect("many-note test window should open")
+        });
+        let shell = shell.expect("app shell should exist");
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+
+        for cycle in 0..2 {
+            cx.update(|window, cx| {
+                shell.update(cx, |shell, cx| {
+                    for note_id in &note_ids {
+                        shell.open_note_tab(
+                            *note_id,
+                            None,
+                            format!("Reopen note {note_id}").into(),
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            });
+            assert_eq!(
+                shell.read_with(&cx, |shell, _| shell.tabs.open_tabs.len()),
+                note_ids.len(),
+                "cycle {cycle} should open every note tab"
+            );
+
+            cx.update(|window, cx| {
+                shell.update(cx, |shell, cx| shell.close_all_tabs(window, cx));
+            });
+            assert_eq!(
+                shell.read_with(&cx, |shell, _| shell.tabs.open_tabs.len()),
+                1,
+                "cycle {cycle} should leave only the chooser tab"
+            );
+        }
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| {
+                for note_id in &note_ids {
+                    shell.open_note_tab(
+                        *note_id,
+                        None,
+                        format!("Reopen note {note_id}").into(),
+                        window,
+                        cx,
+                    );
+                }
+            });
+        });
+        const MAX_EXECUTOR_TICKS: usize = 10_000;
+        let parked = (0..MAX_EXECUTOR_TICKS).any(|_| !cx.executor().tick());
+        assert!(
+            parked,
+            "executor kept making progress for {MAX_EXECUTOR_TICKS} ticks without quiescing"
+        );
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        assert_eq!(
+            shell.read_with(&cx, |shell, _| shell.tabs.open_tabs.len()),
+            note_ids.len(),
+            "the final reopen should open every note tab"
         );
     }
 }

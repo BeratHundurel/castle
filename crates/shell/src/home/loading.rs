@@ -1,4 +1,5 @@
 use super::*;
+use runtime::AppRuntime;
 
 impl AppShell {
     pub(crate) fn load_home(&mut self, cx: &mut Context<Self>) {
@@ -7,14 +8,16 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         self.home.phase = LoadPhase::Loading {
             had_content: self.home.phase.has_content(),
         };
         cx.spawn(async move |this, cx| {
-            let result = match runtime
-                .spawn(async move { storage::workspace::home::load_home(&db).await })
+            let result = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    storage::workspace::home::load_home(&db).await
+                })
                 .await
             {
                 Ok(result) => result,
@@ -49,14 +52,16 @@ impl AppShell {
             return;
         }
 
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         self.trash.phase = LoadPhase::Loading {
             had_content: self.trash.phase.has_content(),
         };
         cx.spawn(async move |this, cx| {
-            let result = match runtime
-                .spawn(async move { storage::workspace::trash::load_trash(&db).await })
+            let result = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    storage::workspace::trash::load_trash(&db).await
+                })
                 .await
             {
                 Ok(result) => result,
@@ -122,11 +127,11 @@ impl AppShell {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        self.record_opened_task = Some(cx.spawn(async move |_, _| {
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
+        self.record_opened_task = Some(cx.spawn(async move |_, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let update = runtime.spawn(async move {
+            let update = app_runtime.spawn_tokio(cx.background_executor(), async move {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
@@ -173,7 +178,7 @@ impl AppShell {
         let view = self.open_board_tab(
             entry.board_id,
             entry.project_id,
-            entry.board_title.clone().into(),
+            entry.board_title.into(),
             window,
             cx,
         );

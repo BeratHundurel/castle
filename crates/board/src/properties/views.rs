@@ -109,16 +109,17 @@ impl BoardView {
             cx.notify();
             return;
         };
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::set_selected_board_view(
                     &store,
                     i64::from(board_id),
                     view_id,
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -164,11 +165,12 @@ impl BoardView {
         let Some(view_id) = self.properties.renaming_view_id else {
             return;
         };
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::rename_board_view(&store, view_id, name).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -212,9 +214,9 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 let view = storage::board::properties::create_board_view(
                     &store,
                     i64::from(board_id),
@@ -229,7 +231,8 @@ impl BoardView {
                 )
                 .await?;
                 Ok::<_, anyhow::Error>(view)
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -263,11 +266,12 @@ impl BoardView {
         self.filters
             .sync_config(&mut self.properties.active_view_config);
         let config = self.properties.active_view_config.clone();
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::update_board_view(&store, view_id, config).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -299,11 +303,12 @@ impl BoardView {
     }
 
     pub(crate) fn set_default_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::set_default_board_view(&store, view_id).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -320,11 +325,12 @@ impl BoardView {
     }
 
     pub(crate) fn delete_saved_view(&mut self, view_id: i64, cx: &mut Context<Self>) {
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::delete_board_view(&store, view_id).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {

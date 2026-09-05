@@ -301,9 +301,9 @@ impl BoardView {
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::links::set_manual_note_link(
                     &store,
                     note_id,
@@ -312,7 +312,8 @@ impl BoardView {
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -368,9 +369,9 @@ impl BoardView {
             .find(|entry| entry.item == item)
             .and_then(|entry| entry.board_id)
             .and_then(|id| u32::try_from(id).ok());
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::links::set_manual_note_link(
                     &store,
                     note_id,
@@ -379,7 +380,8 @@ impl BoardView {
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {

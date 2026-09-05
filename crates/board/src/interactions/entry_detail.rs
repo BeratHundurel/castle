@@ -34,9 +34,9 @@ impl BoardView {
 
         let title = trimmed_title.to_string();
         let description = description.to_string();
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::update_board_card(
                     &store,
                     entry_id,
@@ -45,7 +45,8 @@ impl BoardView {
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;

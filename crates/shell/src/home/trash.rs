@@ -1,4 +1,5 @@
 use super::*;
+use runtime::AppRuntime;
 
 impl AppShell {
     pub(crate) fn render_trash(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -201,15 +202,17 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         cx.spawn_in(window, async move |this, cx| {
             let request = RestoreTrashItem(MoveToTrash {
                 kind: item.kind,
                 id: item.id,
             });
-            let result = match runtime
-                .spawn(async move { storage::workspace::trash::restore_item(&db, request).await })
+            let result = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    storage::workspace::trash::restore_item(&db, request).await
+                })
                 .await
             {
                 Ok(result) => result,
@@ -294,29 +297,30 @@ impl AppShell {
         item: storage::workspace::trash::TrashItem,
         cx: &mut Context<Self>,
     ) {
-        let app_db = cx.global::<AppRuntime>();
-        let db = app_db.store();
-        let attachments_dir = app_db.data_dir().join("attachments");
-        let background = cx.background_executor().clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
+        let attachments_dir = app_runtime.data_dir().join("attachments");
         cx.spawn(async move |this, cx| {
             let request = PurgeTrashItem(MoveToTrash {
                 kind: item.kind,
                 id: item.id,
             });
-            let result = match runtime
-                .spawn(async move { storage::workspace::trash::purge_item(&db, request).await })
+            let result = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    storage::workspace::trash::purge_item(&db, request).await
+                })
                 .await
             {
-                Ok(result) => result,
-                Err(err) => Err(anyhow::anyhow!(err)),
+                Ok(Ok(artifacts)) => {
+                    let _ = cx
+                        .background_executor()
+                        .spawn(async move { remove_purged_artifacts(artifacts, &attachments_dir) })
+                        .await;
+                    Ok(())
+                }
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(anyhow::Error::from(error)),
             };
-            if let Ok(artifacts) = &result {
-                let artifacts = artifacts.clone();
-                let _ = background
-                    .spawn(async move { remove_purged_artifacts(artifacts, attachments_dir) })
-                    .await;
-            }
             this.update(cx, |this, cx| match result {
                 Ok(_) => {
                     match item.kind {
@@ -365,25 +369,26 @@ impl AppShell {
     }
 
     pub(crate) fn empty_trash(&mut self, cx: &mut Context<Self>) {
-        let app_db = cx.global::<AppRuntime>();
-        let db = app_db.store();
-        let attachments_dir = app_db.data_dir().join("attachments");
-        let background = cx.background_executor().clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
+        let attachments_dir = app_runtime.data_dir().join("attachments");
         cx.spawn(async move |this, cx| {
-            let result = match runtime
-                .spawn(async move { storage::workspace::trash::purge_all(&db).await })
+            let result = match app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    storage::workspace::trash::purge_all(&db).await
+                })
                 .await
             {
-                Ok(result) => result,
-                Err(err) => Err(anyhow::anyhow!(err)),
+                Ok(Ok(artifacts)) => {
+                    let _ = cx
+                        .background_executor()
+                        .spawn(async move { remove_purged_artifacts(artifacts, &attachments_dir) })
+                        .await;
+                    Ok(())
+                }
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(anyhow::Error::from(error)),
             };
-            if let Ok(artifacts) = &result {
-                let artifacts = artifacts.clone();
-                let _ = background
-                    .spawn(async move { remove_purged_artifacts(artifacts, attachments_dir) })
-                    .await;
-            }
             this.update(cx, |this, cx| {
                 if let Err(err) = result {
                     this.trash.phase = LoadPhase::Failed {

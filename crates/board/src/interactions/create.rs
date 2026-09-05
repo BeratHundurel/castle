@@ -20,16 +20,17 @@ impl BoardView {
 
     pub(crate) fn duplicate_entry(&mut self, source: BoardCardState, cx: &mut Context<Self>) {
         let board_id = self.data.board_id;
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::duplicate_board_card(
                     &store,
                     board_card_draft(source),
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {
@@ -74,16 +75,17 @@ impl BoardView {
             return;
         };
         let board_id = self.data.board_id;
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::duplicate_board_list(
                     &store,
                     board_list_draft(source),
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {
@@ -164,16 +166,17 @@ impl BoardView {
             cx.notify();
         }
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::create_board_card(
                     &store,
                     board_card_draft(entry),
                     storage::time::unix_timestamp_seconds(),
                 )
                 .await
-            });
+            },
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -227,11 +230,12 @@ impl BoardView {
         self.data.lists.push(card.clone());
         cx.notify();
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::create_board_list(&store, board_list_draft(card)).await
-            });
+            },
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;

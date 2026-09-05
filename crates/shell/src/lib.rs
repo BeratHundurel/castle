@@ -39,7 +39,6 @@ use document_editor::{
     DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState,
     unique_note_path,
 };
-use runtime::AppRuntime;
 use settings::{
     AgentAccess, AppSettings, SettingsIntegration, SettingsView, ShortcutReference, StoredTab,
     WorkspaceArchiveActions,

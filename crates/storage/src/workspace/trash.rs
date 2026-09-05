@@ -144,7 +144,7 @@ pub async fn move_to_trash(
         [deleted_at.into(), (item.id as i64).into()],
     ))
     .await?;
-    crate::workspace::search::rebuild_search_index(db).await?;
+    remove_trashed_item_from_search_index(db, item).await?;
     Ok(())
 }
 
@@ -175,7 +175,7 @@ pub async fn restore_item(
     if result.rows_affected() != 1 {
         bail!("This item is no longer in Trash");
     }
-    crate::workspace::search::rebuild_search_index(db).await?;
+    index_restored_item_in_search_index(db, item.0).await?;
     Ok(())
 }
 
@@ -190,6 +190,7 @@ pub async fn purge_item(
         attachment_entry_ids: attachment_entry_ids_for_item(db, item.0).await?,
         ..Default::default()
     };
+    remove_purged_item_from_search_index(db, item.0).await?;
 
     if item.0.kind == TrashItemKind::Note {
         let row = db
@@ -253,8 +254,91 @@ pub async fn purge_item(
         [(item.0.id as i64).into()],
     ))
     .await?;
-    crate::workspace::search::rebuild_search_index(db).await?;
     Ok(artifacts)
+}
+
+async fn remove_trashed_item_from_search_index(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: MoveToTrash,
+) -> Result<()> {
+    use crate::workspace::search as search_index;
+    match item.kind {
+        TrashItemKind::Project => {
+            search_index::remove_project_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Note => {
+            search_index::remove_note_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Board => {
+            search_index::remove_board_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::List => {
+            search_index::remove_card_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Entry => {
+            search_index::remove_entry_from_index(db, item.id).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn index_restored_item_in_search_index(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: MoveToTrash,
+) -> Result<()> {
+    use crate::workspace::search as search_index;
+    match item.kind {
+        TrashItemKind::Project => {
+            search_index::index_restored_project_subtree(db, item.id).await?;
+        }
+        TrashItemKind::Note => {
+            search_index::index_restored_note(db, item.id).await?;
+        }
+        TrashItemKind::Board => {
+            search_index::index_restored_board_subtree(db, item.id).await?;
+        }
+        TrashItemKind::List => {
+            search_index::index_restored_card_subtree(db, item.id).await?;
+        }
+        TrashItemKind::Entry => {
+            search_index::index_restored_entry(db, item.id).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn remove_purged_item_from_search_index(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    item: MoveToTrash,
+) -> Result<()> {
+    use crate::workspace::search as search_index;
+    match item.kind {
+        TrashItemKind::Project => {
+            search_index::remove_project_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Note => {
+            search_index::remove_note_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Board => {
+            search_index::remove_board_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::List => {
+            search_index::remove_card_subtree_from_index(db, item.id).await?;
+        }
+        TrashItemKind::Entry => {
+            search_index::remove_entry_from_index(db, item.id).await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn purge_all(
@@ -408,7 +492,8 @@ mod tests {
     use entity::{board, card, entry, note, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{
-        ActiveModelTrait, ActiveValue::Set, ConnectOptions, ConnectionTrait, Database, EntityTrait,
+        ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectOptions, ConnectionTrait, Database,
+        EntityTrait, QueryFilter,
     };
 
     #[tokio::test]
@@ -657,6 +742,90 @@ mod tests {
         })
         .await??;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn moving_one_note_keeps_other_search_results() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        for title in ["Keep searchable", "Trash me"] {
+            note::ActiveModel {
+                title: Set(title.to_string()),
+                project_id: Set(None),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(format!("body for {title}")),
+                file_missing_since: Set(None),
+                created_at: Set(1),
+                updated_at: Set(1),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        crate::workspace::search::rebuild_search_index(&db).await?;
+        let trashed = note::Entity::find()
+            .filter(note::Column::Title.eq("Trash me"))
+            .one(&db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("seeded note is missing"))?;
+        move_to_trash(
+            &db,
+            MoveToTrash {
+                kind: TrashItemKind::Note,
+                id: trashed.id as u32,
+            },
+            5,
+        )
+        .await?;
+        let hits = crate::workspace::search::search_workspace(&db, "searchable", 10).await?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Keep searchable");
+        let trashed_hits = crate::workspace::search::search_workspace(&db, "Trash me", 10).await?;
+        assert!(trashed_hits.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "perf baseline: move_to_trash incremental search index maintenance"]
+    async fn baseline_move_to_trash_rebuilds_whole_index() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        for index in 0..200 {
+            note::ActiveModel {
+                title: Set(format!("Baseline note {index}")),
+                project_id: Set(None),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set("x".repeat(4_096)),
+                file_missing_since: Set(None),
+                created_at: Set(1),
+                updated_at: Set(1),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        crate::workspace::search::rebuild_search_index(&db).await?;
+        let target = note::Entity::find()
+            .filter(note::Column::Title.eq("Baseline note 0"))
+            .one(&db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("seeded note is missing"))?;
+        let started = std::time::Instant::now();
+        move_to_trash(
+            &db,
+            MoveToTrash {
+                kind: TrashItemKind::Note,
+                id: target.id as u32,
+            },
+            9,
+        )
+        .await?;
+        let elapsed = started.elapsed();
+        eprintln!("BASELINE move_to_trash elapsed_ms={}", elapsed.as_millis());
+        assert_eq!(load_trash(&db).await?.len(), 1);
         Ok(())
     }
 }

@@ -25,14 +25,13 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        let background_executor = cx.background_executor().clone();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
 
         cx.spawn_in(window, async move |this, window| {
             let query_db = db.clone();
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let load = runtime.spawn(async move {
+            let load = app_runtime.spawn_tokio(window.background_executor(), async move {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
@@ -90,7 +89,8 @@ impl DocumentEditorView {
                 return;
             };
 
-            match background_executor
+            match window
+                .background_executor()
                 .spawn(async move { read_to_string(path) })
                 .await
             {
@@ -98,17 +98,16 @@ impl DocumentEditorView {
                     if model.cached_content != content || model.file_missing_since.is_some() {
                         let update_db = db.clone();
                         let update_content = content.clone();
-                        let _ = runtime
-                            .spawn(async move {
-                                storage::note::documents::persist_document_content(
-                                    &update_db,
-                                    note_id,
-                                    update_content,
-                                    true,
-                                )
-                                .await
-                            })
-                            .await;
+                        let _ = app_runtime.spawn_tokio(window.background_executor(), async move {
+                            storage::note::documents::persist_document_content(
+                                &update_db,
+                                note_id,
+                                update_content,
+                                true,
+                            )
+                            .await
+                        })
+                        .await;
                     }
 
                     if cached_epoch.is_some()
@@ -132,11 +131,11 @@ impl DocumentEditorView {
                 Err(_) => {
                     if model.file_missing_since.is_none() {
                         let update_db = db.clone();
-                        let _ = runtime
-                            .spawn(async move {
-                                storage::note::documents::mark_document_missing(&update_db, note_id).await
-                            })
-                            .await;
+                        let _ = app_runtime.spawn_tokio(window.background_executor(), async move {
+                            storage::note::documents::mark_document_missing(&update_db, note_id)
+                                .await
+                        })
+                        .await;
                     }
 
                     this.update_in(window, |this, window, cx| {
@@ -257,7 +256,7 @@ impl DocumentEditorView {
     pub(super) fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         let epoch = self.persistence.auto_save_epoch;
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
 
         self.persistence.auto_save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
@@ -313,8 +312,8 @@ impl DocumentEditorView {
                     Ok(()) => {
                         let persisted_content = content.clone();
                         let save_db = db.clone();
-                        match runtime
-                            .spawn(async move {
+                        match app_runtime
+                            .spawn_tokio(cx.background_executor(), async move {
                                 storage::note::documents::persist_document_content(
                                     &save_db,
                                     note_id,
@@ -334,8 +333,8 @@ impl DocumentEditorView {
                 }
             } else {
                 let persisted_content = content.clone();
-                match runtime
-                    .spawn(async move {
+                match app_runtime
+                    .spawn_tokio(cx.background_executor(), async move {
                         storage::note::documents::persist_document_content(
                             &db,
                             note_id,
@@ -362,7 +361,7 @@ impl DocumentEditorView {
                         this.inspector_links.relation_signature = workspace_relation_signature;
                         this.persistence.save_state = this.resolve_save_state(&content, cx);
                         if this.persistence.save_state == SaveState::Saved {
-                            this.refresh_note_links_with_runtime(runtime.clone(), cx);
+                            this.refresh_note_links_with_runtime(app_runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                             if workspace_links_changed {
                                 cx.emit(DocumentEditorEvent::WorkspaceLinksChanged);
@@ -491,9 +490,8 @@ impl DocumentEditorView {
 
         let content = self.editor.read(cx).value();
         let note_id = self.note_id;
-        let db = cx.global::<AppRuntime>().store();
-        let background_executor = cx.background_executor().clone();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         let saved_path = path.clone();
         let path_string = path.display().to_string();
 
@@ -502,7 +500,8 @@ impl DocumentEditorView {
         cx.spawn(async move |this, cx| {
             let content_to_write = content.to_string();
             let write_path = path.clone();
-            let result = background_executor
+            let result = cx
+                .background_executor()
                 .spawn(async move {
                     if let Some(parent) = write_path.parent() {
                         create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -514,8 +513,8 @@ impl DocumentEditorView {
             let result = match result {
                 Ok(()) => {
                     let persisted_content = content.clone();
-                    match runtime
-                        .spawn(async move {
+                    match app_runtime
+                        .spawn_tokio(cx.background_executor(), async move {
                             storage::note::documents::persist_document_to_path(
                                 &db,
                                 note_id,
@@ -539,7 +538,8 @@ impl DocumentEditorView {
                 Ok(_) => {
                     if let Some(replaced_path) = replaced_path {
                         let replaced_path_display = replaced_path.display().to_string();
-                        if let Err(err) = background_executor
+                        if let Err(err) = cx
+                            .background_executor()
                             .spawn(async move { remove_file(replaced_path) })
                             .await
                         {
@@ -563,7 +563,7 @@ impl DocumentEditorView {
                         this.inspector_links.relation_signature = workspace_relation_signature;
                         this.persistence.save_state = this.resolve_save_state(&content, cx);
                         if this.persistence.save_state == SaveState::Saved {
-                            this.refresh_note_links_with_runtime(runtime.clone(), cx);
+                            this.refresh_note_links_with_runtime(app_runtime.clone(), cx);
                             cx.emit(DocumentEditorEvent::Saved(this.note_id));
                             if workspace_links_changed {
                                 cx.emit(DocumentEditorEvent::WorkspaceLinksChanged);

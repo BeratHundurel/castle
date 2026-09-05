@@ -99,12 +99,20 @@ pub(crate) fn show_test_notification() -> anyhow::Result<()> {
 }
 
 async fn deliver_due_reminders(store: &Store) -> anyhow::Result<()> {
-    let db = store.clone();
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    for reminder in storage::note::reminders::load_due_reminders(&db, &today).await? {
-        show_system_notification(&reminder)?;
-        storage::note::reminders::mark_reminder_notified(&db, reminder.entry_id, reminder.due_on)
-            .await?;
+    let due = storage::note::reminders::load_due_reminders(store, &today).await?;
+    let mut notified = Vec::with_capacity(due.len());
+    for reminder in &due {
+        if let Err(error) = show_system_notification(reminder) {
+            if !notified.is_empty() {
+                storage::note::reminders::mark_many_reminders_notified(store, &notified).await?;
+            }
+            return Err(error);
+        }
+        notified.push((reminder.entry_id, reminder.due_on.clone()));
+    }
+    if !notified.is_empty() {
+        storage::note::reminders::mark_many_reminders_notified(store, &notified).await?;
     }
 
     Ok(())

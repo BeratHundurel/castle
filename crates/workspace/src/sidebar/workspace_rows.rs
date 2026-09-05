@@ -99,7 +99,7 @@ impl SidebarView {
     pub(super) fn add_project(&mut self, cx: &mut Context<Self>, name: String) {
         let task = cx
             .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+            .spawn_store(cx.background_executor(), move |store| async move {
                 storage::workspace::create_project(&store, name).await
             });
 
@@ -134,9 +134,7 @@ impl SidebarView {
             multiple: false,
             prompt: Some("Add folder as project".into()),
         });
-        let background_executor = cx.background_executor().clone();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(paths) = paths.await.ok().and_then(Result::ok).flatten() else {
@@ -146,7 +144,8 @@ impl SidebarView {
                 return;
             };
 
-            let scan = background_executor
+            let scan = cx
+                .background_executor()
                 .spawn(async move { folder_import::scan_folder(&path) })
                 .await;
             let scan = match scan {
@@ -163,8 +162,10 @@ impl SidebarView {
                 }
             };
 
-            let result = runtime
-                .spawn(async move { folder_import::import_folder(&db, scan).await })
+            let result = app_runtime
+                .spawn_store(cx.background_executor(), move |store| async move {
+                    folder_import::import_folder(&store, scan).await
+                })
                 .await;
 
             this.update_in(cx, |this, window, cx| match result {

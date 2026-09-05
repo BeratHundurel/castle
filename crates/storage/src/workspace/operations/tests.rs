@@ -428,3 +428,130 @@ async fn assert_revisions(store: &Store, expected: (i64, i64, i64, i64)) -> Resu
     assert_eq!(row.try_get::<i64>("", "link_revision")?, expected.3);
     Ok(())
 }
+
+#[tokio::test]
+async fn search_entries_returns_only_matching_hits() -> Result<()> {
+    let store = store().await?;
+    let project = store
+        .create_project(CreateProjectInput {
+            name: "Search".to_string(),
+        })
+        .await?;
+    let board = store
+        .create_board(CreateBoardInput {
+            title: "Delivery".to_string(),
+            project_id: Some(project.id),
+        })
+        .await?;
+    let list = store
+        .create_list(CreateListInput {
+            board_id: board.id,
+            title: "Ideas".to_string(),
+        })
+        .await?;
+    let matching = store
+        .create_entry(CreateEntryInput {
+            list_id: list.id,
+            title: "Unique needle entry".to_string(),
+            description: String::new(),
+            due_on: None,
+        })
+        .await?;
+    store
+        .create_entry(CreateEntryInput {
+            list_id: list.id,
+            title: "Unrelated".to_string(),
+            description: String::new(),
+            due_on: None,
+        })
+        .await?;
+
+    let hits = store
+        .search_entries(SearchEntriesInput {
+            query: "needle".to_string(),
+            project_id: None,
+            board_id: None,
+            limit: None,
+        })
+        .await?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, matching.id);
+    assert_eq!(hits[0].title, "Unique needle entry");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "perf baseline: search_entries full-table + N+1 detail (candidate P1)"]
+async fn baseline_search_entries_scales_with_tables() -> Result<()> {
+    use std::time::Instant;
+    let store = store().await?;
+    let project = store
+        .create_project(CreateProjectInput {
+            name: "Baseline".to_string(),
+        })
+        .await?;
+    for board_index in 0..30 {
+        let board = store
+            .create_board(CreateBoardInput {
+                title: format!("Board {board_index}"),
+                project_id: Some(project.id),
+            })
+            .await?;
+        let list = store
+            .create_list(CreateListInput {
+                board_id: board.id,
+                title: format!("List {board_index}"),
+            })
+            .await?;
+        for entry_index in 0..10 {
+            store
+                .create_entry(CreateEntryInput {
+                    list_id: list.id,
+                    title: format!("Filler {board_index}-{entry_index}"),
+                    description: String::new(),
+                    due_on: None,
+                })
+                .await?;
+        }
+    }
+    let board = store
+        .create_board(CreateBoardInput {
+            title: "Needle board".to_string(),
+            project_id: Some(project.id),
+        })
+        .await?;
+    let list = store
+        .create_list(CreateListInput {
+            board_id: board.id,
+            title: "Needle list".to_string(),
+        })
+        .await?;
+    for entry_index in 0..5 {
+        store
+            .create_entry(CreateEntryInput {
+                list_id: list.id,
+                title: format!("Needle target {entry_index}"),
+                description: String::new(),
+                due_on: None,
+            })
+            .await?;
+    }
+
+    let started = Instant::now();
+    let hits = store
+        .search_entries(SearchEntriesInput {
+            query: "Needle target".to_string(),
+            project_id: None,
+            board_id: None,
+            limit: Some(25),
+        })
+        .await?;
+    let elapsed = started.elapsed();
+    eprintln!(
+        "BASELINE search_entries hits={} elapsed_ms={}",
+        hits.len(),
+        elapsed.as_millis()
+    );
+    assert_eq!(hits.len(), 5);
+    Ok(())
+}

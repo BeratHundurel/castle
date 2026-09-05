@@ -28,7 +28,9 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let task = cx.global::<AppRuntime>().spawn_store(mutation);
+        let task = cx
+            .global::<AppRuntime>()
+            .spawn_store(cx.background_executor(), mutation);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -87,31 +89,29 @@ impl BoardView {
         let generation = self.mutation.load_request.begin();
         self.mutation.loaded_generation = None;
         let local_mutation_generation = self.mutation.local_generation;
-        let app_db = cx.global::<AppRuntime>();
-        let store = app_db.store();
-        let db = store.clone();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let store = app_runtime.store();
         let board_layout_persistence = cx.global::<super::BoardServices>().layout_persistence();
-        let runtime = app_db.tokio_handle();
 
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let load = runtime.spawn(async move {
+            let load = app_runtime.spawn_tokio(cx.background_executor(), async move {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,
                     result = async move {
                     let _ = board_layout_persistence.wait_for_pending(board_id).await;
                     let board_data = async {
-                        load_board_data(&store, board_id)
-                            .await};
+                        load_board_data(&store, board_id).await
+                    };
                     let properties = storage::board::properties::load_board_properties(
-                        &db,
+                        &store,
                         board_id as i64,
                     );
                     let views =
-                        storage::board::properties::load_board_views(&db, board_id as i64);
+                        storage::board::properties::load_board_views(&store, board_id as i64);
                     let reference_catalog =
-                        storage::workspace::links::load_workspace_reference_catalog(&db);
+                        storage::workspace::links::load_workspace_reference_catalog(&store);
                     let ((cards, labels), properties, views, reference_catalog) =
                         tokio::try_join!(board_data, properties, views, reference_catalog)?;
                     let mut related_targets = vec![storage::workspace::links::WorkspaceItemRef {
@@ -125,7 +125,7 @@ impl BoardView {
                         }
                     }));
                     let related_notes = storage::workspace::links::load_related_notes_for_items(
-                        &db,
+                        &store,
                         &related_targets,
                     )
                     .await?;
@@ -266,8 +266,7 @@ pub(super) async fn load_board_data(
     board_id: u32,
 ) -> anyhow::Result<(Vec<BoardListState>, Vec<BoardLabel>)> {
     let store = store.into();
-    let db = store.clone();
-    let snapshot = storage::board::load_board_snapshot(&db, board_id).await?;
+    let snapshot = storage::board::load_board_snapshot(&store, board_id).await?;
     Ok((
         snapshot
             .cards
@@ -535,7 +534,7 @@ mod tests {
             .expect("board move race setup should succeed");
 
         let app_db = AppRuntime::new(db.clone(), PathBuf::new());
-        let board_services = crate::BoardServices::new(runtime.handle().clone());
+        let board_services = crate::BoardServices::new();
         let position_persistence = board_services.layout_persistence();
         let window = cx.update(|cx| {
             cx.set_global(gpui_component::Theme::default());

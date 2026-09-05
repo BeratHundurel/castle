@@ -546,11 +546,11 @@ impl DocumentEditorView {
         );
         self.embeds.loading_keys = keys.clone();
         let generation = self.embeds.request.begin();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let db = app_runtime.store();
         let task = cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
-            let load = runtime.spawn(async move {
+            let load = app_runtime.spawn_tokio(cx.background_executor(), async move {
                 tokio::select! {
                     biased;
                     _ = cancelled => None,

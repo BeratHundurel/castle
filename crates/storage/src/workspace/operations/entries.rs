@@ -27,39 +27,12 @@ where
         }
         let limit = input.limit.unwrap_or(25).clamp(1, 100);
         let projects = self.active_project_map().await?;
-        let board_ids = Board::find()
-            .filter(board::Column::DeletedAt.is_null())
-            .all(self.db.as_ref())
-            .await?
-            .into_iter()
-            .filter(|board| {
-                board
-                    .project_id
-                    .is_none_or(|project_id| projects.contains_key(&project_id))
-                    && input
-                        .project_id
-                        .is_none_or(|project_id| board.project_id == Some(project_id))
-                    && input.board_id.is_none_or(|board_id| board.id == board_id)
-            })
-            .map(|board| board.id)
-            .collect::<HashSet<_>>();
-        if board_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let list_ids = Card::find()
-            .filter(card::Column::DeletedAt.is_null())
-            .all(self.db.as_ref())
-            .await?
-            .into_iter()
-            .filter(|list| board_ids.contains(&list.board_id))
-            .map(|list| list.id)
-            .collect::<Vec<_>>();
-        if list_ids.is_empty() {
-            return Ok(Vec::new());
-        }
         let entries = Entry::find()
             .filter(entry::Column::DeletedAt.is_null())
-            .filter(entry::Column::CardId.is_in(list_ids))
+            .filter(
+                entry::Column::CardId
+                    .in_subquery(active_search_card_ids(input.project_id, input.board_id)),
+            )
             .filter(
                 Condition::any()
                     .add(entry::Column::Title.contains(query))
@@ -70,11 +43,7 @@ where
             .all(self.db.as_ref())
             .await?;
 
-        let mut details = Vec::with_capacity(entries.len());
-        for entry in entries {
-            details.push(self.entry_detail(entry).await?);
-        }
-        Ok(details)
+        self.search_entry_details(entries, &projects).await
     }
 
     pub async fn create_list(&self, input: CreateListInput) -> Result<ListDetail> {
@@ -337,5 +306,335 @@ where
         .await?;
         transaction.commit().await?;
         self.entry_detail(moved).await
+    }
+
+    async fn search_entry_details(
+        &self,
+        entries: Vec<entry::Model>,
+        projects: &HashMap<i64, String>,
+    ) -> Result<Vec<EntryDetail>> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let entry_ids = entries.iter().map(|entry| entry.id).collect::<Vec<_>>();
+        let lists = Card::find()
+            .filter(
+                card::Column::Id.is_in(
+                    entries
+                        .iter()
+                        .map(|entry| entry.card_id)
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .filter(card::Column::DeletedAt.is_null())
+            .all(self.db.as_ref())
+            .await?
+            .into_iter()
+            .map(|list| (list.id, list))
+            .collect::<HashMap<_, _>>();
+        let boards = Board::find()
+            .filter(
+                board::Column::Id
+                    .is_in(lists.values().map(|list| list.board_id).collect::<Vec<_>>()),
+            )
+            .filter(board::Column::DeletedAt.is_null())
+            .all(self.db.as_ref())
+            .await?
+            .into_iter()
+            .map(|board| (board.id, board))
+            .collect::<HashMap<_, _>>();
+
+        let mut checklist_by_entry = HashMap::<i64, Vec<ChecklistItemDetail>>::new();
+        for item in EntryChecklistItem::find()
+            .filter(entry_checklist_item::Column::EntryId.is_in(entry_ids.clone()))
+            .order_by_asc(entry_checklist_item::Column::Position)
+            .order_by_asc(entry_checklist_item::Column::Id)
+            .all(self.db.as_ref())
+            .await?
+        {
+            checklist_by_entry
+                .entry(item.entry_id)
+                .or_default()
+                .push(ChecklistItemDetail {
+                    id: item.id,
+                    title: item.title,
+                    checked: item.checked,
+                    position: item.position,
+                });
+        }
+
+        let associations = EntryLabel::find()
+            .filter(entry_label::Column::EntryId.is_in(entry_ids.clone()))
+            .all(self.db.as_ref())
+            .await?;
+        let labels_by_id = if associations.is_empty() {
+            HashMap::new()
+        } else {
+            BoardLabel::find()
+                .filter(
+                    board_label::Column::Id.is_in(
+                        associations
+                            .iter()
+                            .map(|association| association.board_label_id)
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+                .order_by_asc(board_label::Column::Id)
+                .all(self.db.as_ref())
+                .await?
+                .into_iter()
+                .map(|label| (label.id, label))
+                .collect::<HashMap<_, _>>()
+        };
+        let mut label_ids_by_entry = HashMap::<i64, Vec<i64>>::new();
+        for association in associations {
+            label_ids_by_entry
+                .entry(association.entry_id)
+                .or_default()
+                .push(association.board_label_id);
+        }
+
+        let mut attachments_by_entry = HashMap::<i64, Vec<AttachmentDetail>>::new();
+        for attachment in EntryAttachment::find()
+            .filter(entry_attachment::Column::EntryId.is_in(entry_ids.clone()))
+            .order_by_asc(entry_attachment::Column::Id)
+            .all(self.db.as_ref())
+            .await?
+        {
+            attachments_by_entry
+                .entry(attachment.entry_id)
+                .or_default()
+                .push(AttachmentDetail {
+                    id: attachment.id,
+                    file_name: attachment.file_name,
+                });
+        }
+
+        let mut related_by_entry = self
+            .search_related_notes_by_entry(&entry_ids, projects)
+            .await?;
+
+        let mut details = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let list = lists
+                .get(&entry.card_id)
+                .with_context(|| format!("active list {} was not found", entry.card_id))?;
+            let board = boards
+                .get(&list.board_id)
+                .with_context(|| format!("active board {} was not found", list.board_id))?;
+            let project_name = match board.project_id {
+                Some(project_id) => Some(
+                    projects
+                        .get(&project_id)
+                        .cloned()
+                        .with_context(|| format!("active project {project_id} was not found"))?,
+                ),
+                None => None,
+            };
+            let mut label_ids = label_ids_by_entry.remove(&entry.id).unwrap_or_default();
+            label_ids.sort_unstable();
+            let labels = label_ids
+                .into_iter()
+                .filter_map(|label_id| labels_by_id.get(&label_id))
+                .map(|label| label_detail(label.clone()))
+                .collect();
+            let mut related = related_by_entry.remove(&entry.id).unwrap_or_default();
+            related.sort_by(|left, right| {
+                (
+                    left.project_id != board.project_id,
+                    left.title.to_lowercase(),
+                    left.note_id,
+                )
+                    .cmp(&(
+                        right.project_id != board.project_id,
+                        right.title.to_lowercase(),
+                        right.note_id,
+                    ))
+            });
+            let related_items = related.into_iter().map(SearchRelatedNote::detail).collect();
+            details.push(EntryDetail {
+                id: entry.id,
+                title: entry.title,
+                description: entry.description,
+                due_on: entry.due_on,
+                reminder_enabled: entry.reminder_enabled,
+                position: entry.position,
+                list_id: list.id,
+                list_title: list.title.clone(),
+                board_id: board.id,
+                board_title: board.title.clone(),
+                project_id: board.project_id,
+                project_name,
+                labels,
+                checklist_items: checklist_by_entry.remove(&entry.id).unwrap_or_default(),
+                attachments: attachments_by_entry.remove(&entry.id).unwrap_or_default(),
+                related_items,
+            });
+        }
+        Ok(details)
+    }
+
+    async fn search_related_notes_by_entry(
+        &self,
+        entry_ids: &[i64],
+        projects: &HashMap<i64, String>,
+    ) -> Result<HashMap<i64, Vec<SearchRelatedNote>>> {
+        let mut grouped = HashMap::<i64, Vec<SearchRelatedNote>>::new();
+        if entry_ids.is_empty() {
+            return Ok(grouped);
+        }
+        let requested = entry_ids.iter().copied().collect::<HashSet<_>>();
+        let links = WorkspaceLink::find()
+            .filter(
+                Condition::any()
+                    .add(workspace_link::Column::TargetEntryId.is_in(entry_ids.to_vec()))
+                    .add(
+                        Condition::all()
+                            .add(workspace_link::Column::SourceEntryId.is_in(entry_ids.to_vec()))
+                            .add(workspace_link::Column::TargetNoteId.is_not_null()),
+                    ),
+            )
+            .all(self.db.as_ref())
+            .await?;
+        let mut origins_by_item_note =
+            HashMap::<(i64, i64), Vec<crate::workspace::links::WorkspaceLinkOrigin>>::new();
+        let mut note_ids = HashSet::new();
+        for link in &links {
+            let item_id = match (link.target_entry_id, link.source_entry_id) {
+                (Some(item_id), _) if requested.contains(&item_id) => item_id,
+                (_, Some(item_id))
+                    if link.target_note_id.is_some() && requested.contains(&item_id) =>
+                {
+                    item_id
+                }
+                _ => continue,
+            };
+            let Some(note_id) = link.source_note_id.or(link.target_note_id) else {
+                continue;
+            };
+            note_ids.insert(note_id);
+            let origins = origins_by_item_note.entry((item_id, note_id)).or_default();
+            let origin = search_link_origin(&link.origin);
+            if !origins.contains(&origin) {
+                origins.push(origin);
+            }
+        }
+        if note_ids.is_empty() {
+            return Ok(grouped);
+        }
+        let notes_by_id = Note::find()
+            .filter(note::Column::Id.is_in(note_ids.into_iter().collect::<Vec<_>>()))
+            .filter(note::Column::DeletedAt.is_null())
+            .all(self.db.as_ref())
+            .await?
+            .into_iter()
+            .map(|note| (note.id, note))
+            .collect::<HashMap<_, _>>();
+        for ((item_id, note_id), origins) in origins_by_item_note {
+            let Some(note) = notes_by_id.get(&note_id) else {
+                continue;
+            };
+            if note
+                .project_id
+                .is_some_and(|project_id| !projects.contains_key(&project_id))
+            {
+                continue;
+            }
+            grouped.entry(item_id).or_default().push(SearchRelatedNote {
+                note_id,
+                title: note.title.clone(),
+                project_id: note.project_id,
+                project_name: note
+                    .project_id
+                    .and_then(|project_id| projects.get(&project_id).cloned()),
+                origins,
+            });
+        }
+        Ok(grouped)
+    }
+}
+
+fn active_search_project_ids() -> SelectStatement {
+    Query::select()
+        .column(project::Column::Id)
+        .from(Project)
+        .and_where(project::Column::Archived.eq(false))
+        .and_where(project::Column::DeletedAt.is_null())
+        .to_owned()
+}
+
+fn active_search_board_ids(project_id: Option<i64>, board_id: Option<i64>) -> SelectStatement {
+    let mut boards = Query::select().to_owned();
+    boards
+        .column(board::Column::Id)
+        .from(Board)
+        .and_where(board::Column::DeletedAt.is_null())
+        .cond_where(
+            Condition::any()
+                .add(board::Column::ProjectId.is_null())
+                .add(board::Column::ProjectId.in_subquery(active_search_project_ids())),
+        );
+    if let Some(project_id) = project_id {
+        boards.and_where(board::Column::ProjectId.eq(project_id));
+    }
+    if let Some(board_id) = board_id {
+        boards.and_where(board::Column::Id.eq(board_id));
+    }
+    boards
+}
+
+fn active_search_card_ids(project_id: Option<i64>, board_id: Option<i64>) -> SelectStatement {
+    Query::select()
+        .column(card::Column::Id)
+        .from(Card)
+        .and_where(card::Column::DeletedAt.is_null())
+        .and_where(card::Column::BoardId.in_subquery(active_search_board_ids(project_id, board_id)))
+        .to_owned()
+}
+
+struct SearchRelatedNote {
+    note_id: i64,
+    title: String,
+    project_id: Option<i64>,
+    project_name: Option<String>,
+    origins: Vec<crate::workspace::links::WorkspaceLinkOrigin>,
+}
+
+impl SearchRelatedNote {
+    fn detail(self) -> RelatedItemDetail {
+        let breadcrumb = match &self.project_name {
+            Some(project) => format!("{project} / {}", self.title),
+            None => self.title.clone(),
+        };
+        let mut segments = Vec::with_capacity(2);
+        if let Some(project) = &self.project_name {
+            segments.push(crate::workspace::links::escape_segment(project));
+        }
+        segments.push(crate::workspace::links::escape_segment(&self.title));
+        RelatedItemDetail {
+            kind: crate::workspace::links::WorkspaceItemKind::Note
+                .as_str()
+                .to_string(),
+            id: self.note_id,
+            title: self.title,
+            breadcrumb,
+            stable_link: format!("[[note:{}]]", segments.join(" / ")),
+            origins: self
+                .origins
+                .into_iter()
+                .map(workspace_origin_label)
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+}
+
+fn search_link_origin(origin: &str) -> crate::workspace::links::WorkspaceLinkOrigin {
+    match origin {
+        "manual" => crate::workspace::links::WorkspaceLinkOrigin::Manual,
+        "embed" => crate::workspace::links::WorkspaceLinkOrigin::Embed,
+        _ => crate::workspace::links::WorkspaceLinkOrigin::Wikilink,
     }
 }

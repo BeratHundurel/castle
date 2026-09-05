@@ -61,7 +61,7 @@ impl DocumentEditorView {
             (preview_width.as_f32() - horizontal_padding.as_f32() * 2. - 32.).max(1.);
         let mermaid_snapshots = self.mermaid.render_snapshots(mermaid_width);
         let local_image_plugin = crate::attachments::LocalImagePlugin::new(
-            cx.global::<AppRuntime>().data_dir(),
+            cx.global::<AppRuntime>().data_dir_handle(),
             self.persistence.current_path.as_deref(),
         );
         let open_target =
@@ -100,13 +100,13 @@ impl DocumentEditorView {
             .plugin(board_embed_plugin)
             .plugin(wikilink_plugin)
             .plugin(crate::mermaid::MermaidPlugin::new(
-                editor_entity.clone(),
+                editor_entity,
                 0,
                 mermaid_snapshots,
             ))
             .style(preview_style)
             .code_block_actions(|code_block, _window, _cx| {
-                Clipboard::new("copy-code").value(code_block.code().clone())
+                Clipboard::new("copy-code").value(code_block.code())
             })
             .size_full()
             .px(horizontal_padding)
@@ -139,7 +139,7 @@ impl DocumentEditorView {
                                 ))
                                 .style(preview_style.clone())
                                 .code_block_actions(|code_block, _window, _cx| {
-                                    Clipboard::new("copy-code").value(code_block.code().clone())
+                                    Clipboard::new("copy-code").value(code_block.code())
                                 })
                                 .text_size(font_size)
                                 .scrollable(false)

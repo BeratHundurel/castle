@@ -11,6 +11,7 @@ use std::{
     io::{self, Write as _},
     ops::Range,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 use runtime::AppRuntime;
@@ -38,12 +39,12 @@ struct LocalImagePreview {
 
 #[derive(Clone)]
 pub(super) struct LocalImagePlugin {
-    data_dir: PathBuf,
+    data_dir: Arc<PathBuf>,
     document_dir: Option<PathBuf>,
 }
 
 impl LocalImagePlugin {
-    pub(super) fn new(data_dir: PathBuf, document_path: Option<&Path>) -> Self {
+    pub(super) fn new(data_dir: Arc<PathBuf>, document_path: Option<&Path>) -> Self {
         Self {
             data_dir,
             document_dir: document_path.and_then(Path::parent).map(Path::to_path_buf),
@@ -67,8 +68,11 @@ impl MarkdownPlugin for LocalImagePlugin {
         let [Node::Image(image)] = paragraph.children.as_slice() else {
             return None;
         };
-        let path =
-            resolve_local_image_path(&image.url, &self.data_dir, self.document_dir.as_deref())?;
+        let path = resolve_local_image_path(
+            &image.url,
+            self.data_dir.as_path(),
+            self.document_dir.as_deref(),
+        )?;
 
         Some(
             MarkdownNode::new(self.name(), LocalImagePreview { path })
@@ -177,11 +181,11 @@ impl DocumentEditorView {
             .data_dir()
             .join("attachments")
             .join(self.note_id.to_string());
-        let background_executor = cx.background_executor().clone();
 
         cx.spawn_in(window, async move |this, window| {
-            let results = background_executor
-                .spawn(async move { import_images(imports, attachment_dir) })
+            let results = window
+                .background_executor()
+                .spawn(async move { import_images(imports, &attachment_dir) })
                 .await;
 
             this.update_in(window, |this, window, cx| {
@@ -230,9 +234,9 @@ impl DocumentEditorView {
 
 fn import_images(
     imports: Vec<ImageImport>,
-    attachment_dir: PathBuf,
+    attachment_dir: &Path,
 ) -> Vec<Result<ImportedImage, String>> {
-    if let Err(error) = fs::create_dir_all(&attachment_dir) {
+    if let Err(error) = fs::create_dir_all(attachment_dir) {
         return vec![Err(format!(
             "Failed to create image attachment directory {}: {error}",
             attachment_dir.display()
@@ -241,7 +245,7 @@ fn import_images(
 
     imports
         .into_iter()
-        .map(|import| import_image(import, &attachment_dir))
+        .map(|import| import_image(import, attachment_dir))
         .collect()
 }
 

@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    system_notifications::start(store.clone());
+    system_notifications::start(store);
 
     app.run(move |cx| {
         gpui_component::init(cx);

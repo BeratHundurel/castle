@@ -11,12 +11,14 @@ use entity::{
     entry_attachment::Entity as EntryAttachment, entry_checklist_item,
     entry_checklist_item::Entity as EntryChecklistItem, entry_label,
     entry_label::Entity as EntryLabel, note, note::Entity as Note, project,
-    project::Entity as Project,
+    project::Entity as Project, workspace_link, workspace_link::Entity as WorkspaceLink,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait, EntityTrait,
-    ExprTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionSession,
-    TransactionTrait, sea_query::Expr,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, Condition, ConnectionTrait, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, TransactionSession, TransactionTrait,
+    sea_query::{Expr, Query, SelectStatement},
 };
 
 use crate::workspace::api::{

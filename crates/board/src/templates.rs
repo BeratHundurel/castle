@@ -47,14 +47,15 @@ impl BoardView {
                             return false;
                         }
 
-                        let task = cx
-                            .global::<AppRuntime>()
-                            .spawn_store(move |store| async move {
+                        let task = cx.global::<AppRuntime>().spawn_store(
+                            cx.background_executor(),
+                            move |store| async move {
                                 storage::board::templates::save_board_as_template(
                                     &store, board_id, name,
                                 )
                                 .await
-                            });
+                            },
+                        );
                         board_view.update(cx, |_, cx| {
                             cx.spawn_in(window, async move |_, window| {
                                 let result = task.await;

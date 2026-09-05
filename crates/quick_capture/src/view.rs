@@ -127,14 +127,15 @@ impl QuickCaptureView {
         self.error = None;
         cx.notify();
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 store
                     .mutations(MutationOrigin::LocalApp)
                     .create_note(input)
                     .await
-            });
+            },
+        );
 
         cx.spawn_in(window, async move |this, window| {
             let result = match task.await {

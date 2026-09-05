@@ -135,12 +135,12 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let db = cx.global::<AppRuntime>();
+        let app_runtime = cx.global::<AppRuntime>().clone();
         let persistence = cx.global::<crate::BoardServices>().layout_persistence();
-        let runtime = db.tokio_handle();
+        let store = app_runtime.store();
         let revision = match persistence.submit(
             board_id,
-            db.store(),
+            store,
             storage::board::positions::BoardLayoutSnapshot { lists, entries },
         ) {
             Ok(revision) => revision,
@@ -152,8 +152,10 @@ impl BoardView {
             }
         };
         self.mutation.layout_commit_task = Some(cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move { persistence.wait_for_revision(board_id, revision).await })
+            let result = app_runtime
+                .spawn_tokio(cx.background_executor(), async move {
+                    persistence.wait_for_revision(board_id, revision).await
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.data.board_id != Some(board_id)

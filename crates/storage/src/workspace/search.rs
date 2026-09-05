@@ -12,6 +12,11 @@ use sea_orm::{
 
 const SEARCH_INSERT_BODY_BUDGET: usize = 1024 * 1024;
 const SEARCH_INSERT_DOCUMENT_LIMIT: usize = 100;
+const SEARCH_PREVIEW_CHARS: u32 = 5000;
+const SEARCH_PREVIEW_LOOKBACK: u32 = 1200;
+const SEARCH_PREVIEW_WINDOW: u32 = SEARCH_PREVIEW_CHARS + SEARCH_PREVIEW_LOOKBACK;
+const SEARCH_ANCHOR_BODY_LIMIT: u32 = 65536;
+const SEARCH_ANCHOR_DEPTH_LIMIT: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SearchResultKind {
@@ -264,30 +269,11 @@ pub async fn search_workspace(
     query: &str,
     limit: u32,
 ) -> Result<Vec<SearchResult>, DbErr> {
-    let rows = if let Some(query) = fts_query(query) {
+    let rows = if let Some(match_query) = fts_query(query) {
         db.query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT
-                item_type,
-                item_id,
-                COALESCE(parent_id, item_id) AS open_id,
-                project_id,
-                title,
-                highlight(search_index, 4, char(1), char(2)) AS highlighted_title,
-                snippet(search_index, 5, char(1), char(2), '...', 18) AS snippet,
-                substr(
-                    highlight(search_index, 5, char(1), char(2)),
-                    max(
-                        instr(highlight(search_index, 5, char(1), char(2)), char(1)) - 1200,
-                        1
-                    ),
-                    5000
-                ) AS preview
-             FROM search_index
-             WHERE search_index MATCH ?
-             ORDER BY bm25(search_index)
-             LIMIT ?",
-            [query.into(), (limit as i64).into()],
+            search_match_sql(&preview_anchor_terms(&match_query)),
+            [match_query.into(), (limit as i64).into()],
         ))
         .await?
     } else {
@@ -385,6 +371,135 @@ pub async fn search_workspace(
     }
 
     Ok(results)
+}
+
+fn preview_anchor_terms(match_query: &str) -> Vec<String> {
+    match_query
+        .split(' ')
+        .filter_map(|term| {
+            let term = term
+                .strip_suffix('*')
+                .unwrap_or(term)
+                .to_ascii_lowercase()
+                .replace('\'', "''");
+            (!term.is_empty()).then_some(term)
+        })
+        .collect()
+}
+
+fn window_term_score(body: &str, candidate: &str, terms: &[String]) -> String {
+    let mut hits = Vec::with_capacity(terms.len());
+    for term in terms.iter() {
+        hits.push(format!(
+            "(instr(substr({body}, max(({candidate}) - {lookback}, 1), {window}), char(1) || '{term}') > 0)",
+            lookback = SEARCH_PREVIEW_LOOKBACK,
+            window = SEARCH_PREVIEW_WINDOW,
+        ));
+    }
+    format!(
+        "CASE WHEN ({candidate}) > 0 THEN ({hits}) ELSE -1 END",
+        hits = hits.join(" + "),
+    )
+}
+
+fn first_occurrence_anchor(terms: &[String], candidates: &[String]) -> String {
+    let mut scores = Vec::with_capacity(candidates.len());
+    for candidate in candidates.iter() {
+        scores.push(window_term_score("highlighted_body", candidate, terms));
+    }
+    let mut keys = Vec::with_capacity(candidates.len());
+    for (candidate, score) in candidates.iter().zip(scores.iter()) {
+        keys.push(format!("(({score}) * 1000000000 + ({candidate}))"));
+    }
+    let max_key = keys.join(", ");
+    let mut branches = String::new();
+    for (candidate, key) in candidates.iter().zip(keys.iter()) {
+        branches.push_str(&format!(
+            "WHEN ({candidate}) > 0 AND ({key}) = max({max_key}) THEN max(({candidate}) - {lookback}, 1) ",
+            lookback = SEARCH_PREVIEW_LOOKBACK,
+        ));
+    }
+    format!("CASE {branches}ELSE NULL END")
+}
+
+fn best_occurrence_anchor(terms: &[String], longest: &str) -> String {
+    let score = window_term_score("matched.highlighted_body", "occ.pos", terms);
+    format!(
+        "CASE WHEN length(matched.highlighted_body) <= {body_limit} THEN (
+            WITH RECURSIVE occ(pos, depth) AS (
+                SELECT instr(matched.highlighted_body, char(1) || '{longest}'), 1
+                UNION ALL
+                SELECT occ.pos + instr(substr(matched.highlighted_body, occ.pos + 1), char(1) || '{longest}'), occ.depth + 1
+                FROM occ
+                WHERE occ.pos > 0
+                  AND occ.depth < {depth_limit}
+                  AND instr(substr(matched.highlighted_body, occ.pos + 1), char(1) || '{longest}') > 0
+            )
+            SELECT max(scored.pos - {lookback}, 1) FROM (
+                SELECT occ.pos AS pos, ({score}) AS s FROM occ WHERE occ.pos > 0
+            ) AS scored
+            ORDER BY scored.s DESC, scored.pos DESC
+            LIMIT 1
+        ) ELSE NULL END",
+        body_limit = SEARCH_ANCHOR_BODY_LIMIT,
+        depth_limit = SEARCH_ANCHOR_DEPTH_LIMIT,
+        lookback = SEARCH_PREVIEW_LOOKBACK,
+    )
+}
+
+fn search_match_sql(terms: &[String]) -> String {
+    // Anchor candidates are the first marked occurrence of each term. For
+    // multi-term queries the occurrences of the longest (most selective) term
+    // join them through bounded enumeration, so a late tight cluster of
+    // matches beats early scattered single-term matches.
+    let mut candidates = Vec::with_capacity(terms.len());
+    for term in terms {
+        candidates.push(format!("instr(highlighted_body, char(1) || '{term}')"));
+    }
+    // Note: max() with a single argument aggregates over rows and would
+    // collapse the result to one row, so the single-term branch below and the
+    // composite keys here always use multi-argument scalar max().
+    let longest = terms.iter().max_by_key(|term| term.chars().count());
+    let anchor = match (candidates.len(), longest) {
+        (1, _) => format!(
+            "CASE WHEN ({candidate}) > 0 THEN max(({candidate}) - {lookback}, 1) ELSE 1 END",
+            candidate = candidates[0],
+            lookback = SEARCH_PREVIEW_LOOKBACK,
+        ),
+        (_, Some(longest)) => {
+            let enumerated = best_occurrence_anchor(terms, longest);
+            let fallback = first_occurrence_anchor(terms, &candidates);
+            format!("COALESCE(({enumerated}), ({fallback}), 1)")
+        }
+        _ => "1".to_string(),
+    };
+    format!(
+        "SELECT
+            item_type,
+            item_id,
+            open_id,
+            project_id,
+            title,
+            highlighted_title,
+            snippet,
+            substr(highlighted_body, {anchor}, {preview}) AS preview
+         FROM (
+            SELECT
+                item_type,
+                item_id,
+                COALESCE(parent_id, item_id) AS open_id,
+                project_id,
+                title,
+                highlight(search_index, 4, char(1), char(2)) AS highlighted_title,
+                snippet(search_index, 5, char(1), char(2), '...', 18) AS snippet,
+                lower(highlight(search_index, 5, char(1), char(2))) AS highlighted_body
+            FROM search_index
+            WHERE search_index MATCH ?
+            ORDER BY bm25(search_index)
+            LIMIT ?
+        ) AS matched",
+        preview = SEARCH_PREVIEW_CHARS,
+    )
 }
 
 fn search_card_body(title: &str, entries: Option<&[EntrySearchSource]>) -> String {
@@ -609,21 +724,661 @@ async fn insert_search_document_chunk(
     Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn delete_search_item(
-    db: &(
-         impl sea_orm::ConnectionTrait
-         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
-     ),
+    db: &impl ConnectionTrait,
     item_type: &str,
     item_id: u32,
 ) -> Result<(), DbErr> {
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM search_index WHERE item_type = ? AND item_id = ?",
-        [item_type.into(), (item_id as i64).into()],
+        [
+            Value::from(item_type.to_string()),
+            Value::from(item_id as i64),
+        ],
     ))
     .await?;
+    Ok(())
+}
+
+pub async fn remove_note_from_index(db: &impl ConnectionTrait, note_id: u32) -> Result<(), DbErr> {
+    delete_search_item(db, "note", note_id).await
+}
+
+pub async fn remove_board_subtree_from_index(
+    db: &impl ConnectionTrait,
+    board_id: u32,
+) -> Result<(), DbErr> {
+    delete_board_search_documents(db, board_id as i64).await
+}
+
+pub async fn remove_card_subtree_from_index(
+    db: &impl ConnectionTrait,
+    card_id: u32,
+) -> Result<(), DbErr> {
+    let board_id = card_board_id(db, card_id as i64).await?;
+    delete_card_search_documents(db, card_id as i64).await?;
+    if let Some(board_id) = board_id {
+        refresh_board_search_document(db, board_id).await?;
+    }
+    Ok(())
+}
+
+pub async fn remove_entry_from_index(
+    db: &impl ConnectionTrait,
+    entry_id: u32,
+) -> Result<(), DbErr> {
+    let parents = entry_parent_ids(db, entry_id as i64).await?;
+    delete_search_item(db, "entry", entry_id).await?;
+    if let Some((card_id, board_id)) = parents {
+        refresh_card_search_document(db, card_id).await?;
+        refresh_board_search_document(db, board_id).await?;
+    }
+    Ok(())
+}
+
+pub async fn remove_project_subtree_from_index(
+    db: &impl ConnectionTrait,
+    project_id: u32,
+) -> Result<(), DbErr> {
+    delete_project_search_documents(db, project_id as i64).await
+}
+
+pub async fn index_restored_note(db: &impl ConnectionTrait, note_id: u32) -> Result<(), DbErr> {
+    delete_search_item(db, "note", note_id).await?;
+    if let Some(document) = visible_note_search_document(db, note_id as i64).await? {
+        insert_search_documents(db, [document]).await?;
+    }
+    Ok(())
+}
+
+pub async fn index_restored_board_subtree(
+    db: &impl ConnectionTrait,
+    board_id: u32,
+) -> Result<(), DbErr> {
+    delete_board_search_documents(db, board_id as i64).await?;
+    index_visible_board_subtree(db, board_id as i64).await
+}
+
+pub async fn index_restored_card_subtree(
+    db: &impl ConnectionTrait,
+    card_id: u32,
+) -> Result<(), DbErr> {
+    delete_card_search_documents(db, card_id as i64).await?;
+    index_visible_card_subtree(db, card_id as i64).await
+}
+
+pub async fn index_restored_entry(db: &impl ConnectionTrait, entry_id: u32) -> Result<(), DbErr> {
+    delete_search_item(db, "entry", entry_id).await?;
+    if let Some((document, card_id, board_id)) =
+        visible_entry_search_document(db, entry_id as i64).await?
+    {
+        insert_search_documents(db, [document]).await?;
+        refresh_card_search_document(db, card_id).await?;
+        refresh_board_search_document(db, board_id).await?;
+    }
+    Ok(())
+}
+
+pub async fn index_restored_project_subtree(
+    db: &impl ConnectionTrait,
+    project_id: u32,
+) -> Result<(), DbErr> {
+    delete_project_search_documents(db, project_id as i64).await?;
+    index_visible_project_subtree(db, project_id as i64).await
+}
+
+async fn delete_board_search_documents(
+    db: &impl ConnectionTrait,
+    board_id: i64,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'board' AND item_id = ?",
+        [Value::from(board_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'card' AND item_id IN (SELECT id FROM card WHERE board_id = ?)",
+        [Value::from(board_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'entry' AND item_id IN (SELECT e.id FROM entry e JOIN card c ON c.id = e.card_id WHERE c.board_id = ?)",
+        [Value::from(board_id)],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn delete_card_search_documents(
+    db: &impl ConnectionTrait,
+    card_id: i64,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'card' AND item_id = ?",
+        [Value::from(card_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'entry' AND item_id IN (SELECT id FROM entry WHERE card_id = ?)",
+        [Value::from(card_id)],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn delete_project_search_documents(
+    db: &impl ConnectionTrait,
+    project_id: i64,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'note' AND item_id IN (SELECT id FROM note WHERE project_id = ?)",
+        [Value::from(project_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'board' AND item_id IN (SELECT id FROM board WHERE project_id = ?)",
+        [Value::from(project_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'card' AND item_id IN (SELECT c.id FROM card c JOIN board b ON b.id = c.board_id WHERE b.project_id = ?)",
+        [Value::from(project_id)],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'entry' AND item_id IN (SELECT e.id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id WHERE b.project_id = ?)",
+        [Value::from(project_id)],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn card_board_id(db: &impl ConnectionTrait, card_id: i64) -> Result<Option<i64>, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT board_id FROM card WHERE id = ?",
+            [Value::from(card_id)],
+        ))
+        .await?;
+
+    match row {
+        Some(row) => Ok(Some(row.try_get::<i64>("", "board_id")?)),
+        None => Ok(None),
+    }
+}
+
+async fn entry_parent_ids(
+    db: &impl ConnectionTrait,
+    entry_id: i64,
+) -> Result<Option<(i64, i64)>, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT e.card_id AS card_id, c.board_id AS board_id FROM entry e JOIN card c ON c.id = e.card_id WHERE e.id = ?",
+            [Value::from(entry_id)],
+        ))
+        .await?;
+
+    match row {
+        Some(row) => Ok(Some((
+            row.try_get::<i64>("", "card_id")?,
+            row.try_get::<i64>("", "board_id")?,
+        ))),
+        None => Ok(None),
+    }
+}
+
+async fn visible_note_search_document(
+    db: &impl ConnectionTrait,
+    note_id: i64,
+) -> Result<Option<SearchDocument>, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, project_id, title, cached_content FROM note WHERE id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id IN (SELECT id FROM project WHERE deleted_at IS NULL))",
+            [Value::from(note_id)],
+        ))
+        .await?;
+
+    match row {
+        Some(row) => Ok(Some(SearchDocument {
+            item_type: "note",
+            item_id: row.try_get::<i64>("", "id")?,
+            parent_id: Some(note_id),
+            project_id: row.try_get::<Option<i64>>("", "project_id")?,
+            title: row.try_get::<String>("", "title")?,
+            body: row.try_get::<String>("", "cached_content")?,
+        })),
+        None => Ok(None),
+    }
+}
+
+async fn visible_entry_search_document(
+    db: &impl ConnectionTrait,
+    entry_id: i64,
+) -> Result<Option<(SearchDocument, i64, i64)>, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT e.id AS id, e.title AS title, e.description AS description, c.id AS card_id, c.board_id AS board_id, b.project_id AS project_id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id LEFT JOIN project p ON p.id = b.project_id WHERE e.id = ? AND e.deleted_at IS NULL AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)",
+            [Value::from(entry_id)],
+        ))
+        .await?;
+
+    match row {
+        Some(row) => {
+            let board_id: i64 = row.try_get("", "board_id")?;
+            let card_id: i64 = row.try_get("", "card_id")?;
+            Ok(Some((
+                SearchDocument {
+                    item_type: "entry",
+                    item_id: row.try_get("", "id")?,
+                    parent_id: Some(board_id),
+                    project_id: row.try_get("", "project_id")?,
+                    title: row.try_get("", "title")?,
+                    body: row.try_get("", "description")?,
+                },
+                card_id,
+                board_id,
+            )))
+        }
+        None => Ok(None),
+    }
+}
+
+async fn board_search_body(
+    db: &impl ConnectionTrait,
+    board_id: i64,
+) -> Result<Option<(String, Option<i64>, String)>, DbErr> {
+    let board = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, project_id, title FROM board WHERE id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id IN (SELECT id FROM project WHERE deleted_at IS NULL))",
+            [Value::from(board_id)],
+        ))
+        .await?;
+
+    let board = match board {
+        Some(board) => board,
+        None => return Ok(None),
+    };
+    let project_id: Option<i64> = board.try_get("", "project_id")?;
+    let title: String = board.try_get("", "title")?;
+
+    let card_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, board_id, title, position FROM card WHERE board_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            [Value::from(board_id)],
+        ))
+        .await?;
+
+    let mut cards = Vec::with_capacity(card_rows.len());
+    for row in card_rows {
+        cards.push((
+            row.try_get::<i64>("", "id")?,
+            row.try_get::<i64>("", "board_id")?,
+            row.try_get::<String>("", "title")?,
+            row.try_get::<i32>("", "position")?,
+        ));
+    }
+
+    let entries_by_card = entries_by_card_for_board(db, board_id).await?;
+    let sources = cards
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _, _, position))| CardSearchSource {
+            index,
+            id: *id,
+            position: *position,
+        })
+        .collect::<Vec<_>>();
+
+    let mut ordered_sources = sources;
+    ordered_sources.sort_by_key(|card| {
+        let (_, _, _, position) = cards[card.index];
+        (position, card.id)
+    });
+    let body = search_board_body(&cards, Some(ordered_sources.as_slice()), &entries_by_card);
+    Ok(Some((title, project_id, body)))
+}
+
+async fn entries_by_card_for_board(
+    db: &impl ConnectionTrait,
+    board_id: i64,
+) -> Result<HashMap<i64, Vec<EntrySearchSource>>, DbErr> {
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT e.id AS id, e.card_id AS card_id, e.title AS title, e.description AS description, e.position AS position FROM entry e WHERE e.deleted_at IS NULL AND e.card_id IN (SELECT id FROM card WHERE board_id = ? AND deleted_at IS NULL) ORDER BY e.position ASC, e.id ASC",
+            [Value::from(board_id)],
+        ))
+        .await?;
+
+    let mut entries_by_card: HashMap<i64, Vec<EntrySearchSource>> = HashMap::new();
+    for row in rows {
+        let card_id: i64 = row.try_get("", "card_id")?;
+        entries_by_card
+            .entry(card_id)
+            .or_default()
+            .push(EntrySearchSource {
+                id: row.try_get("", "id")?,
+                title: row.try_get("", "title")?,
+                description: row.try_get("", "description")?,
+                position: row.try_get("", "position")?,
+            });
+    }
+    for entries in entries_by_card.values_mut() {
+        entries.sort_by_key(|entry| (entry.position, entry.id));
+    }
+    Ok(entries_by_card)
+}
+
+async fn refresh_board_search_document(
+    db: &impl ConnectionTrait,
+    board_id: i64,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'board' AND item_id = ?",
+        [Value::from(board_id)],
+    ))
+    .await?;
+    if let Some((title, project_id, body)) = board_search_body(db, board_id).await? {
+        insert_search_documents(
+            db,
+            [SearchDocument {
+                item_type: "board",
+                item_id: board_id,
+                parent_id: Some(board_id),
+                project_id,
+                title,
+                body,
+            }],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn refresh_card_search_document(
+    db: &impl ConnectionTrait,
+    card_id: i64,
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM search_index WHERE item_type = 'card' AND item_id = ?",
+        [Value::from(card_id)],
+    ))
+    .await?;
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT c.id AS id, c.board_id AS board_id, c.title AS title, b.project_id AS project_id FROM card c JOIN board b ON b.id = c.board_id LEFT JOIN project p ON p.id = b.project_id WHERE c.id = ? AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)",
+            [Value::from(card_id)],
+        ))
+        .await?;
+    let row = match row {
+        Some(row) => row,
+        None => return Ok(()),
+    };
+    let board_id: i64 = row.try_get("", "board_id")?;
+    let project_id: Option<i64> = row.try_get("", "project_id")?;
+    let title: String = row.try_get("", "title")?;
+    let entry_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            [Value::from(card_id)],
+        ))
+        .await?;
+    let mut entries = Vec::with_capacity(entry_rows.len());
+    for row in entry_rows {
+        entries.push(EntrySearchSource {
+            id: row.try_get("", "id")?,
+            title: row.try_get("", "title")?,
+            description: row.try_get("", "description")?,
+            position: row.try_get("", "position")?,
+        });
+    }
+    entries.sort_by_key(|entry| (entry.position, entry.id));
+    let body = search_card_body(&title, Some(entries.as_slice()));
+    insert_search_documents(
+        db,
+        [SearchDocument {
+            item_type: "card",
+            item_id: card_id,
+            parent_id: Some(board_id),
+            project_id,
+            title,
+            body,
+        }],
+    )
+    .await?;
+    Ok(())
+}
+
+async fn index_visible_board_subtree(
+    db: &impl ConnectionTrait,
+    board_id: i64,
+) -> Result<(), DbErr> {
+    let board = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, project_id, title FROM board WHERE id = ? AND deleted_at IS NULL AND (project_id IS NULL OR project_id IN (SELECT id FROM project WHERE deleted_at IS NULL))",
+            [Value::from(board_id)],
+        ))
+        .await?;
+    let board = match board {
+        Some(board) => board,
+        None => return Ok(()),
+    };
+    let project_id: Option<i64> = board.try_get("", "project_id")?;
+    let title: String = board.try_get("", "title")?;
+
+    let card_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, board_id, title, position FROM card WHERE board_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            [Value::from(board_id)],
+        ))
+        .await?;
+    let mut cards = Vec::with_capacity(card_rows.len());
+    for row in card_rows {
+        cards.push((
+            row.try_get::<i64>("", "id")?,
+            row.try_get::<i64>("", "board_id")?,
+            row.try_get::<String>("", "title")?,
+            row.try_get::<i32>("", "position")?,
+        ));
+    }
+    let entries_by_card = entries_by_card_for_board(db, board_id).await?;
+    let sources = cards
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _, _, position))| CardSearchSource {
+            index,
+            id: *id,
+            position: *position,
+        })
+        .collect::<Vec<_>>();
+    let mut ordered_sources = sources;
+    ordered_sources.sort_by_key(|card| {
+        let (_, _, _, position) = cards[card.index];
+        (position, card.id)
+    });
+    let board_body = search_board_body(&cards, Some(ordered_sources.as_slice()), &entries_by_card);
+    insert_search_documents(
+        db,
+        [SearchDocument {
+            item_type: "board",
+            item_id: board_id,
+            parent_id: Some(board_id),
+            project_id,
+            title,
+            body: board_body,
+        }],
+    )
+    .await?;
+
+    for (card_id, _, card_title, _) in &cards {
+        let entries = entries_by_card.get(card_id).map(Vec::as_slice);
+        let body = search_card_body(card_title, entries);
+        insert_search_documents(
+            db,
+            [SearchDocument {
+                item_type: "card",
+                item_id: *card_id,
+                parent_id: Some(board_id),
+                project_id,
+                title: card_title.clone(),
+                body,
+            }],
+        )
+        .await?;
+    }
+
+    for entries in entries_by_card.values() {
+        for entry in entries {
+            insert_search_documents(
+                db,
+                [SearchDocument {
+                    item_type: "entry",
+                    item_id: entry.id,
+                    parent_id: Some(board_id),
+                    project_id,
+                    title: entry.title.clone(),
+                    body: entry.description.clone(),
+                }],
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn index_visible_card_subtree(db: &impl ConnectionTrait, card_id: i64) -> Result<(), DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT c.id AS id, c.board_id AS board_id, c.title AS title, b.project_id AS project_id FROM card c JOIN board b ON b.id = c.board_id LEFT JOIN project p ON p.id = b.project_id WHERE c.id = ? AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)",
+            [Value::from(card_id)],
+        ))
+        .await?;
+    let row = match row {
+        Some(row) => row,
+        None => return Ok(()),
+    };
+    let board_id: i64 = row.try_get("", "board_id")?;
+    let project_id: Option<i64> = row.try_get("", "project_id")?;
+    let title: String = row.try_get("", "title")?;
+    let entry_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            [Value::from(card_id)],
+        ))
+        .await?;
+    let mut entries = Vec::with_capacity(entry_rows.len());
+    for row in entry_rows {
+        entries.push(EntrySearchSource {
+            id: row.try_get("", "id")?,
+            title: row.try_get("", "title")?,
+            description: row.try_get("", "description")?,
+            position: row.try_get("", "position")?,
+        });
+    }
+    entries.sort_by_key(|entry| (entry.position, entry.id));
+    let card_body = search_card_body(&title, Some(entries.as_slice()));
+    insert_search_documents(
+        db,
+        [SearchDocument {
+            item_type: "card",
+            item_id: card_id,
+            parent_id: Some(board_id),
+            project_id,
+            title,
+            body: card_body,
+        }],
+    )
+    .await?;
+    for entry in &entries {
+        insert_search_documents(
+            db,
+            [SearchDocument {
+                item_type: "entry",
+                item_id: entry.id,
+                parent_id: Some(board_id),
+                project_id,
+                title: entry.title.clone(),
+                body: entry.description.clone(),
+            }],
+        )
+        .await?;
+    }
+    refresh_board_search_document(db, board_id).await
+}
+
+async fn index_visible_project_subtree(
+    db: &impl ConnectionTrait,
+    project_id: i64,
+) -> Result<(), DbErr> {
+    let project = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM project WHERE id = ? AND deleted_at IS NULL",
+            [Value::from(project_id)],
+        ))
+        .await?;
+    if project.is_none() {
+        return Ok(());
+    }
+
+    let note_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, project_id, title, cached_content FROM note WHERE project_id = ? AND deleted_at IS NULL",
+            [Value::from(project_id)],
+        ))
+        .await?;
+    for row in note_rows {
+        let id: i64 = row.try_get("", "id")?;
+        insert_search_documents(
+            db,
+            [SearchDocument {
+                item_type: "note",
+                item_id: id,
+                parent_id: Some(id),
+                project_id: row.try_get("", "project_id")?,
+                title: row.try_get("", "title")?,
+                body: row.try_get("", "cached_content")?,
+            }],
+        )
+        .await?;
+    }
+
+    let board_rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM board WHERE project_id = ? AND deleted_at IS NULL",
+            [Value::from(project_id)],
+        ))
+        .await?;
+    for row in board_rows {
+        let board_id: i64 = row.try_get("", "id")?;
+        index_visible_board_subtree(db, board_id).await?;
+    }
     Ok(())
 }
 
@@ -632,8 +1387,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        SEARCH_INSERT_BODY_BUDGET, SearchResultKind, fts_query, rebuild_search_index,
-        search_workspace, should_flush_search_document_chunk,
+        SEARCH_INSERT_BODY_BUDGET, SearchResultKind, fts_query, preview_anchor_terms,
+        rebuild_search_index, search_workspace, should_flush_search_document_chunk,
     };
     use crate::test_alloc;
     use anyhow::{Context as _, Result};
@@ -857,6 +1612,89 @@ mod tests {
 
         assert_eq!(db.into_transaction_log().len(), 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn anchor_terms_derive_from_match_query() {
+        assert_eq!(
+            preview_anchor_terms("the* root* fix* was"),
+            vec!["the", "root", "fix", "was"]
+        );
+        assert_eq!(preview_anchor_terms("needle*"), vec!["needle"]);
+    }
+
+    #[tokio::test]
+    async fn multi_word_preview_is_anchored_at_term_cooccurrence() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let filler = "The preliminary note was just filler text. ".repeat(160);
+        let body = format!(
+            "{filler}\n\n## Why the first root fix was still not enough\n\nThe first repair attempt was incomplete, so the root cause survived the fix."
+        );
+        assert!(body.len() > 6000);
+        note::ActiveModel {
+            title: Set("The Bug".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(body),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        let results = search_workspace(&db, "the root fix was", 10).await?;
+        assert_eq!(results.len(), 1);
+        let plain_preview = results[0].preview.replace(['\u{1}', '\u{2}'], "");
+        assert!(
+            plain_preview.contains("first root fix"),
+            "preview should cover the co-occurrence region, preview starts with: {}",
+            plain_preview.chars().take(200).collect::<String>()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multi_word_preview_prefers_late_cluster_over_early_scatter() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let filler =
+            "Restarting Castle fixed everything. The root cause analysis was routine work. "
+                .repeat(120);
+        let body = format!(
+            "{filler}\n\n## Why the first root fix was still not enough\n\nThe first repair attempt was incomplete."
+        );
+        assert!(body.len() > 9000);
+        note::ActiveModel {
+            title: Set("The Bug".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(body),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        let results = search_workspace(&db, "root fix was", 10).await?;
+        assert_eq!(results.len(), 1);
+        let plain_preview = results[0].preview.replace(['\u{1}', '\u{2}'], "");
+        assert!(
+            plain_preview.contains("first root fix"),
+            "preview should cover the late co-occurrence region, preview starts with: {}",
+            plain_preview.chars().take(200).collect::<String>()
+        );
         Ok(())
     }
 

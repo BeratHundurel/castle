@@ -30,12 +30,14 @@ impl BoardView {
         );
         self.entry_editing.next_checklist_item_position = position.saturating_add(1);
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::commands::create_checklist_item(&store, entry_id, title, position)
                     .await
-            });
+            },
+        );
+
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {

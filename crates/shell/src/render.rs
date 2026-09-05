@@ -190,7 +190,6 @@ impl AppShell {
         let active_tab_id = self.tabs.open_tabs.get(active_index).map(|t| t.id);
 
         let tab_bar = TabBar::new("open-tabs")
-            .pill()
             .small()
             .bg(cx.theme().sidebar)
             .track_scroll(&self.tabs.tab_scroll_handle)
@@ -209,7 +208,9 @@ impl AppShell {
             )
             .suffix(div().w_0())
             .children(self.tabs.open_tabs.iter().enumerate().map(|(index, tab)| {
+                let tab_id = tab.id;
                 Tab::new()
+                    .debug_selector(move || format!("document-tab-{tab_id}"))
                     .px_2()
                     .text_color(cx.theme().primary_foreground)
                     .label(tab_label(tab, cx))
@@ -620,26 +621,34 @@ mod tests {
             "long tab strips should expose a horizontal scroll range"
         );
 
-        cx.update(|window, cx| {
-            shell.update(cx, |shell, cx| {
-                shell.activate_tab(11, window, cx);
-            });
-        });
-        cx.run_until_parked();
+        for width in [1_200., 1_918.] {
+            cx.simulate_resize(gpui::size(px(width), px(800.)));
+            for (index, selector) in [
+                (11, "document-tab-12"),
+                (0, "document-tab-1"),
+                (6, "document-tab-7"),
+                (11, "document-tab-12"),
+            ] {
+                cx.update(|window, cx| {
+                    shell.update(cx, |shell, cx| {
+                        shell.activate_tab(index, window, cx);
+                    });
+                });
+                cx.run_until_parked();
 
-        let tab_scroll_area = tab_scroll_handle.bounds();
-        let last_tab = tab_scroll_handle
-            .bounds_for_item(11)
-            .expect("last tab should be measured");
-        let painted_last_tab = last_tab.origin.x + tab_scroll_handle.offset().x;
-        let painted_last_tab_right = last_tab.right() + tab_scroll_handle.offset().x;
-        assert!(
-            painted_last_tab >= tab_scroll_area.left(),
-            "activating an overflowed tab should reveal its left edge"
-        );
-        assert!(
-            painted_last_tab_right <= tab_scroll_area.right(),
-            "activating an overflowed tab should reveal its right edge"
-        );
+                let tab_scroll_area = tab_scroll_handle.bounds();
+                let active_tab = cx
+                    .debug_bounds(selector)
+                    .expect("active tab should render");
+                assert!(
+                    active_tab.left() >= tab_scroll_area.left(),
+                    "active tab {index} must reveal its left edge at width {width}: {active_tab:?} vs {tab_scroll_area:?}"
+                );
+                assert!(
+                    active_tab.right() <= tab_scroll_area.right(),
+                    "active tab {index} must reveal its right edge at width {width}: {active_tab:?} vs {tab_scroll_area:?}"
+                );
+            }
+        }
     }
 }

@@ -23,10 +23,10 @@ impl DocumentEditorView {
         });
         let vim_selection = self.vim_visual_range(cx);
         let selection = vim_selection.clone().unwrap_or(input_selection);
-        let background = cx.background_executor().clone();
 
         self.persistence.format_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let (source, result) = background
+            let (source, result) = cx
+                .background_executor()
                 .spawn(async move {
                     let result = format_document_text(kind, &source);
                     (source, result)

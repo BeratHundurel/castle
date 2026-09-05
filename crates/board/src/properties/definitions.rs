@@ -12,12 +12,13 @@ impl BoardView {
             return;
         }
         let kind = self.properties.new_property_kind;
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::create_property(&store, i64::from(board_id), name, kind)
                     .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -70,11 +71,12 @@ impl BoardView {
         let Some(property_id) = self.properties.renaming_property_id else {
             return;
         };
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::rename_property(&store, property_id, name).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -139,16 +141,17 @@ impl BoardView {
         let Some(board_id) = self.data.board_id else {
             return;
         };
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::reorder_properties(
                     &store,
                     i64::from(board_id),
                     &ordered_ids,
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -222,11 +225,12 @@ impl BoardView {
     }
 
     fn delete_property(&mut self, property_id: i64, cx: &mut Context<Self>) {
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::board::properties::delete_property(&store, property_id).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {

@@ -18,9 +18,9 @@ impl BoardView {
         let revision = self.properties.next_update_revision;
         self.properties.update_revisions.insert(key, revision);
         let persisted_revisions = self.properties.persisted_revisions.clone();
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 let mut persisted_revisions = persisted_revisions.lock().await;
                 if persisted_revisions
                     .get(&key)
@@ -49,7 +49,8 @@ impl BoardView {
                 }
                 persisted_revisions.insert(key, revision);
                 Ok(())
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 

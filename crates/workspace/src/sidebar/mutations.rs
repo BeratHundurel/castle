@@ -14,18 +14,18 @@ impl SidebarView {
         id: u32,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                trash::restore_item(
+                    &store,
+                    trash::RestoreTrashItem(trash::MoveToTrash { kind, id }),
+                )
+                .await
+            },
+        );
         cx.spawn(async move |this, cx| -> Result<()> {
-            runtime
-                .spawn(async move {
-                    trash::restore_item(
-                        &db,
-                        trash::RestoreTrashItem(trash::MoveToTrash { kind, id }),
-                    )
-                    .await
-                })
-                .await??;
+            task.await??;
             this.update(cx, |this, cx| {
                 this.request_workspace_refresh(cx);
             })
@@ -48,14 +48,14 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                home::set_pinned(&store, home::WorkspaceItemKind::Board, board_id, pinned).await
+            },
+        );
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    home::set_pinned(&db, home::WorkspaceItemKind::Board, board_id, pinned).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => {}
@@ -82,14 +82,14 @@ impl SidebarView {
             }
         }
         cx.notify();
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                home::set_pinned(&store, home::WorkspaceItemKind::Note, note_id, pinned).await
+            },
+        );
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    home::set_pinned(&db, home::WorkspaceItemKind::Note, note_id, pinned).await
-                })
-                .await;
+            let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(())) => {}
@@ -142,17 +142,22 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        cx.spawn_in(window, async move |this, cx| {
-            let request = trash::MoveToTrash {
-                kind: trash::TrashItemKind::Board,
-                id: board_id,
-            };
-            let result = match runtime
-                .spawn(async move { trash::move_to_trash(&db, request, now_ts()).await })
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                trash::move_to_trash(
+                    &store,
+                    trash::MoveToTrash {
+                        kind: trash::TrashItemKind::Board,
+                        id: board_id,
+                    },
+                    now_ts(),
+                )
                 .await
-            {
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match task.await {
                 Ok(result) => result,
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
@@ -202,16 +207,17 @@ impl SidebarView {
             title: SharedString::from(title.as_str()),
         });
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::persist_workspace_title(
                     &store,
                     storage::workspace::WorkspaceTitleTarget::Board(board_id),
                     title,
                 )
                 .await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -238,17 +244,22 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        cx.spawn_in(window, async move |this, cx| {
-            let request = trash::MoveToTrash {
-                kind: trash::TrashItemKind::Note,
-                id: note_id,
-            };
-            let result = match runtime
-                .spawn(async move { trash::move_to_trash(&db, request, now_ts()).await })
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                trash::move_to_trash(
+                    &store,
+                    trash::MoveToTrash {
+                        kind: trash::TrashItemKind::Note,
+                        id: note_id,
+                    },
+                    now_ts(),
+                )
                 .await
-            {
+            },
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match task.await {
                 Ok(result) => result,
                 Err(err) => Err(anyhow::anyhow!(err)),
             };
@@ -298,19 +309,19 @@ impl SidebarView {
             title: shared_title,
         });
 
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                storage::workspace::persist_workspace_title(
+                    &store,
+                    storage::workspace::WorkspaceTitleTarget::Note(note_id),
+                    title,
+                )
+                .await
+            },
+        );
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .spawn(async move {
-                    storage::workspace::persist_workspace_title(
-                        &db,
-                        storage::workspace::WorkspaceTitleTarget::Note(note_id),
-                        title,
-                    )
-                    .await
-                })
-                .await;
+            let result = task.await;
 
             this.update(cx, |this, cx| match result {
                 Ok(Ok(update)) => cx.emit(SidebarEvent::NotePathChanged {
@@ -403,11 +414,12 @@ impl SidebarView {
         }
         cx.notify();
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::move_board_to_project(&store, board_id, project_id).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -460,11 +472,12 @@ impl SidebarView {
         }
         cx.notify();
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::move_note_to_project(&store, note_id, project_id).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -558,11 +571,12 @@ impl SidebarView {
             name: shared_name,
         });
 
-        let task = cx
-            .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
                 storage::workspace::rename_project(&store, project_id, name).await
-            });
+            },
+        );
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -583,22 +597,22 @@ impl SidebarView {
     }
 
     pub(super) fn delete_project(&mut self, cx: &mut Context<Self>, project_id: u32) {
-        let db = cx.global::<AppRuntime>().store();
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
+        let task = cx.global::<AppRuntime>().spawn_store(
+            cx.background_executor(),
+            move |store| async move {
+                trash::move_to_trash(
+                    &store,
+                    trash::MoveToTrash {
+                        kind: trash::TrashItemKind::Project,
+                        id: project_id,
+                    },
+                    now_ts(),
+                )
+                .await
+            },
+        );
         cx.spawn(async move |this, cx| -> Result<()> {
-            runtime
-                .spawn(async move {
-                    trash::move_to_trash(
-                        &db,
-                        trash::MoveToTrash {
-                            kind: trash::TrashItemKind::Project,
-                            id: project_id,
-                        },
-                        now_ts(),
-                    )
-                    .await
-                })
-                .await??;
+            task.await??;
             this.update(cx, |this, cx| {
                 this.projects.retain(|project| project.id != project_id);
                 this.renaming_project = None;
@@ -705,7 +719,7 @@ impl SidebarView {
 
         let task = cx
             .global::<AppRuntime>()
-            .spawn_store(move |store| async move {
+            .spawn_store(cx.background_executor(), move |store| async move {
                 storage::workspace::reorder_projects(&store, positions).await
             });
         cx.spawn(async move |this, cx| {

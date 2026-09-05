@@ -33,8 +33,6 @@ pub use notifications::{NotificationAvailability, NotificationGateway};
 pub use template_picker::{BoardTemplatePicker, BoardTemplatePickerEvent};
 
 use entry_dialog::EntryDialog;
-use runtime::AppRuntime;
-
 #[derive(Clone)]
 struct BoardServices {
     layout_persistence: storage::board::positions::BoardLayoutPersistence,
@@ -42,16 +40,13 @@ struct BoardServices {
 }
 
 impl BoardServices {
-    fn new(runtime: tokio::runtime::Handle) -> Self {
-        Self::with_notifications(runtime, notifications::BoardNotifications::unavailable())
+    fn new() -> Self {
+        Self::with_notifications(notifications::BoardNotifications::unavailable())
     }
 
-    fn with_notifications(
-        runtime: tokio::runtime::Handle,
-        notifications: notifications::BoardNotifications,
-    ) -> Self {
+    fn with_notifications(notifications: notifications::BoardNotifications) -> Self {
         Self {
-            layout_persistence: storage::board::positions::BoardLayoutPersistence::new(runtime),
+            layout_persistence: storage::board::positions::BoardLayoutPersistence::default(),
             notifications,
         }
     }
@@ -69,16 +64,13 @@ impl Global for BoardServices {}
 
 pub fn init(cx: &mut App) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
-        cx.set_global(BoardServices::new(runtime));
+        cx.set_global(BoardServices::new());
     }
 }
 
 pub fn init_with_notification_gateway(cx: &mut App, gateway: Arc<dyn NotificationGateway>) {
     if !cx.has_global::<BoardServices>() {
-        let runtime = cx.global::<AppRuntime>().tokio_handle();
         cx.set_global(BoardServices::with_notifications(
-            runtime,
             notifications::BoardNotifications::new(gateway),
         ));
     }
