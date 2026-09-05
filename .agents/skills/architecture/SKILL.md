@@ -1,5 +1,5 @@
 ---
-name: capability-architecture
+name: architecture
 description: Organize or review Castle features by capability, crate boundaries, and dependency direction. Use when adding a substantial feature, moving feature code, or assessing module ownership; not for a small local edit.
 ---
 
