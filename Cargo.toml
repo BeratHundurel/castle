@@ -16,11 +16,7 @@ members = [
     "crates/mcp_server",
 ]
 default-members = ["crates/app"]
-exclude = ["vendor/gpui-component"]
 resolver = "2"
-
-[patch.crates-io]
-gpui-component = { path = "vendor/gpui-component" }
 
 [workspace.package]
 version = "0.4.0"
