@@ -156,6 +156,7 @@ impl CommandPaletteView {
             PaletteCommandKind::NewTab => CommandPaletteEvent::NewTab,
             PaletteCommandKind::CloseAllTabs => CommandPaletteEvent::CloseAllTabs,
             PaletteCommandKind::OpenSettings => CommandPaletteEvent::OpenSettings,
+            PaletteCommandKind::OpenSettingsFile => CommandPaletteEvent::OpenSettingsFile,
             PaletteCommandKind::CreateCardFromSelection => {
                 CommandPaletteEvent::CreateCardFromSelection
             }

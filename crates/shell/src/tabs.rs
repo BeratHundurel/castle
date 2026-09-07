@@ -167,32 +167,47 @@ impl AppShell {
             .tabs
             .open_tabs
             .iter()
-            .map(|tab| match &tab.kind {
-                OpenTabKind::Chooser => StoredTab::Chooser,
-                OpenTabKind::Trash => StoredTab::Trash,
+            .filter_map(|tab| match &tab.kind {
+                OpenTabKind::Chooser => Some(StoredTab::Chooser),
+                OpenTabKind::Trash => Some(StoredTab::Trash),
                 OpenTabKind::Board {
                     board_id,
                     project_id,
                     ..
-                } => StoredTab::Board {
+                } => Some(StoredTab::Board {
                     board_id: *board_id,
                     project_id: *project_id,
                     title: tab.title.to_string(),
-                },
+                }),
                 OpenTabKind::Note {
                     note_id,
                     project_id,
                     ..
-                } => StoredTab::Note {
+                } => Some(StoredTab::Note {
                     note_id: *note_id,
                     project_id: *project_id,
                     title: tab.title.to_string(),
-                },
+                }),
+                OpenTabKind::Settings { .. } => None,
             })
             .collect();
+        let active_tab_index = self
+            .tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
+            .map(|_| {
+                self.tabs
+                    .open_tabs
+                    .iter()
+                    .take(self.tabs.active_tab_index.saturating_add(1))
+                    .filter(|tab| !matches!(tab.kind, OpenTabKind::Settings { .. }))
+                    .count()
+                    .saturating_sub(1)
+            })
+            .unwrap_or_default();
         let session = TabSession {
             tabs,
-            active_tab_index: self.tabs.active_tab_index,
+            active_tab_index,
             active_project_id: self.workspace.active_project_id,
         };
         AppSettings::set_tab_session(session, cx);
@@ -240,7 +255,7 @@ impl AppShell {
                         cx.notify();
                     });
                 }
-                OpenTabKind::Trash => {
+                OpenTabKind::Trash | OpenTabKind::Settings { .. } => {
                     self.sidebar.update(cx, |sidebar, cx| {
                         sidebar.clear_active_item();
                         cx.notify();
@@ -304,7 +319,7 @@ impl AppShell {
             } => {
                 self.workspace.active_project_id = *project_id;
             }
-            OpenTabKind::Chooser | OpenTabKind::Trash => {}
+            OpenTabKind::Chooser | OpenTabKind::Trash | OpenTabKind::Settings { .. } => {}
         }
 
         self.sync_sidebar_active(cx);
@@ -542,7 +557,7 @@ impl AppShell {
                 Some(WorkspaceTitleTarget::Note(*note_id))
             }
             OpenTabKind::Board { board_id, .. } => Some(WorkspaceTitleTarget::Board(*board_id)),
-            OpenTabKind::Chooser | OpenTabKind::Trash => None,
+            OpenTabKind::Chooser | OpenTabKind::Trash | OpenTabKind::Settings { .. } => None,
         };
 
         if let Some(target) = target {

@@ -1,6 +1,6 @@
 use gpui_kit::{Context, Pixels, Window, px};
 
-use settings::AppSettings;
+use settings::{AppSettings, SettingsDocumentView};
 
 use super::AppShell;
 
@@ -49,6 +49,27 @@ impl AppShell {
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_view
             .update(cx, |settings, cx| settings.open(window, cx));
+    }
+
+    pub(crate) fn open_settings_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self
+            .tabs
+            .open_tabs
+            .iter()
+            .position(|tab| matches!(&tab.kind, super::OpenTabKind::Settings { .. }))
+        {
+            self.activate_tab(index, window, cx);
+            return;
+        }
+
+        let view = SettingsDocumentView::view(window, cx);
+        Self::observe_settings_document(&view, window, cx);
+        self.replace_or_push_active(
+            super::OpenTabKind::Settings { view },
+            "Settings".into(),
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn open_board_template_picker(

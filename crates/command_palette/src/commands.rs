@@ -95,6 +95,12 @@ impl CommandPaletteView {
                 kind: PaletteCommandKind::OpenSettings,
             },
             PaletteCommand {
+                label: "Open settings file".into(),
+                subtitle: "Edit settings.json directly".into(),
+                icon: IconName::File,
+                kind: PaletteCommandKind::OpenSettingsFile,
+            },
+            PaletteCommand {
                 label: "Switch theme".into(),
                 subtitle: SharedString::from(format!(
                     "Preview available themes ({})",

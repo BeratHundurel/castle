@@ -1,5 +1,5 @@
 use gpui_kit::{App, AsKeystroke as _, Global, KeyBinding, SharedString};
-use settings::ShortcutReference;
+use settings::{SaveSettingsDocument, ShortcutReference};
 
 use command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
@@ -305,6 +305,10 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-s", SaveSettingsDocument, Some("SettingsDocument")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-s", SaveSettingsDocument, Some("SettingsDocument")),
         KeyBinding::new("alt-shift-f", FormatDocument, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-alt-m", ToggleFocusMode, Some("DocumentEditor")),

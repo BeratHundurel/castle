@@ -156,10 +156,38 @@ impl AppSettings {
         apply_values_to_theme(&self.values, cx);
     }
 
-    pub fn export_json(cx: &App) -> serde_json::Result<Vec<u8>> {
+    pub fn settings_path(cx: &App) -> PathBuf {
+        cx.global::<Self>().path.clone()
+    }
+
+    pub fn document_json(cx: &App) -> serde_json::Result<String> {
         let mut values = cx.global::<Self>().values.clone();
         values.tab_session = TabSession::default();
-        serde_json::to_vec_pretty(&values)
+        let mut document = serde_json::to_value(values)?;
+        if let Some(object) = document.as_object_mut() {
+            object.remove("tab_session");
+        }
+        serde_json::to_string_pretty(&document)
+    }
+
+    pub fn apply_document_json(bytes: &[u8], cx: &mut App) -> serde_json::Result<()> {
+        let mut values: StoredSettings = serde_json::from_slice(bytes)?;
+        values.tab_session = cx.global::<Self>().values.tab_session.clone();
+        values.normalize();
+
+        let write = {
+            let settings = cx.global_mut::<Self>();
+            settings.values = values.clone();
+            settings.prepare_write()
+        };
+        Self::schedule_write(write);
+        apply_values_to_theme(&values, cx);
+        cx.refresh_windows();
+        Ok(())
+    }
+
+    pub fn export_json(cx: &App) -> serde_json::Result<Vec<u8>> {
+        Self::document_json(cx).map(|json| json.into_bytes())
     }
 
     pub fn import_json(bytes: &[u8], cx: &mut App) -> serde_json::Result<()> {
@@ -708,6 +736,24 @@ mod tests {
 
         assert_eq!(restored.tab_session.active_tab_index, 1);
         assert_eq!(restored.tab_session, settings.tab_session);
+    }
+
+    #[gpui_kit::test]
+    fn settings_document_excludes_the_tab_session(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| {
+            let directory = tempfile::tempdir().expect("settings directory should be created");
+            let mut settings = AppSettings::load(directory.path());
+            settings.values.tab_session = TabSession {
+                tabs: vec![StoredTab::Trash],
+                active_tab_index: 0,
+                active_project_id: None,
+            };
+            cx.set_global(settings);
+
+            let document = AppSettings::document_json(cx).expect("settings should serialize");
+            assert!(!document.contains("tab_session"));
+            assert!(document.contains("theme_name"));
+        });
     }
 
     #[test]

@@ -100,6 +100,21 @@ impl AppShell {
     }
 
     fn render_note_save_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(active_kind) = self
+            .tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
+            .map(|tab| &tab.kind)
+        else {
+            return div().into_any_element();
+        };
+
+        if let OpenTabKind::Settings { view } = active_kind {
+            return self
+                .render_settings_save_controls(view.clone(), cx)
+                .into_any_element();
+        }
+
         let Some(view) = self
             .tabs
             .open_tabs
@@ -181,6 +196,45 @@ impl AppShell {
             .into_any_element()
     }
 
+    fn render_settings_save_controls(
+        &self,
+        view: Entity<SettingsDocumentView>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let save_state = view.read(cx).save_state();
+        let (icon, color, label) = settings_document_save_state(save_state, cx);
+        let save_view = view.clone();
+
+        h_flex()
+            .id("title-bar-settings-document-actions")
+            .h_full()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .flex_shrink_0()
+            .child(
+                Button::new("title-save-settings")
+                    .icon(IconName::Check)
+                    .ghost()
+                    .xsmall()
+                    .tooltip(format!("Save ({})", platform_shortcut("S")))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        save_view.update(cx, |settings, cx| settings.save(cx));
+                    })),
+            )
+            .child(
+                Button::new("title-settings-save-status")
+                    .icon(Icon::new(icon).text_color(color))
+                    .ghost()
+                    .xsmall()
+                    .rounded_full()
+                    .bg(color.opacity(0.12))
+                    .tab_stop(false)
+                    .tooltip(label),
+            )
+            .into_any_element()
+    }
+
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_index = self
             .tabs
@@ -252,6 +306,7 @@ impl AppShell {
             OpenTabKind::Trash => self.render_trash(cx).into_any_element(),
             OpenTabKind::Board { view, .. } => view.clone().into_any_element(),
             OpenTabKind::Note { view, .. } => view.clone().into_any_element(),
+            OpenTabKind::Settings { view } => view.clone().into_any_element(),
         }
     }
 
@@ -405,6 +460,16 @@ fn tab_label(tab: &OpenTab, cx: &mut Context<AppShell>) -> SharedString {
             }
         }
         OpenTabKind::Trash => tab.title.clone(),
+        OpenTabKind::Settings { view } => {
+            if matches!(
+                view.read(cx).save_state(),
+                SettingsDocumentSaveState::Dirty | SettingsDocumentSaveState::Error(_)
+            ) {
+                SharedString::from(format!("* {}", tab.title))
+            } else {
+                tab.title.clone()
+            }
+        }
         _ => tab.title.clone(),
     }
 }
@@ -447,6 +512,28 @@ fn save_state_status(
         SaveState::Saving => (IconName::Loader, cx.theme().info, "Saving"),
         SaveState::Missing => (IconName::TriangleAlert, cx.theme().warning, "File missing"),
         SaveState::Error(_) => (IconName::TriangleAlert, cx.theme().danger, "Save failed"),
+    }
+}
+
+fn settings_document_save_state(
+    save_state: SettingsDocumentSaveState,
+    cx: &mut Context<AppShell>,
+) -> (IconName, Hsla, SharedString) {
+    match save_state {
+        SettingsDocumentSaveState::Saved => {
+            (IconName::CircleCheck, cx.theme().success, "Saved".into())
+        }
+        SettingsDocumentSaveState::Dirty => (
+            IconName::Asterisk,
+            cx.theme().warning,
+            "Unsaved settings changes".into(),
+        ),
+        SettingsDocumentSaveState::Saving => {
+            (IconName::Loader, cx.theme().info, "Saving settings".into())
+        }
+        SettingsDocumentSaveState::Error(message) => {
+            (IconName::TriangleAlert, cx.theme().danger, message)
+        }
     }
 }
 

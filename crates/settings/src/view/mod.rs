@@ -97,6 +97,7 @@ type SetSidebarVisible = Rc<dyn Fn(bool, &mut App)>;
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
 type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
+type OpenSettingsFileAction = Rc<dyn Fn(&mut Window, &mut App)>;
 type WorkspaceArchiveAction = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub struct WorkspaceArchiveActions {
@@ -123,6 +124,7 @@ pub struct SettingsIntegration {
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
     shortcuts: ShortcutProvider,
+    open_settings_file: OpenSettingsFileAction,
     import_workspace: WorkspaceArchiveAction,
     export_workspace: WorkspaceArchiveAction,
     agent_access: Arc<dyn AgentAccess>,
@@ -144,10 +146,19 @@ impl SettingsIntegration {
             update_tray_shortcut: Rc::new(update_tray_shortcut),
             update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
             shortcuts: Rc::new(shortcuts),
+            open_settings_file: Rc::new(|_, _| {}),
             import_workspace: archive_actions.import,
             export_workspace: archive_actions.export,
             agent_access,
         }
+    }
+
+    pub fn with_open_settings_file(
+        mut self,
+        open_settings_file: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.open_settings_file = Rc::new(open_settings_file);
+        self
     }
 }
 
@@ -218,19 +229,32 @@ impl SettingsView {
                 .content({
                     let settings = settings.clone();
                     move |content, _, cx| {
+                        let open_settings_file =
+                            settings.read(cx).integration.open_settings_file.clone();
                         content.px_4().pb_4().child(
-                            div().size_full().overflow_hidden().child(
-                                Settings::new("castle-settings")
-                                    .with_size(Size::Medium)
-                                    .with_group_variant(GroupBoxVariant::Fill)
-                                    .sidebar_width(px(sidebar_width))
-                                    .sidebar_style(&settings_sidebar_style(
-                                        *cx.theme().tokens.background,
-                                        cx.theme().border,
-                                    ))
-                                    .header_style(&settings_header_style(sidebar_width))
-                                    .pages(setting_pages(settings.clone(), cx)),
-                            ),
+                            div()
+                                .size_full()
+                                .relative()
+                                .overflow_hidden()
+                                .child(
+                                    Settings::new("castle-settings")
+                                        .with_size(Size::Medium)
+                                        .with_group_variant(GroupBoxVariant::Fill)
+                                        .sidebar_width(px(sidebar_width))
+                                        .sidebar_size_range(px(sidebar_width)..px(sidebar_width))
+                                        .sidebar_style(&settings_sidebar_style(
+                                            *cx.theme().tokens.background,
+                                            cx.theme().border,
+                                        ))
+                                        .header_style(&settings_header_style(sidebar_width))
+                                        .pages(setting_pages(settings.clone(), cx)),
+                                )
+                                .child(settings_sidebar_footer(
+                                    open_settings_file,
+                                    sidebar_width,
+                                    *cx.theme().tokens.background,
+                                    cx.theme().border,
+                                )),
                         )
                     }
                 })
@@ -345,6 +369,35 @@ fn settings_sidebar_style(background: gpui_kit::Hsla, border: gpui_kit::Hsla) ->
     StyleRefinement::default()
         .bg(background)
         .border_color(border)
+}
+
+fn settings_sidebar_footer(
+    open_settings_file: OpenSettingsFileAction,
+    sidebar_width: f32,
+    background: gpui_kit::Hsla,
+    border: gpui_kit::Hsla,
+) -> impl IntoElement {
+    div()
+        .absolute()
+        .left_0()
+        .bottom_0()
+        .w(px(sidebar_width))
+        .border_t_1()
+        .border_color(border)
+        .bg(background)
+        .p_2()
+        .child(
+            Button::new("settings-open-file")
+                .icon(IconName::File)
+                .label("Open settings file")
+                .outline()
+                .with_size(Size::Small)
+                .w_full()
+                .on_click(move |_, window, cx| {
+                    window.close_dialog(cx);
+                    open_settings_file(window, cx);
+                }),
+        )
 }
 
 fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPage> {

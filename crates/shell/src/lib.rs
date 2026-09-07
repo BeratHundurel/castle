@@ -40,7 +40,8 @@ use document_editor::{
     unique_note_path,
 };
 use settings::{
-    AgentAccess, AppSettings, SettingsIntegration, SettingsView, ShortcutReference, StoredTab,
+    AgentAccess, AppSettings, SettingsDocumentEvent, SettingsDocumentSaveState,
+    SettingsDocumentView, SettingsIntegration, SettingsView, ShortcutReference, StoredTab,
     WorkspaceArchiveActions,
 };
 use storage::time::unix_timestamp_seconds as now_ts;
@@ -57,8 +58,8 @@ type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 pub struct ShellIntegration {
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
-    shortcuts: ShortcutProvider,
-    agent_access: Arc<dyn AgentAccess>,
+    _shortcuts: ShortcutProvider,
+    _agent_access: Arc<dyn AgentAccess>,
 }
 
 impl ShellIntegration {
@@ -71,8 +72,8 @@ impl ShellIntegration {
         Self {
             update_tray_shortcut: Rc::new(update_tray_shortcut),
             update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
-            shortcuts: Rc::new(shortcuts),
-            agent_access,
+            _shortcuts: Rc::new(shortcuts),
+            _agent_access: agent_access,
         }
     }
 }
@@ -119,6 +120,9 @@ enum OpenTabKind {
         note_id: u32,
         project_id: Option<u32>,
         view: Entity<DocumentEditorView>,
+    },
+    Settings {
+        view: Entity<SettingsDocumentView>,
     },
 }
 
@@ -240,12 +244,12 @@ struct ExternalChangeState {
 pub struct AppShell {
     pub(crate) focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
+    settings_view: Entity<SettingsView>,
     title_input: Entity<InputState>,
     command_palette: Entity<CommandPaletteView>,
     tabs: TabsState,
     pub(crate) workspace: WorkspaceState,
     suppress_title_event: bool,
-    settings_view: Entity<SettingsView>,
     board_template_picker: Entity<BoardTemplatePicker>,
     window_is_narrow: bool,
     home: HomeState,
@@ -338,6 +342,40 @@ impl AppShell {
                 }
                 DocumentEditorEvent::InsertBoardView { note_id } => {
                     this.open_insert_board_view_picker(*note_id, window, cx);
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn observe_settings_document(
+        view: &Entity<SettingsDocumentView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            view,
+            window,
+            |this, view, event: &SettingsDocumentEvent, _, cx| {
+                if matches!(event, SettingsDocumentEvent::StateChanged) {
+                    cx.notify();
+                }
+                if matches!(event, SettingsDocumentEvent::Applied)
+                    && matches!(view.read(cx).save_state(), SettingsDocumentSaveState::Saved)
+                {
+                    let update_tray_shortcut = this.update_tray_shortcut.clone();
+                    let update_quick_capture_shortcut = this.update_quick_capture_shortcut.clone();
+                    update_tray_shortcut(AppSettings::tray_shortcut(cx).as_ref(), cx);
+                    update_quick_capture_shortcut(
+                        AppSettings::quick_capture_shortcut(cx).as_ref(),
+                        cx,
+                    );
+                    let show_sidebar = AppSettings::show_sidebar(cx);
+                    this.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.set_width(AppSettings::sidebar_width(cx), cx);
+                    });
+                    this.set_sidebar_visible(show_sidebar, cx);
+                    cx.notify();
                 }
             },
         )
@@ -455,6 +493,7 @@ impl AppShell {
                 CommandPaletteEvent::NewTab => this.new_tab(window, cx),
                 CommandPaletteEvent::CloseAllTabs => this.close_all_tabs(window, cx),
                 CommandPaletteEvent::OpenSettings => this.open_settings(window, cx),
+                CommandPaletteEvent::OpenSettingsFile => this.open_settings_document(window, cx),
                 CommandPaletteEvent::CreateCardFromSelection => {
                     if let Some(note_view) = this.active_note_view() {
                         note_view.update(cx, |editor, cx| editor.create_card_from_selection(cx));
@@ -747,42 +786,57 @@ impl AppShell {
         )
         .detach();
 
-        let sidebar_for_visibility = sidebar.clone();
-        let shell_for_sidebar = cx.entity().downgrade();
         let update_tray_shortcut = integration.update_tray_shortcut.clone();
         let update_quick_capture_shortcut = integration.update_quick_capture_shortcut.clone();
+        let sidebar_for_visibility = sidebar.clone();
+        let shell_for_sidebar = cx.entity().downgrade();
+        let settings_open_file = cx.entity().downgrade();
         let settings_update_tray_shortcut = update_tray_shortcut.clone();
         let settings_update_quick_capture_shortcut = update_quick_capture_shortcut.clone();
-        let shortcuts = integration.shortcuts.clone();
+        let shortcuts = integration._shortcuts.clone();
+        let agent_access = integration._agent_access.clone();
         let settings_import_workspace = cx.entity().downgrade();
         let settings_export_workspace = cx.entity().downgrade();
         let settings_view = cx.new(|_| {
-            SettingsView::new(SettingsIntegration::new(
-                move |cx| !sidebar_for_visibility.read(cx).is_collapsed(),
-                move |visible, cx| {
-                    if let Some(shell) = shell_for_sidebar.upgrade() {
+            SettingsView::new(
+                SettingsIntegration::new(
+                    move |cx| !sidebar_for_visibility.read(cx).is_collapsed(),
+                    move |visible, cx| {
+                        if let Some(shell) = shell_for_sidebar.upgrade() {
+                            shell.update(cx, |shell, cx| {
+                                shell.set_sidebar_visible(visible, cx);
+                            });
+                        }
+                    },
+                    move |shortcut, cx| settings_update_tray_shortcut(shortcut, cx),
+                    move |shortcut, cx| settings_update_quick_capture_shortcut(shortcut, cx),
+                    move |cx| shortcuts(cx),
+                    WorkspaceArchiveActions::new(
+                        move |window, cx| {
+                            if let Some(shell) = settings_import_workspace.upgrade() {
+                                shell.update(cx, |shell, cx| {
+                                    shell.import_workspace(window, cx);
+                                });
+                            }
+                        },
+                        move |window, cx| {
+                            if let Some(shell) = settings_export_workspace.upgrade() {
+                                shell.update(cx, |shell, cx| {
+                                    shell.export_workspace(window, cx);
+                                });
+                            }
+                        },
+                    ),
+                    agent_access,
+                )
+                .with_open_settings_file(move |window, cx| {
+                    if let Some(shell) = settings_open_file.upgrade() {
                         shell.update(cx, |shell, cx| {
-                            shell.set_sidebar_visible(visible, cx);
+                            shell.open_settings_document(window, cx);
                         });
                     }
-                },
-                move |shortcut, cx| settings_update_tray_shortcut(shortcut, cx),
-                move |shortcut, cx| settings_update_quick_capture_shortcut(shortcut, cx),
-                move |cx| shortcuts(cx),
-                WorkspaceArchiveActions::new(
-                    move |window, cx| {
-                        if let Some(shell) = settings_import_workspace.upgrade() {
-                            shell.update(cx, |shell, cx| shell.import_workspace(window, cx));
-                        }
-                    },
-                    move |window, cx| {
-                        if let Some(shell) = settings_export_workspace.upgrade() {
-                            shell.update(cx, |shell, cx| shell.export_workspace(window, cx));
-                        }
-                    },
-                ),
-                integration.agent_access,
-            ))
+                }),
+            )
         });
         let board_template_picker = BoardTemplatePicker::view(cx);
         cx.subscribe_in(
@@ -804,6 +858,7 @@ impl AppShell {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             sidebar,
+            settings_view: settings_view.clone(),
             title_input,
             command_palette,
             tabs: TabsState {
@@ -825,7 +880,6 @@ impl AppShell {
                 title_save_lock: Arc::new(tokio::sync::Mutex::new(())),
             },
             suppress_title_event: false,
-            settings_view: settings_view.clone(),
             board_template_picker,
             window_is_narrow: false,
             home: HomeState {
@@ -855,6 +909,7 @@ impl AppShell {
             workspace_archive_busy: false,
         };
 
+        settings_view.update(cx, |settings, cx| settings.refresh_agent_access(cx));
         let show_sidebar = AppSettings::show_sidebar(cx);
         this.sidebar.update(cx, |sidebar, cx| {
             sidebar.set_collapsed(!show_sidebar, cx);
@@ -874,7 +929,6 @@ impl AppShell {
         .detach();
         this.start_external_change_watcher(window, cx);
         this.start_note_link_reindex(cx);
-        settings_view.update(cx, |settings, cx| settings.refresh_agent_access(cx));
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);
         this.load_home(cx);
