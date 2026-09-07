@@ -2,10 +2,13 @@ use gpui_kit::component::{WindowExt as _, input::RopeExt, notification::Notifica
 use gpui_kit::{Context, EntityInputHandler, Window};
 use std::ops::Range;
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
 use super::action::{ApplyMarkdownFormat, MarkdownFormat};
 use super::smart_editing::format_task_lines;
 use super::{DocumentEditorView, DocumentKind};
+
+const MARKDOWN_LINE_WIDTH: usize = 80;
 
 impl DocumentEditorView {
     pub(super) fn format_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -268,11 +271,252 @@ fn format_markdown(source: &str) -> Result<Option<String>, String> {
     use dprint_plugin_markdown::configuration::{ConfigurationBuilder, TextWrap};
 
     let mut builder = ConfigurationBuilder::new();
-    builder.line_width(80).text_wrap(TextWrap::Maintain);
+    builder
+        .line_width(MARKDOWN_LINE_WIDTH as u32)
+        .text_wrap(TextWrap::Maintain);
     preserve_markdown_newlines(&mut builder, source);
 
-    dprint_plugin_markdown::format_text(source, &builder.build(), |_, _, _| Ok(None))
-        .map_err(|error| error.to_string())
+    let formatted =
+        dprint_plugin_markdown::format_text(source, &builder.build(), |_, _, _| Ok(None))
+            .map_err(|error| error.to_string())?
+            .unwrap_or_else(|| source.to_string());
+    let formatted = compact_overwide_markdown_tables(&formatted, MARKDOWN_LINE_WIDTH);
+
+    Ok((formatted != source).then_some(formatted))
+}
+
+struct MarkdownLine<'a> {
+    text: &'a str,
+    newline: &'a str,
+}
+
+struct MarkdownTableRow<'a> {
+    prefix: &'a str,
+    cells: Vec<&'a str>,
+}
+
+fn compact_overwide_markdown_tables(source: &str, max_width: usize) -> String {
+    let lines = split_markdown_lines(source);
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let mut formatted = String::with_capacity(source.len());
+    let mut fence = None;
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = &lines[index];
+        if let Some((character, length)) = markdown_fence_delimiter(line.text) {
+            if let Some((open_character, open_length)) = fence {
+                if character == open_character
+                    && length >= open_length
+                    && markdown_fence_closes(line.text, length)
+                {
+                    fence = None;
+                }
+            } else {
+                fence = Some((character, length));
+            }
+            formatted.push_str(line.text);
+            formatted.push_str(line.newline);
+            index += 1;
+            continue;
+        }
+
+        if fence.is_none()
+            && parse_markdown_table_row(line.text).is_some()
+            && let Some(divider) = lines
+                .get(index + 1)
+                .and_then(|line| parse_markdown_table_row(line.text))
+            && is_markdown_table_divider(&divider)
+        {
+            let mut table_end = index + 2;
+            while table_end < lines.len()
+                && parse_markdown_table_row(lines[table_end].text).is_some()
+            {
+                table_end += 1;
+            }
+
+            let table_width = lines[index..table_end]
+                .iter()
+                .map(|line| UnicodeWidthStr::width(line.text))
+                .fold(0, usize::max);
+
+            if table_width > max_width {
+                for (row_index, line) in lines[index..table_end].iter().enumerate() {
+                    if let Some(row) = parse_markdown_table_row(line.text) {
+                        formatted.push_str(&compact_markdown_table_row(&row, row_index == 1));
+                    } else {
+                        formatted.push_str(line.text);
+                    }
+                    formatted.push_str(line.newline);
+                }
+            } else {
+                for line in &lines[index..table_end] {
+                    formatted.push_str(line.text);
+                    formatted.push_str(line.newline);
+                }
+            }
+
+            index = table_end;
+            continue;
+        }
+
+        formatted.push_str(line.text);
+        formatted.push_str(line.newline);
+        index += 1;
+    }
+
+    formatted
+}
+
+fn split_markdown_lines(source: &str) -> Vec<MarkdownLine<'_>> {
+    source
+        .split_inclusive('\n')
+        .map(|line| {
+            let Some(text) = line.strip_suffix('\n') else {
+                return MarkdownLine {
+                    text: line,
+                    newline: "",
+                };
+            };
+            let Some(text) = text.strip_suffix('\r') else {
+                return MarkdownLine {
+                    text,
+                    newline: "\n",
+                };
+            };
+            MarkdownLine {
+                text,
+                newline: "\r\n",
+            }
+        })
+        .collect()
+}
+
+fn markdown_fence_delimiter(line: &str) -> Option<(u8, usize)> {
+    let indent_len = line.len() - line.trim_start_matches(' ').len();
+    if indent_len > 3 {
+        return None;
+    }
+
+    let rest = &line[indent_len..];
+    let character = *rest.as_bytes().first()?;
+    if character != b'`' && character != b'~' {
+        return None;
+    }
+
+    let length = rest
+        .as_bytes()
+        .iter()
+        .take_while(|&&item| item == character)
+        .count();
+    (length >= 3).then_some((character, length))
+}
+
+fn markdown_fence_closes(line: &str, delimiter_length: usize) -> bool {
+    let indent_len = line.len() - line.trim_start_matches(' ').len();
+    let rest = &line[indent_len..];
+    rest.get(delimiter_length..)
+        .is_some_and(|remaining| remaining.trim().is_empty())
+}
+
+fn parse_markdown_table_row(line: &str) -> Option<MarkdownTableRow<'_>> {
+    let prefix_len = line.len() - line.trim_start_matches(' ').len();
+    if prefix_len > 3 {
+        return None;
+    }
+
+    let table = &line[prefix_len..];
+    if !table.starts_with('|') || !table.ends_with('|') {
+        return None;
+    }
+
+    let inner = &table[1..table.len() - 1];
+    let bytes = inner.as_bytes();
+    let mut cells = Vec::new();
+    let mut cell_start = 0;
+    let mut index = 0;
+    let mut code_ticks = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'|') => {
+                index += 2;
+            }
+            b'`' => {
+                let tick_count = bytes[index..]
+                    .iter()
+                    .take_while(|&&item| item == b'`')
+                    .count();
+                if code_ticks == 0 {
+                    code_ticks = tick_count;
+                } else if code_ticks == tick_count {
+                    code_ticks = 0;
+                }
+                index += tick_count;
+            }
+            b'|' if code_ticks == 0 => {
+                cells.push(&inner[cell_start..index]);
+                cell_start = index + 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    cells.push(&inner[cell_start..]);
+
+    (cells.len() >= 2).then_some(MarkdownTableRow {
+        prefix: &line[..prefix_len],
+        cells,
+    })
+}
+
+fn is_markdown_table_divider(row: &MarkdownTableRow<'_>) -> bool {
+    row.cells.len() >= 2
+        && row.cells.iter().all(|cell| {
+            let value = cell.trim();
+            let value = value.strip_prefix(':').unwrap_or(value);
+            let value = value.strip_suffix(':').unwrap_or(value);
+            !value.is_empty() && value.chars().all(|character| character == '-')
+        })
+}
+
+fn compact_markdown_table_row(row: &MarkdownTableRow<'_>, divider: bool) -> String {
+    let mut compact = String::from(row.prefix);
+    compact.push_str("| ");
+
+    for (index, cell) in row.cells.iter().enumerate() {
+        if index > 0 {
+            compact.push_str(" | ");
+        }
+        if divider {
+            compact.push_str(&compact_markdown_table_divider(cell));
+        } else {
+            compact.push_str(cell.trim());
+        }
+    }
+
+    compact.push_str(" |");
+    compact
+}
+
+fn compact_markdown_table_divider(cell: &str) -> String {
+    let cell = cell.trim();
+    let has_left_alignment = cell.starts_with(':');
+    let has_right_alignment = cell.ends_with(':');
+    let mut divider = String::with_capacity(3);
+
+    if has_left_alignment {
+        divider.push(':');
+    }
+    divider.push('-');
+    if has_right_alignment {
+        divider.push(':');
+    }
+
+    divider
 }
 
 fn format_json(source: &str) -> Result<Option<String>, String> {
@@ -286,6 +530,7 @@ fn format_json(source: &str) -> Result<Option<String>, String> {
         .array_prefer_single_line(true)
         .object_prefer_single_line(false)
         .trailing_commas(TrailingCommaKind::Never);
+
     preserve_json_newlines(&mut builder, source);
 
     let seeded_source = multiline_root_json_object(source);
@@ -739,6 +984,60 @@ second line</mark>"#
                 "| 1 | 2 |\n"
             )
         );
+    }
+
+    #[test]
+    fn compacts_overwide_markdown_tables_after_alignment() {
+        let source = concat!(
+            "|#|Opportunity|Files|Effort|Risk|Benefit|\n",
+            "|---|---|---|---|---|---|\n",
+            "|1|Fix action namespace typo|`board/action.rs`|Trivial|Zero|Correctness|\n",
+            "|2|Add `Debug` / `PartialEq` / `Eq` derives|`board/dto.rs`, `sidebar/dto.rs`, `markdown_editor/types.rs`|Trivial|Zero|Debuggability|\n",
+        );
+        let Ok(Some(formatted)) = format_markdown(source) else {
+            panic!("wide Markdown table should produce formatted output");
+        };
+
+        assert_eq!(
+            formatted,
+            concat!(
+                "| # | Opportunity | Files | Effort | Risk | Benefit |\n",
+                "| - | - | - | - | - | - |\n",
+                "| 1 | Fix action namespace typo | `board/action.rs` | Trivial | Zero | Correctness |\n",
+                "| 2 | Add `Debug` / `PartialEq` / `Eq` derives | `board/dto.rs`, `sidebar/dto.rs`, `markdown_editor/types.rs` | Trivial | Zero | Debuggability |\n",
+            )
+        );
+    }
+
+    #[test]
+    fn compacts_table_cells_without_splitting_inline_pipes() {
+        let source = concat!(
+            "| left              | right             |\n",
+            "| ----------------- | ----------------- |\n",
+            "| code `a|b`        | escaped \\| pipe   |\n",
+        );
+
+        assert_eq!(
+            compact_overwide_markdown_tables(source, 10),
+            concat!(
+                "| left | right |\n",
+                "| - | - |\n",
+                "| code `a|b` | escaped \\| pipe |\n",
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_table_like_text_inside_fenced_code_untouched() {
+        let source = concat!(
+            "```markdown\n",
+            "| left              | right             |\n",
+            "| ----------------- | ----------------- |\n",
+            "| value             | value             |\n",
+            "```\n",
+        );
+
+        assert_eq!(compact_overwide_markdown_tables(source, 10), source);
     }
 
     #[test]

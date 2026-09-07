@@ -20,6 +20,7 @@ merman.workspace = true
 lol_html = "2.9"
 dprint-plugin-json = "0.22.1"
 dprint-plugin-markdown = "0.22.1"
+unicode-width = "0.2.2"
 storage = { path = "../storage" }
 runtime = { path = "../runtime" }
 settings = { path = "../settings" }
