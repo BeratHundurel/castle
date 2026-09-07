@@ -177,6 +177,7 @@ fn init_themes(cx: &mut App) {
         include_str!("../../../themes/ayu.json"),
         include_str!("../../../themes/catppuccin.json"),
         include_str!("../../../themes/everforest.json"),
+        include_str!("../../../themes/flexoki.json"),
         include_str!("../../../themes/gruvbox.json"),
         include_str!("../../../themes/harper.json"),
         include_str!("../../../themes/jellybeans.json"),
@@ -237,6 +238,7 @@ mod tests {
                 "everforest",
                 include_str!("../../../themes/everforest.json"),
             ),
+            ("flexoki", include_str!("../../../themes/flexoki.json")),
             ("gruvbox", include_str!("../../../themes/gruvbox.json")),
             ("harper", include_str!("../../../themes/harper.json")),
             (
