@@ -1,4 +1,5 @@
 /target
+target/agent-data/
 *.db
 *.env
 docs/

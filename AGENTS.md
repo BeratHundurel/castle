@@ -34,3 +34,36 @@ Avoid these patterns:
 ## Verification
 
 - Add a deterministic regression test before fixing a reproducible bug. Report automated checks and manual visual acceptance separately.
+
+## Agent bootstrap
+
+Recommended once for a new checkout or worktree, not before every task:
+
+```sh
+make bootstrap
+```
+
+Run `make bootstrap-full` after toolchain or dependency changes. Both targets build the MCP server and prepare ignored data under `target\agent-data`.
+
+## Canonical commands
+
+Use the narrowest relevant package test while iterating, then run the Fast lane before handoff:
+
+```sh
+make check
+make test
+make test-mcp
+make test-full
+```
+
+`make check` is the Fast lane. `make test` runs workspace tests without the `shell` package tests. `make test-mcp` isolates MCP verification. `make test-full` runs the complete workspace suite.
+
+## Safe MCP
+
+The trusted project config uses a local stdio server, an explicit isolated database under `target\agent-data`, and approval for writes. Keep JSON-RPC on stdout, diagnostics on stderr, and never use personal or production data by default.
+
+When MCP behavior is relevant, run:
+
+```sh
+make test-mcp
+```

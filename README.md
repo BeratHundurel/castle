@@ -39,26 +39,6 @@ For a standalone install, place the matching `Castle-MCP` download beside the Ca
 codex mcp add castle -- "C:\path\to\downloaded\Castle-MCP.exe"
 ```
 
-For local development, build the server:
-
-```powershell
-cargo build --release -p castle-mcp
-```
-
-When developing Castle with the repository-local `castle.db`, pass its absolute path:
-
-```powershell
-codex mcp add castle -- C:\path\to\castle\target\release\castle-mcp.exe --database C:\path\to\castle\castle.db
-```
-
-The equivalent Codex `config.toml` entry is:
-
-```toml
-[mcp_servers.castle]
-command = "C:\\path\\to\\castle\\target\\release\\castle-mcp.exe"
-args = ["--database", "C:\\path\\to\\castle\\castle.db"]
-```
-
 Restart the MCP client after adding the server. You can then ask an agent things like:
 
 - “Create a project called Launch, add a Roadmap board with Todo, Doing, and Done lists, then add these tasks…”
@@ -69,13 +49,3 @@ Restart the MCP client after adding the server. You can then ask an agent things
 - “Add a QA checklist and a reminder to the release todo, then mark the first check complete.”
 
 This is a trusted local stdio server with direct access to the selected Castle database. Do not expose it over a network or configure it for agents you do not trust. It intentionally has no delete tools.
-
-## Run locally
-
-Castle is currently developed for Windows. Install the Rust toolchain, then run:
-
-```sh
-cargo run
-```
-
-Maintainers can publish a new version by following [RELEASING.md](RELEASING.md).
