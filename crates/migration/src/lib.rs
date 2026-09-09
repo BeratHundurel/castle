@@ -26,6 +26,10 @@ mod m20260807_000023_workspace_links;
 mod m20260810_000024_external_workspace_link_revisions;
 mod m20260811_000025_reindex_workspace_links;
 mod m20260901_000026_workspace_reference_aliases;
+mod m20260908_000027_list_workflow_roles;
+mod m20260908_000028_workflows;
+mod m20260908_000029_recurring_tasks;
+mod m20260909_000030_entry_lifecycle_and_schedule;
 
 pub struct Migrator;
 
@@ -59,6 +63,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260810_000024_external_workspace_link_revisions::Migration),
             Box::new(m20260811_000025_reindex_workspace_links::Migration),
             Box::new(m20260901_000026_workspace_reference_aliases::Migration),
+            Box::new(m20260908_000027_list_workflow_roles::Migration),
+            Box::new(m20260908_000028_workflows::Migration),
+            Box::new(m20260908_000029_recurring_tasks::Migration),
+            Box::new(m20260909_000030_entry_lifecycle_and_schedule::Migration),
         ]
     }
 }
@@ -170,6 +178,50 @@ mod tests {
                 "Regular.md",
             ]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn latest_migration_creates_workflow_and_recurring_task_tables() -> Result<(), DbErr> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        db.execute_unprepared(
+            r#"
+            INSERT INTO board (title) VALUES ('Operations');
+            INSERT INTO card (title, board_id, position)
+            VALUES ('Done', last_insert_rowid(), 0);
+            INSERT INTO entry (title, description, card_id, position)
+            VALUES ('Ship release', '', last_insert_rowid(), 0);
+            INSERT INTO workflow (
+                board_id, name, definition_json, created_at, updated_at
+            ) VALUES (1, 'Ship on done', '{}', 1, 1);
+            INSERT INTO recurring_task (
+                entry_id, rule_json, next_on, created_at, updated_at
+            ) VALUES (1, '{"frequency":"weekly"}', '2026-09-15', 1, 1);
+            "#,
+        )
+        .await?;
+
+        let workflow_count = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM workflow",
+            ))
+            .await?
+            .ok_or_else(|| DbErr::Custom("workflow count was missing".to_string()))?
+            .try_get::<i64>("", "count")?;
+        let recurring_count = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM recurring_task",
+            ))
+            .await?
+            .ok_or_else(|| DbErr::Custom("recurring task count was missing".to_string()))?
+            .try_get::<i64>("", "count")?;
+
+        assert_eq!(workflow_count, 1);
+        assert_eq!(recurring_count, 1);
         Ok(())
     }
 }

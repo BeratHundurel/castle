@@ -25,10 +25,11 @@ use crate::workspace::api::{
     AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardPropertyDefinitionDetail,
     BoardPropertyOptionDetail, BoardPropertyValueDetail, BoardSummary, ChecklistItemDetail,
     CreateBoardInput, CreateBoardLabelInput, CreateEntryInput, CreateListInput, CreateNoteInput,
-    CreateProjectInput, EntryDetail, LabelDetail, ListDetail, MoveEntryInput, MoveNoteInput,
-    NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary, NoteWorkspaceRelationInput,
-    ProjectSummary, RelatedItemDetail, RenameBoardInput, RenameListInput, RenameProjectInput,
-    SearchEntriesInput, SearchNotesInput, SetEntryLabelInput, SetEntryReminderInput,
+    CreateProjectInput, EntryDetail, EntryLifecycleState, LabelDetail, ListDetail, MoveEntryInput,
+    MoveNoteInput, NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary,
+    NoteWorkspaceRelationInput, ProjectSummary, RelatedItemDetail, RenameBoardInput,
+    RenameListInput, RenameProjectInput, SearchEntriesInput, SearchNotesInput, SetEntryLabelInput,
+    SetEntryLifecycleInput, SetEntryReminderInput, SetEntryScheduleInput, SetListWorkflowRoleInput,
     UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkspaceItemKindInput,
     WorkspaceRelationsInput,
 };
@@ -45,7 +46,7 @@ mod relations;
 mod validation;
 
 use mapping::*;
-use validation::{required_text, validate_due_on};
+use validation::{required_text, validate_due_on, validate_start_on};
 
 impl<C> Store<C>
 where
@@ -206,7 +207,11 @@ where
             id: entry.id,
             title: entry.title,
             description: entry.description,
+            start_on: entry.start_on,
             due_on: entry.due_on,
+            completed_at: entry.completed_at,
+            cancelled_at: entry.cancelled_at,
+            archived: entry.archived,
             reminder_enabled: entry.reminder_enabled,
             position: entry.position,
             list_id: list.id,

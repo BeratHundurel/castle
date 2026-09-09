@@ -5,6 +5,9 @@ pub mod positions;
 pub mod projection;
 pub mod properties;
 pub mod templates;
+mod workflow;
+
+pub use workflow::ListWorkflowRole;
 
 use entity::{
     board_label, board_label::Entity as BoardLabel, card, card::Entity as Card,
@@ -28,6 +31,7 @@ pub struct BoardListRecord {
     pub title: String,
     pub board_id: u32,
     pub position: i32,
+    pub workflow_role: ListWorkflowRole,
     pub entries: Vec<BoardCardRecord>,
 }
 
@@ -38,7 +42,11 @@ pub struct BoardCardRecord {
     pub description: String,
     pub card_id: u32,
     pub position: i32,
+    pub start_on: Option<String>,
     pub due_on: Option<String>,
+    pub completed_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    pub archived: bool,
     pub reminder_enabled: bool,
     pub labels: Vec<LabelRecord>,
     pub checklist_items: Vec<ChecklistItemRecord>,
@@ -190,7 +198,7 @@ impl From<card::ModelEx> for BoardListRecord {
         let mut entries = card
             .entries
             .into_iter()
-            .filter(|entry| entry.deleted_at.is_none())
+            .filter(|entry| entry.deleted_at.is_none() && !entry.archived)
             .map(BoardCardRecord::from)
             .collect::<Vec<_>>();
         entries.sort_by_key(|entry| (entry.position, entry.id));
@@ -200,6 +208,7 @@ impl From<card::ModelEx> for BoardListRecord {
             title: card.title,
             board_id: card.board_id as u32,
             position: card.position,
+            workflow_role: ListWorkflowRole::from_storage(&card.workflow_role),
             entries,
         }
     }
@@ -213,7 +222,11 @@ impl From<entity::entry::ModelEx> for BoardCardRecord {
             description: entry.description,
             card_id: entry.card_id as u32,
             position: entry.position,
+            start_on: entry.start_on,
             due_on: entry.due_on,
+            completed_at: entry.completed_at,
+            cancelled_at: entry.cancelled_at,
+            archived: entry.archived,
             reminder_enabled: entry.reminder_enabled,
             labels: Vec::new(),
             checklist_items: Vec::new(),

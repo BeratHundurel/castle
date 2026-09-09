@@ -1,0 +1,12 @@
+[package]
+name = "calendar"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

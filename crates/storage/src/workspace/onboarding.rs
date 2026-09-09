@@ -16,6 +16,7 @@ use sea_orm::{
 };
 
 use crate::{
+    board::ListWorkflowRole,
     board::properties::{BoardViewConfig, PropertyKey, PropertyKind},
     board::templates::{
         BoardTemplateColumn, BoardTemplateDefinition, BoardTemplateEntry,
@@ -433,6 +434,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
         columns: vec![
             BoardTemplateColumn {
                 title: "Start here".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![
                     BoardTemplateEntry {
                         title: OPEN_CARD_TITLE.to_string(),
@@ -446,6 +448,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
             },
             BoardTemplateColumn {
                 title: "Shape a workflow".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![
                     BoardTemplateEntry {
                         title: PROPERTIES_CARD_TITLE.to_string(),
@@ -463,6 +466,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
             },
             BoardTemplateColumn {
                 title: "Connect notes + boards".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![
                     BoardTemplateEntry {
                         title: CONNECT_CARD_TITLE.to_string(),
@@ -480,6 +484,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
             },
             BoardTemplateColumn {
                 title: "Work faster".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![
                     BoardTemplateEntry {
                         title: CAPTURE_CARD_TITLE.to_string(),
@@ -501,6 +506,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
             },
             BoardTemplateColumn {
                 title: "Keep it safe".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![
                     BoardTemplateEntry {
                         title: TRASH_CARD_TITLE.to_string(),
@@ -518,6 +524,7 @@ fn starter_board_definition() -> BoardTemplateDefinition {
             },
             BoardTemplateColumn {
                 title: "Make it yours".to_string(),
+                workflow_role: ListWorkflowRole::Neutral,
                 entries: vec![BoardTemplateEntry {
                     title: MAKE_IT_YOURS_CARD_TITLE.to_string(),
                     description: "Rename this board, change its lists, add your own cards, or delete the tour. Starter content is ordinary editable workspace data.".to_string(),

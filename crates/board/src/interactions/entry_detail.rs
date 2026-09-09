@@ -123,7 +123,16 @@ impl BoardView {
                 {
                     return Ok::<(), anyhow::Error>(());
                 }
-                storage::board::commands::set_board_card_due_on(&store, entry_id, due_on).await?;
+                store
+                    .mutations(storage::MutationOrigin::LocalApp)
+                    .set_entry_schedule(storage::workspace::api::SetEntryScheduleInput {
+                        entry_id: i64::from(entry_id),
+                        start_on: None,
+                        due_on: due_on.clone(),
+                        clear_start_on: false,
+                        clear_due_on: due_on.is_none(),
+                    })
+                    .await?;
                 persisted_revisions.insert(entry_id, revision);
                 notifications.wake();
                 Ok::<(), anyhow::Error>(())

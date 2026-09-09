@@ -1,7 +1,9 @@
 pub mod board;
+pub mod calendar;
 pub mod note;
 mod store;
 pub mod time;
+pub mod workflow;
 pub mod workspace;
 
 pub use store::{MutationOrigin, Mutations, Store, StoreOptions};

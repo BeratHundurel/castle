@@ -114,6 +114,32 @@ impl BoardView {
             }))
             .child(self.render_view_picker(cx))
             .child(
+                Button::new("open-board-calendar")
+                    .icon(IconName::Calendar)
+                    .label("Calendar")
+                    .ghost()
+                    .small()
+                    .tooltip("Open calendar and recurring tasks")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_calendar_panel(window, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "open-board-workflows".to_string())
+                    .child(
+                        Button::new("open-board-workflows")
+                            .icon(IconName::Settings2)
+                            .label("Workflows")
+                            .ghost()
+                            .small()
+                            .tooltip("Configure conditional workflows")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_workflow_editor(window, cx);
+                            })),
+                    ),
+            )
+            .child(
                 div()
                     .mx_1()
                     .h_5()
@@ -581,6 +607,7 @@ mod tests {
                         title: "List".into(),
                         board_id: 1,
                         position: 0,
+                        workflow_role: storage::board::ListWorkflowRole::Neutral,
                         entries: Vec::new(),
                     }];
                     board.data.labels = (1..=40)

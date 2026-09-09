@@ -131,8 +131,15 @@ impl BoardView {
             "Could not update card label",
             false,
             move |store| async move {
-                storage::board::commands::set_label_assignment(&store, entry_id, label_id, assigned)
+                store
+                    .mutations(storage::MutationOrigin::LocalApp)
+                    .set_entry_label(storage::workspace::api::SetEntryLabelInput {
+                        entry_id: i64::from(entry_id),
+                        label_id: i64::from(label_id),
+                        assigned,
+                    })
                     .await
+                    .map(|_| ())
             },
         );
     }

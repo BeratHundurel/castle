@@ -1,3 +1,5 @@
+use crate::board::ListWorkflowRole;
+
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -124,6 +126,53 @@ pub struct UpdateEntryInput {
         schemars(description = "Set true to remove the entry's due date")
     )]
     pub clear_due_on: bool,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SetEntryScheduleInput {
+    pub entry_id: i64,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Replacement start date in YYYY-MM-DD format")
+    )]
+    pub start_on: Option<String>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Replacement due date in YYYY-MM-DD format")
+    )]
+    pub due_on: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Set true to remove the entry's start date")
+    )]
+    pub clear_start_on: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Set true to remove the entry's due date")
+    )]
+    pub clear_due_on: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum EntryLifecycleState {
+    Open,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SetEntryLifecycleInput {
+    pub entry_id: i64,
+    pub state: EntryLifecycleState,
 }
 
 #[derive(Debug)]
@@ -297,6 +346,129 @@ pub struct RenameListInput {
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SetListWorkflowRoleInput {
+    pub list_id: i64,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Workflow role: neutral, done, or cancelled")
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub workflow_role: ListWorkflowRole,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SaveWorkflowInput {
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Existing workflow ID; omit to create a workflow")
+    )]
+    pub workflow_id: Option<i64>,
+    pub board_id: i64,
+    #[cfg_attr(feature = "schema", schemars(description = "Workflow display name"))]
+    pub name: String,
+    pub enabled: bool,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Versioned workflow graph JSON returned by list_board_workflows")
+    )]
+    pub definition: serde_json::Value,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct WorkflowInput {
+    pub board_id: i64,
+    pub workflow_id: i64,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RunWorkflowInput {
+    pub board_id: i64,
+    pub entry_id: i64,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct WorkflowRunsInput {
+    pub board_id: i64,
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Maximum runs to return, from 1 to 100; defaults to 25")
+    )]
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CalendarEntriesInput {
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Optional board ID; omit to include every active board")
+    )]
+    pub board_id: Option<i64>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Inclusive range start in YYYY-MM-DD format")
+    )]
+    pub start_on: Option<String>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "Inclusive range end in YYYY-MM-DD format")
+    )]
+    pub end_on: Option<String>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RecurringTasksInput {
+    pub board_id: i64,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CreateRecurringTaskInput {
+    pub entry_id: i64,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "First occurrence date in YYYY-MM-DD format")
+    )]
+    pub start_on: String,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "Rule such as daily, every 2 weeks on mon, wed, or every month on the 1st"
+        )
+    )]
+    pub rule: String,
+    pub until_on: Option<String>,
+    pub occurrence_limit: Option<u32>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(description = "on_completion or on_schedule; defaults to on_completion")
+    )]
+    pub generation_mode: Option<String>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RecurringTaskInput {
+    pub entry_id: i64,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SetEntryReminderInput {
     pub entry_id: i64,
     pub enabled: bool,
@@ -436,6 +608,8 @@ pub struct ListDetail {
     pub id: i64,
     pub title: String,
     pub position: i32,
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub workflow_role: ListWorkflowRole,
     pub entries: Vec<EntryDetail>,
     pub related_items: Vec<RelatedItemDetail>,
 }
@@ -460,7 +634,11 @@ pub struct EntryDetail {
     pub id: i64,
     pub title: String,
     pub description: String,
+    pub start_on: Option<String>,
     pub due_on: Option<String>,
+    pub completed_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    pub archived: bool,
     pub reminder_enabled: bool,
     pub position: i32,
     pub list_id: i64,

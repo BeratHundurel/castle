@@ -29,8 +29,23 @@ impl BoardView {
         target_card_id: u32,
         cx: &mut Context<Self>,
     ) {
+        let source_card_id = self
+            .data
+            .lists
+            .iter()
+            .find(|card| card.entries.iter().any(|entry| entry.id == entry_id))
+            .map(|card| card.id);
         if move_entry_to_list_end_in_memory(&mut self.data.lists, entry_id, target_card_id) {
             self.persist_board_layout(cx);
+            if let (Some(board_id), Some(source_card_id)) = (self.data.board_id, source_card_id) {
+                self.run_move_workflow_after_layout(
+                    board_id,
+                    entry_id,
+                    source_card_id,
+                    target_card_id,
+                    cx,
+                );
+            }
         }
     }
 
@@ -77,6 +92,7 @@ impl BoardView {
                 (Some(source_index), Some(target_index)) if source_index < target_index
             );
 
+        let source_list_id = info.source_card_id;
         let moving_entry = self
             .data
             .lists
@@ -91,27 +107,61 @@ impl BoardView {
                 Some(card.entries.remove(index))
             });
 
-        if let Some(mut entry) = moving_entry
-            && let Some(target_card) = self
+        if let Some(mut entry) = moving_entry {
+            let Some(target_index) = self
+                .data
+                .lists
+                .iter()
+                .find(|card| card.id == target_card_id)
+                .and_then(|card| {
+                    card.entries
+                        .iter()
+                        .position(|entry| entry.id == target_entry_id)
+                })
+            else {
+                if let Some(source_card) = self
+                    .data
+                    .lists
+                    .iter_mut()
+                    .find(|card| card.id == source_list_id)
+                {
+                    source_card.entries.push(entry);
+                }
+                return;
+            };
+
+            let Some(target_card) = self
                 .data
                 .lists
                 .iter_mut()
                 .find(|card| card.id == target_card_id)
-        {
-            let Some(mut target_index) = target_card
-                .entries
-                .iter()
-                .position(|entry| entry.id == target_entry_id)
             else {
+                if let Some(source_card) = self
+                    .data
+                    .lists
+                    .iter_mut()
+                    .find(|card| card.id == source_list_id)
+                {
+                    source_card.entries.push(entry);
+                }
                 return;
             };
 
             entry.card_id = target_card_id;
-            if moving_down_in_same_card {
-                target_index = target_index.saturating_add(1);
-            }
-            target_card.entries.insert(target_index, entry);
+            let insert_index = if moving_down_in_same_card {
+                target_index.saturating_add(1)
+            } else {
+                target_index
+            };
+            target_card.entries.insert(insert_index, entry);
             self.persist_board_layout(cx);
+            self.run_move_workflow_after_layout(
+                board_id,
+                info.entry_id,
+                source_list_id,
+                target_card_id,
+                cx,
+            );
         }
     }
 

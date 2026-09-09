@@ -75,6 +75,7 @@ where
                     id: i64::from(list.id),
                     title: list.title.clone(),
                     position: list.position,
+                    workflow_role: list.workflow_role,
                     entries: list
                         .entries
                         .into_iter()

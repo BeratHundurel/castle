@@ -2,17 +2,21 @@ use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     tool, tool_router,
 };
+use serde::Serialize;
 use storage::workspace::api::{
     AddChecklistItemInput, BoardDetail, BoardInput, BoardPropertiesDetail,
-    BoardPropertyDefinitionDetail, BoardPropertyOptionDetail, BoardSummary, ChecklistItemDetail,
-    ClearEntryPropertyInput, CreateBoardInput, CreateBoardLabelInput, CreateBoardPropertyInput,
-    CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput, CreateNoteInput,
-    CreateProjectInput, EntryDetail, EntryInput, EntryPropertyValueDetail, LabelDetail, ListDetail,
-    MoveEntryInput, MoveNoteInput, NoteDetail, NoteInput, NoteLinksDetail, NoteSummary,
-    NoteWorkspaceRelationInput, ProjectBoardsInput, ProjectNotesInput, ProjectSummary,
-    RelatedItemDetail, RenameBoardInput, RenameListInput, RenameProjectInput, SearchEntriesInput,
-    SearchNotesInput, SetEntryLabelInput, SetEntryPropertyInput, SetEntryReminderInput,
-    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkspaceRelationsInput,
+    BoardPropertyDefinitionDetail, BoardPropertyOptionDetail, BoardSummary, CalendarEntriesInput,
+    ChecklistItemDetail, ClearEntryPropertyInput, CreateBoardInput, CreateBoardLabelInput,
+    CreateBoardPropertyInput, CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput,
+    CreateNoteInput, CreateProjectInput, CreateRecurringTaskInput, EntryDetail, EntryInput,
+    EntryPropertyValueDetail, LabelDetail, ListDetail, MoveEntryInput, MoveNoteInput, NoteDetail,
+    NoteInput, NoteLinksDetail, NoteSummary, NoteWorkspaceRelationInput, ProjectBoardsInput,
+    ProjectNotesInput, ProjectSummary, RecurringTaskInput, RecurringTasksInput, RelatedItemDetail,
+    RenameBoardInput, RenameListInput, RenameProjectInput, RunWorkflowInput, SaveWorkflowInput,
+    SearchEntriesInput, SearchNotesInput, SetEntryLabelInput, SetEntryLifecycleInput,
+    SetEntryPropertyInput, SetEntryReminderInput, SetEntryScheduleInput, SetListWorkflowRoleInput,
+    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkflowInput, WorkflowRunsInput,
+    WorkspaceRelationsInput,
 };
 use storage::{MutationOrigin, Store};
 
@@ -62,6 +66,157 @@ impl CastleServer {
         Parameters(input): Parameters<BoardInput>,
     ) -> Json<ToolResponse<BoardDetail>> {
         response(self.store.get_board(input.board_id).await)
+    }
+
+    #[tool(
+        description = "List a board's saved conditional workflows, including their editable graph definitions",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_board_workflows(
+        &self,
+        Parameters(input): Parameters<BoardInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(storage::workflow::list_workflows(&self.store, input.board_id).await)
+    }
+
+    #[tool(
+        description = "Save or replace a board workflow graph with trigger, condition, and action nodes",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn save_workflow(
+        &self,
+        Parameters(input): Parameters<SaveWorkflowInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .save_workflow(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Delete one saved board workflow",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn delete_workflow(
+        &self,
+        Parameters(input): Parameters<WorkflowInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .delete_workflow(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Run enabled manual workflows for one board entry",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn run_workflow(
+        &self,
+        Parameters(input): Parameters<RunWorkflowInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .run_workflow(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "List recent workflow execution runs for a board",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_workflow_runs(
+        &self,
+        Parameters(input): Parameters<WorkflowRunsInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        let limit = input.limit.unwrap_or(25);
+        response_json(
+            storage::workflow::list_workflow_runs(&self.store, input.board_id, limit).await,
+        )
+    }
+
+    #[tool(
+        description = "Read active calendar entries in an optional inclusive date range",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn get_calendar_entries(
+        &self,
+        Parameters(input): Parameters<CalendarEntriesInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            storage::calendar::load_entries(
+                &self.store,
+                input.start_on.as_deref(),
+                input.end_on.as_deref(),
+                input.board_id,
+            )
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "List recurring task series configured on a board",
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_recurring_tasks(
+        &self,
+        Parameters(input): Parameters<RecurringTasksInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(storage::calendar::list_recurring_tasks(&self.store, input.board_id).await)
+    }
+
+    #[tool(
+        description = "Create or update a recurring task series with a daily, weekly, or monthly rule",
+        annotations(destructive_hint = false, open_world_hint = false)
+    )]
+    async fn create_recurring_task(
+        &self,
+        Parameters(input): Parameters<CreateRecurringTaskInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .create_recurring_task(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Delete the recurring task series attached to an entry",
+        annotations(
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn delete_recurring_task(
+        &self,
+        Parameters(input): Parameters<RecurringTaskInput>,
+    ) -> Json<ToolResponse<serde_json::Value>> {
+        response_json(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .delete_recurring_task(input)
+                .await,
+        )
     }
 
     #[tool(
@@ -249,6 +404,46 @@ impl CastleServer {
             self.store
                 .mutations(MutationOrigin::ExternalAgent)
                 .update_entry(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Set or clear an entry's start and due dates while validating the date range",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_entry_schedule(
+        &self,
+        Parameters(input): Parameters<SetEntryScheduleInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_entry_schedule(input)
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Set an entry's lifecycle state to open, completed, or cancelled",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_entry_lifecycle(
+        &self,
+        Parameters(input): Parameters<SetEntryLifecycleInput>,
+    ) -> Json<ToolResponse<EntryDetail>> {
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_entry_lifecycle(input)
                 .await,
         )
     }
@@ -485,6 +680,26 @@ impl CastleServer {
     }
 
     #[tool(
+        description = "Set an active Castle list's workflow role to neutral, done, or cancelled",
+        annotations(
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn set_list_workflow_role(
+        &self,
+        Parameters(input): Parameters<SetListWorkflowRoleInput>,
+    ) -> Json<ToolResponse<ListDetail>> {
+        response(
+            self.store
+                .mutations(MutationOrigin::ExternalAgent)
+                .set_list_workflow_role(input)
+                .await,
+        )
+    }
+
+    #[tool(
         description = "Enable or disable the system reminder for a board entry with a due date",
         annotations(
             destructive_hint = false,
@@ -591,6 +806,16 @@ fn response_vec<T>(result: anyhow::Result<Vec<T>>) -> Json<ToolResponse<Vec<T>>>
     })
 }
 
+fn response_json<T: Serialize>(result: anyhow::Result<T>) -> Json<ToolResponse<serde_json::Value>> {
+    Json(match result {
+        Ok(data) => match serde_json::to_value(data) {
+            Ok(data) => ToolResponse::success(data),
+            Err(error) => ToolResponse::error(error),
+        },
+        Err(error) => ToolResponse::error(error),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -614,10 +839,9 @@ mod tests {
             Ok::<(), anyhow::Error>(())
         });
         let client = ().serve(client_transport).await?;
-        let tool_names = client
-            .list_all_tools()
-            .await?
-            .into_iter()
+        let tools = client.list_all_tools().await?;
+        let tool_names = tools
+            .iter()
             .map(|tool| tool.name.to_string())
             .collect::<HashSet<_>>();
 
@@ -625,6 +849,15 @@ mod tests {
             "list_projects",
             "list_boards",
             "get_board",
+            "list_board_workflows",
+            "save_workflow",
+            "delete_workflow",
+            "run_workflow",
+            "list_workflow_runs",
+            "get_calendar_entries",
+            "list_recurring_tasks",
+            "create_recurring_task",
+            "delete_recurring_task",
             "get_board_properties",
             "get_entry",
             "search_entries",
@@ -633,6 +866,8 @@ mod tests {
             "create_list",
             "create_entry",
             "update_entry",
+            "set_entry_schedule",
+            "set_entry_lifecycle",
             "move_entry",
             "list_notes",
             "get_note",
@@ -647,6 +882,7 @@ mod tests {
             "rename_project",
             "rename_board",
             "rename_list",
+            "set_list_workflow_role",
             "set_entry_reminder",
             "add_checklist_item",
             "update_checklist_item",
@@ -659,6 +895,22 @@ mod tests {
         ] {
             assert!(tool_names.contains(expected), "missing MCP tool {expected}");
         }
+
+        let lifecycle_tool = tools
+            .iter()
+            .find(|tool| tool.name == "set_entry_lifecycle")
+            .expect("set_entry_lifecycle should be discoverable");
+        let schema = serde_json::Value::Object(lifecycle_tool.input_schema.as_ref().clone());
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], serde_json::json!(["entry_id", "state"]));
+        assert_eq!(
+            schema["properties"]["state"],
+            serde_json::json!({ "$ref": "#/$defs/EntryLifecycleState" })
+        );
+        assert_eq!(
+            schema["$defs"]["EntryLifecycleState"]["enum"],
+            serde_json::json!(["open", "completed", "cancelled"])
+        );
 
         client.cancel().await?;
         server_task.abort();

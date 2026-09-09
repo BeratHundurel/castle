@@ -11,7 +11,9 @@ serde = []
 schema = ["serde", "dep:schemars"]
 
 [dependencies]
+calendar = { path = "../calendar" }
 entity = { path = "../entity" }
+workflow = { path = "../workflow" }
 migration = { path = "../migration" }
 anyhow.workspace = true
 async-trait = "0.1"

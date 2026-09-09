@@ -1,3 +1,4 @@
+use crate::board::ListWorkflowRole;
 use anyhow::{Context as _, Result, bail};
 use chrono::Utc;
 use entity::{
@@ -64,6 +65,8 @@ pub struct BoardTemplateDefinition {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardTemplateColumn {
     pub title: String,
+    #[serde(default)]
+    pub workflow_role: ListWorkflowRole,
     #[serde(default)]
     pub entries: Vec<BoardTemplateEntry>,
 }
@@ -398,6 +401,7 @@ pub(crate) async fn create_board_from_template_in_transaction(
             title: Set(template_column.title),
             board_id: Set(board.id),
             position: Set(column_position as i32),
+            workflow_role: Set(template_column.workflow_role.as_str().to_string()),
             ..Default::default()
         }
         .insert(transaction)
@@ -466,6 +470,7 @@ pub async fn save_board_as_template(
             .into_iter()
             .map(|column| BoardTemplateColumn {
                 title: column.title,
+                workflow_role: ListWorkflowRole::from_storage(&column.workflow_role),
                 entries: entries
                     .iter()
                     .filter(|entry| entry.card_id == column.id)
@@ -527,6 +532,7 @@ fn built_in(
                 .iter()
                 .map(|(title, entries)| BoardTemplateColumn {
                     title: (*title).to_string(),
+                    workflow_role: ListWorkflowRole::Neutral,
                     entries: entries
                         .iter()
                         .map(|(title, description)| BoardTemplateEntry {
@@ -645,6 +651,7 @@ mod tests {
                 columns: vec![
                     BoardTemplateColumn {
                         title: "Ideas".to_string(),
+                        workflow_role: ListWorkflowRole::Neutral,
                         entries: vec![BoardTemplateEntry {
                             title: "Write announcement".to_string(),
                             description: "Keep it concise".to_string(),
@@ -652,6 +659,7 @@ mod tests {
                     },
                     BoardTemplateColumn {
                         title: "Published".to_string(),
+                        workflow_role: ListWorkflowRole::Neutral,
                         entries: Vec::new(),
                     },
                 ],

@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::board::ListWorkflowRole;
 use anyhow::{Context as _, Result, bail};
 use entity::{
     board, board_label, board_property, board_property_option, board_template, card, entry,
@@ -15,9 +16,12 @@ use entity::{
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
-    EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
+    DbBackend, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
+use workflow::{
+    WorkflowAction, WorkflowCondition, WorkflowDefinition, WorkflowNodeKind, WorkflowTrigger,
+};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const WORKSPACE_ARCHIVE_FORMAT: &str = "castle-workspace";
@@ -59,6 +63,12 @@ pub struct WorkspaceArchiveCounts {
     pub note_links: usize,
     pub workspace_links: usize,
     pub reference_aliases: usize,
+    #[serde(default)]
+    pub recurring_tasks: usize,
+    #[serde(default)]
+    pub workflows: usize,
+    #[serde(default)]
+    pub workflow_runs: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +116,12 @@ struct ArchiveData {
     note_links: Vec<ArchiveNoteLink>,
     workspace_links: Vec<ArchiveWorkspaceLink>,
     reference_aliases: Vec<ArchiveReferenceAlias>,
+    #[serde(default)]
+    recurring_tasks: Vec<ArchiveRecurringTask>,
+    #[serde(default)]
+    workflows: Vec<ArchiveWorkflow>,
+    #[serde(default)]
+    workflow_runs: Vec<ArchiveWorkflowRun>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -134,6 +150,8 @@ struct ArchiveList {
     title: String,
     board_id: i64,
     position: i32,
+    #[serde(default)]
+    workflow_role: ListWorkflowRole,
     deleted_at: Option<i64>,
 }
 
@@ -144,7 +162,15 @@ struct ArchiveEntry {
     description: String,
     list_id: i64,
     position: i32,
+    #[serde(default)]
+    start_on: Option<String>,
     due_on: Option<String>,
+    #[serde(default)]
+    completed_at: Option<i64>,
+    #[serde(default)]
+    cancelled_at: Option<i64>,
+    #[serde(default)]
+    archived: bool,
     reminder_enabled: bool,
     reminder_notified_for: Option<String>,
     deleted_at: Option<i64>,
@@ -317,6 +343,53 @@ struct ArchiveReferenceAlias {
     created_at: i64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ArchiveRecurringTask {
+    id: i64,
+    entry_id: i64,
+    rule_json: String,
+    next_on: String,
+    #[serde(default)]
+    until_on: Option<String>,
+    #[serde(default = "default_archive_enabled")]
+    enabled: bool,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ArchiveWorkflow {
+    id: i64,
+    board_id: i64,
+    name: String,
+    #[serde(default = "default_archive_enabled")]
+    enabled: bool,
+    definition_json: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ArchiveWorkflowRun {
+    id: i64,
+    workflow_id: i64,
+    board_id: i64,
+    #[serde(default)]
+    entry_id: Option<i64>,
+    trigger_kind: String,
+    status: String,
+    actions_json: String,
+    #[serde(default)]
+    error: Option<String>,
+    started_at: i64,
+    #[serde(default)]
+    finished_at: Option<i64>,
+}
+
+const fn default_archive_enabled() -> bool {
+    true
+}
+
 impl ArchiveData {
     fn counts(&self) -> WorkspaceArchiveCounts {
         WorkspaceArchiveCounts {
@@ -339,6 +412,9 @@ impl ArchiveData {
             note_links: self.note_links.len(),
             workspace_links: self.workspace_links.len(),
             reference_aliases: self.reference_aliases.len(),
+            recurring_tasks: self.recurring_tasks.len(),
+            workflows: self.workflows.len(),
+            workflow_runs: self.workflow_runs.len(),
         }
     }
 }
@@ -455,6 +531,33 @@ async fn load_archive_data(db: &impl ConnectionTrait, data_dir: &Path) -> Result
         .order_by_asc(workspace_reference_alias::Column::Id)
         .all(db)
         .await?;
+    let recurring_tasks = db
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, entry_id, rule_json, next_on, until_on, enabled, created_at, updated_at FROM recurring_task ORDER BY id",
+        ))
+        .await?
+        .into_iter()
+        .map(archive_recurring_task_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    let workflows = db
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, board_id, name, enabled, definition_json, created_at, updated_at FROM workflow ORDER BY id",
+        ))
+        .await?
+        .into_iter()
+        .map(archive_workflow_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    let workflow_runs = db
+        .query_all_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, workflow_id, board_id, entry_id, trigger_kind, status, actions_json, error, started_at, finished_at FROM workflow_run ORDER BY id",
+        ))
+        .await?
+        .into_iter()
+        .map(archive_workflow_run_from_row)
+        .collect::<Result<Vec<_>>>()?;
 
     let note_attachments = notes
         .iter()
@@ -545,7 +648,11 @@ async fn load_archive_data(db: &impl ConnectionTrait, data_dir: &Path) -> Result
             ),
             list_id: stored_entry.card_id,
             position: stored_entry.position,
+            start_on: stored_entry.start_on.clone(),
             due_on: stored_entry.due_on.clone(),
+            completed_at: stored_entry.completed_at,
+            cancelled_at: stored_entry.cancelled_at,
+            archived: stored_entry.archived,
             reminder_enabled: stored_entry.reminder_enabled,
             reminder_notified_for: stored_entry.reminder_notified_for.clone(),
             deleted_at: stored_entry.deleted_at,
@@ -582,6 +689,7 @@ async fn load_archive_data(db: &impl ConnectionTrait, data_dir: &Path) -> Result
                 title: model.title,
                 board_id: model.board_id,
                 position: model.position,
+                workflow_role: ListWorkflowRole::from_storage(&model.workflow_role),
                 deleted_at: model.deleted_at,
             })
             .collect(),
@@ -730,6 +838,49 @@ async fn load_archive_data(db: &impl ConnectionTrait, data_dir: &Path) -> Result
                 created_at: model.created_at,
             })
             .collect(),
+        recurring_tasks,
+        workflows,
+        workflow_runs,
+    })
+}
+
+fn archive_recurring_task_from_row(row: sea_orm::QueryResult) -> Result<ArchiveRecurringTask> {
+    Ok(ArchiveRecurringTask {
+        id: row.try_get("", "id")?,
+        entry_id: row.try_get("", "entry_id")?,
+        rule_json: row.try_get("", "rule_json")?,
+        next_on: row.try_get("", "next_on")?,
+        until_on: row.try_get("", "until_on")?,
+        enabled: row.try_get("", "enabled")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
+
+fn archive_workflow_from_row(row: sea_orm::QueryResult) -> Result<ArchiveWorkflow> {
+    Ok(ArchiveWorkflow {
+        id: row.try_get("", "id")?,
+        board_id: row.try_get("", "board_id")?,
+        name: row.try_get("", "name")?,
+        enabled: row.try_get("", "enabled")?,
+        definition_json: row.try_get("", "definition_json")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
+
+fn archive_workflow_run_from_row(row: sea_orm::QueryResult) -> Result<ArchiveWorkflowRun> {
+    Ok(ArchiveWorkflowRun {
+        id: row.try_get("", "id")?,
+        workflow_id: row.try_get("", "workflow_id")?,
+        board_id: row.try_get("", "board_id")?,
+        entry_id: row.try_get("", "entry_id")?,
+        trigger_kind: row.try_get("", "trigger_kind")?,
+        status: row.try_get("", "status")?,
+        actions_json: row.try_get("", "actions_json")?,
+        error: row.try_get("", "error")?,
+        started_at: row.try_get("", "started_at")?,
+        finished_at: row.try_get("", "finished_at")?,
     })
 }
 
@@ -1387,6 +1538,15 @@ fn validate_archive_data(data: &ArchiveData, entries: &HashMap<String, Vec<u8>>)
         "reference alias",
         data.reference_aliases.iter().map(|item| item.id),
     )?;
+    let workflow_ids = validate_id_set("workflow", data.workflows.iter().map(|item| item.id))?;
+    let recurring_task_ids = validate_id_set(
+        "recurring task",
+        data.recurring_tasks.iter().map(|item| item.id),
+    )?;
+    let _ = validate_id_set(
+        "workflow run",
+        data.workflow_runs.iter().map(|item| item.id),
+    )?;
 
     for board in &data.boards {
         validate_optional_reference("board project", board.project_id, &project_ids)?;
@@ -1580,8 +1740,139 @@ fn validate_archive_data(data: &ArchiveData, entries: &HashMap<String, Vec<u8>>)
         validate_optional_reference("reference alias saved view", alias.saved_view_id, &view_ids)?;
         let _ = alias_ids.contains(&alias.id);
     }
+    for recurring_task in &data.recurring_tasks {
+        require_reference("recurring task entry", recurring_task.entry_id, &entry_ids)?;
+        if recurring_task.next_on.is_empty() {
+            bail!(
+                "recurring task {} has no next occurrence",
+                recurring_task.id
+            );
+        }
+        validate_json::<serde_json::Value>(&recurring_task.rule_json, "recurring task rule")?;
+        let _ = recurring_task_ids.contains(&recurring_task.id);
+    }
+    for workflow in &data.workflows {
+        require_reference("workflow board", workflow.board_id, &board_ids)?;
+        validate_json::<WorkflowDefinition>(&workflow.definition_json, "workflow definition")?;
+    }
+    for run in &data.workflow_runs {
+        require_reference("workflow run workflow", run.workflow_id, &workflow_ids)?;
+        require_reference("workflow run board", run.board_id, &board_ids)?;
+        validate_optional_reference("workflow run entry", run.entry_id, &entry_ids)?;
+        if !matches!(
+            run.status.as_str(),
+            "running" | "succeeded" | "failed" | "skipped"
+        ) {
+            bail!("workflow run {} has an unsupported status", run.id);
+        }
+        validate_json::<Vec<WorkflowAction>>(&run.actions_json, "workflow run actions")?;
+    }
 
     Ok(())
+}
+
+fn validate_json<T: for<'de> Deserialize<'de>>(value: &str, kind: &str) -> Result<()> {
+    serde_json::from_str::<T>(value).with_context(|| format!("{kind} is not valid JSON"))?;
+    Ok(())
+}
+
+fn remap_workflow_definition_json(
+    definition_json: &str,
+    list_ids: &HashMap<i64, i64>,
+) -> Result<String> {
+    let mut definition = serde_json::from_str::<WorkflowDefinition>(definition_json)
+        .context("workflow definition could not be decoded")?;
+    for node in &mut definition.nodes {
+        match &mut node.kind {
+            WorkflowNodeKind::Trigger { trigger } => remap_workflow_trigger(trigger, list_ids)?,
+            WorkflowNodeKind::Condition { condition } => {
+                remap_workflow_condition(condition, list_ids)?;
+            }
+            WorkflowNodeKind::Branch { cases } => {
+                for case in cases {
+                    remap_workflow_condition(&mut case.condition, list_ids)?;
+                }
+            }
+            WorkflowNodeKind::Action { action } => remap_workflow_action(action, list_ids)?,
+            WorkflowNodeKind::End { .. } => {}
+        }
+    }
+    Ok(serde_json::to_string(&definition)?)
+}
+
+fn remap_workflow_trigger(
+    trigger: &mut WorkflowTrigger,
+    list_ids: &HashMap<i64, i64>,
+) -> Result<()> {
+    match trigger {
+        WorkflowTrigger::CardMovedToList { list_id }
+        | WorkflowTrigger::CardMovedFromList { list_id } => {
+            *list_id = mapped_archive_id(list_ids, *list_id)?;
+        }
+        WorkflowTrigger::CardCreated
+        | WorkflowTrigger::CardMovedToRole { .. }
+        | WorkflowTrigger::CardMovedFromRole { .. }
+        | WorkflowTrigger::CardCompleted
+        | WorkflowTrigger::CardCancelled
+        | WorkflowTrigger::CardReopened
+        | WorkflowTrigger::ChecklistAllCompleted
+        | WorkflowTrigger::ChecklistItemChecked
+        | WorkflowTrigger::LabelAdded { .. }
+        | WorkflowTrigger::LabelRemoved { .. }
+        | WorkflowTrigger::PropertyChanged { .. }
+        | WorkflowTrigger::DueDateStatus { .. }
+        | WorkflowTrigger::Scheduled { .. }
+        | WorkflowTrigger::Manual => {}
+    }
+    Ok(())
+}
+
+fn remap_workflow_condition(
+    condition: &mut WorkflowCondition,
+    list_ids: &HashMap<i64, i64>,
+) -> Result<()> {
+    match condition {
+        WorkflowCondition::All { conditions } | WorkflowCondition::Any { conditions } => {
+            for condition in conditions {
+                remap_workflow_condition(condition, list_ids)?;
+            }
+        }
+        WorkflowCondition::Not { condition } => remap_workflow_condition(condition, list_ids)?,
+        WorkflowCondition::ListIs { list_id } | WorkflowCondition::PreviousListIs { list_id } => {
+            *list_id = mapped_archive_id(list_ids, *list_id)?;
+        }
+        WorkflowCondition::Always
+        | WorkflowCondition::ListRoleIs { .. }
+        | WorkflowCondition::PreviousListRoleIs { .. }
+        | WorkflowCondition::LabelContains { .. }
+        | WorkflowCondition::CompletionIs { .. }
+        | WorkflowCondition::DueDateIs { .. }
+        | WorkflowCondition::ChecklistIs { .. }
+        | WorkflowCondition::PropertyEquals { .. }
+        | WorkflowCondition::EventOriginIs { .. }
+        | WorkflowCondition::EventIs { .. } => {}
+    }
+    Ok(())
+}
+
+fn remap_workflow_action(action: &mut WorkflowAction, list_ids: &HashMap<i64, i64>) -> Result<()> {
+    if let WorkflowAction::MoveToList { list_id, .. } = action {
+        *list_id = mapped_archive_id(list_ids, *list_id)?;
+    }
+    Ok(())
+}
+
+fn remap_workflow_actions_json(actions_json: &str, list_ids: &HashMap<i64, i64>) -> Result<String> {
+    let mut actions = serde_json::from_str::<Vec<WorkflowAction>>(actions_json)
+        .context("workflow run actions could not be decoded")?;
+    for action in &mut actions {
+        remap_workflow_action(action, list_ids)?;
+    }
+    Ok(serde_json::to_string(&actions)?)
+}
+
+fn mapped_archive_id(ids: &HashMap<i64, i64>, id: i64) -> Result<i64> {
+    mapped_id(ids, id, "workflow list")
 }
 
 fn validate_id_set(kind: &str, ids: impl IntoIterator<Item = i64>) -> Result<HashSet<i64>> {
@@ -1754,6 +2045,7 @@ async fn import_into_transaction(
             title: Set(item.title.clone()),
             board_id: Set(mapped_id(&board_ids, item.board_id, "list board")?),
             position: Set(item.position),
+            workflow_role: Set(item.workflow_role.as_str().to_string()),
             deleted_at: Set(item.deleted_at),
             ..Default::default()
         }
@@ -1769,7 +2061,11 @@ async fn import_into_transaction(
             description: Set(String::new()),
             card_id: Set(mapped_id(&list_ids, item.list_id, "entry list")?),
             position: Set(item.position),
+            start_on: Set(item.start_on.clone()),
             due_on: Set(item.due_on.clone()),
+            completed_at: Set(item.completed_at),
+            cancelled_at: Set(item.cancelled_at),
+            archived: Set(item.archived),
             reminder_enabled: Set(item.reminder_enabled),
             reminder_notified_for: Set(item.reminder_notified_for.clone()),
             deleted_at: Set(item.deleted_at),
@@ -1896,6 +2192,65 @@ async fn import_into_transaction(
         }
         .update(transaction)
         .await?;
+    }
+
+    let mut workflow_ids = HashMap::new();
+    for item in &data.workflows {
+        let definition_json = remap_workflow_definition_json(&item.definition_json, &list_ids)?;
+        transaction
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO workflow (board_id, name, enabled, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    mapped_id(&board_ids, item.board_id, "workflow board")?.into(),
+                    item.name.clone().into(),
+                    item.enabled.into(),
+                    definition_json.into(),
+                    item.created_at.into(),
+                    item.updated_at.into(),
+                ],
+            ))
+            .await?;
+        workflow_ids.insert(item.id, last_inserted_id(transaction).await?);
+    }
+
+    for item in &data.recurring_tasks {
+        transaction
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO recurring_task (entry_id, rule_json, next_on, until_on, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    mapped_id(&entry_ids, item.entry_id, "recurring task entry")?.into(),
+                    item.rule_json.clone().into(),
+                    item.next_on.clone().into(),
+                    item.until_on.clone().into(),
+                    item.enabled.into(),
+                    item.created_at.into(),
+                    item.updated_at.into(),
+                ],
+            ))
+            .await?;
+    }
+
+    for item in &data.workflow_runs {
+        let actions_json = remap_workflow_actions_json(&item.actions_json, &list_ids)?;
+        transaction
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO workflow_run (workflow_id, board_id, entry_id, trigger_kind, status, actions_json, error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    mapped_id(&workflow_ids, item.workflow_id, "workflow run workflow")?.into(),
+                    mapped_id(&board_ids, item.board_id, "workflow run board")?.into(),
+                    mapped_optional(&entry_ids, item.entry_id, "workflow run entry")?.into(),
+                    item.trigger_kind.clone().into(),
+                    item.status.clone().into(),
+                    actions_json.into(),
+                    item.error.clone().into(),
+                    item.started_at.into(),
+                    item.finished_at.into(),
+                ],
+            ))
+            .await?;
     }
 
     let mut board_label_ids = HashMap::new();
@@ -2428,6 +2783,17 @@ fn mapped_optional(
     source_id.map(|id| mapped_id(map, id, kind)).transpose()
 }
 
+async fn last_inserted_id(db: &DatabaseTransaction) -> Result<i64> {
+    db.query_one_raw(Statement::from_string(
+        DbBackend::Sqlite,
+        "SELECT last_insert_rowid() AS id",
+    ))
+    .await?
+    .context("archive import did not return an inserted ID")?
+    .try_get("", "id")
+    .map_err(Into::into)
+}
+
 fn rewrite_archive_references(
     content: &str,
     note_replacements: &HashMap<String, String>,
@@ -2521,6 +2887,9 @@ async fn clear_workspace(db: &impl ConnectionTrait) -> Result<()> {
         "entry_label",
         "entry_attachment",
         "entry_checklist_item",
+        "workflow_run",
+        "workflow",
+        "recurring_task",
         "saved_board_view",
         "board_property_option",
         "board_property",
@@ -2582,6 +2951,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn legacy_archives_default_calendar_workflow_and_entry_lifecycle_fields() -> Result<()> {
+        let entry = serde_json::from_value::<ArchiveEntry>(serde_json::json!({
+            "id": 1,
+            "title": "Legacy entry",
+            "description": "",
+            "list_id": 1,
+            "position": 0,
+            "due_on": null,
+            "reminder_enabled": false,
+            "reminder_notified_for": null,
+            "deleted_at": null
+        }))?;
+        assert_eq!(entry.start_on, None);
+        assert_eq!(entry.completed_at, None);
+        assert_eq!(entry.cancelled_at, None);
+        assert!(!entry.archived);
+
+        let data = serde_json::from_value::<ArchiveData>(serde_json::json!({
+            "projects": [],
+            "boards": [],
+            "lists": [],
+            "entries": [],
+            "notes": [],
+            "board_labels": [],
+            "entry_labels": [],
+            "entry_attachments": [],
+            "note_attachments": [],
+            "checklist_items": [],
+            "board_properties": [],
+            "property_options": [],
+            "property_values": [],
+            "saved_views": [],
+            "templates": [],
+            "note_aliases": [],
+            "note_links": [],
+            "workspace_links": [],
+            "reference_aliases": []
+        }))?;
+        assert!(data.recurring_tasks.is_empty());
+        assert!(data.workflows.is_empty());
+        assert!(data.workflow_runs.is_empty());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn full_workspace_archive_round_trips_into_a_clean_installation() -> Result<()> {
         let source_db = Database::connect("sqlite::memory:").await?;
@@ -2608,25 +3022,118 @@ mod tests {
         .insert(&source_db)
         .await?;
         let list = card::ActiveModel {
+            id: Set(31),
             title: Set("In progress".to_string()),
             board_id: Set(board.id),
             position: Set(1),
+            workflow_role: Set("done".to_string()),
             ..Default::default()
         }
         .insert(&source_db)
         .await?;
         let entry = entry::ActiveModel {
+            id: Set(32),
             title: Set("Ship export".to_string()),
             description: Set(String::new()),
             card_id: Set(list.id),
             position: Set(2),
+            start_on: Set(Some("2026-09-01".to_string())),
             due_on: Set(Some("2026-09-03".to_string())),
+            completed_at: Set(Some(1_725_840_000)),
+            cancelled_at: Set(None),
+            archived: Set(true),
             reminder_enabled: Set(true),
             reminder_notified_for: Set(Some("2026-09-02".to_string())),
             ..Default::default()
         }
         .insert(&source_db)
         .await?;
+
+        let workflow_definition = workflow::WorkflowDefinition {
+            schema_version: workflow::CURRENT_SCHEMA_VERSION,
+            name: "Move export".to_string(),
+            enabled: true,
+            nodes: vec![
+                workflow::WorkflowNode {
+                    id: "trigger".to_string(),
+                    kind: workflow::WorkflowNodeKind::Trigger {
+                        trigger: workflow::WorkflowTrigger::CardMovedToList { list_id: list.id },
+                    },
+                    position: Default::default(),
+                },
+                workflow::WorkflowNode {
+                    id: "action".to_string(),
+                    kind: workflow::WorkflowNodeKind::Action {
+                        action: workflow::WorkflowAction::MoveToList {
+                            list_id: list.id,
+                            position: Default::default(),
+                        },
+                    },
+                    position: Default::default(),
+                },
+            ],
+            edges: vec![workflow::WorkflowEdge {
+                id: "edge".to_string(),
+                from: "trigger".to_string(),
+                to: "action".to_string(),
+                kind: Default::default(),
+            }],
+        };
+        let workflow_definition_json = serde_json::to_string(&workflow_definition)?;
+        let workflow_actions_json =
+            serde_json::to_string(&vec![workflow::WorkflowAction::MoveToList {
+                list_id: list.id,
+                position: Default::default(),
+            }])?;
+        source_db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO workflow (id, board_id, name, enabled, definition_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    41_i64.into(),
+                    board.id.into(),
+                    "Move export".to_string().into(),
+                    true.into(),
+                    workflow_definition_json.into(),
+                    20_i64.into(),
+                    21_i64.into(),
+                ],
+            ))
+            .await?;
+        source_db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO recurring_task (id, entry_id, rule_json, next_on, until_on, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    61_i64.into(),
+                    entry.id.into(),
+                    r#"{"start_on":"2026-09-03","rule":{"frequency":"daily","interval":1},"occurrence_limit":3,"generation_mode":"on_completion"}"#.to_string().into(),
+                    "2026-09-04".to_string().into(),
+                    Some("2026-09-06".to_string()).into(),
+                    true.into(),
+                    22_i64.into(),
+                    23_i64.into(),
+                ],
+            ))
+            .await?;
+        source_db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO workflow_run (id, workflow_id, board_id, entry_id, trigger_kind, status, actions_json, error, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    51_i64.into(),
+                    41_i64.into(),
+                    board.id.into(),
+                    entry.id.into(),
+                    "card_moved".to_string().into(),
+                    "succeeded".to_string().into(),
+                    workflow_actions_json.into(),
+                    Some("preserved".to_string()).into(),
+                    24_i64.into(),
+                    Some(25_i64).into(),
+                ],
+            ))
+            .await?;
 
         let first_note_file = source_notes_dir.join("first.md");
         let second_note_file = source_notes_dir.join("second.md");
@@ -2859,6 +3366,9 @@ mod tests {
                 note_links: 1,
                 workspace_links: 1,
                 reference_aliases: 1,
+                recurring_tasks: 1,
+                workflows: 1,
+                workflow_runs: 1,
             }
         );
 
@@ -2927,7 +3437,12 @@ mod tests {
         assert_eq!(projects[0].folder_path, None);
         assert_eq!(boards.len(), 1);
         assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].workflow_role, "done");
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].start_on.as_deref(), Some("2026-09-01"));
+        assert_eq!(entries[0].completed_at, Some(1_725_840_000));
+        assert_eq!(entries[0].cancelled_at, None);
+        assert!(entries[0].archived);
         assert_eq!(notes.len(), 2);
         assert_eq!(
             entries[0].description,
@@ -3026,6 +3541,54 @@ mod tests {
                 .count(&target_db)
                 .await?,
             1
+        );
+        let imported_workflow = target_db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id, board_id, definition_json FROM workflow",
+            ))
+            .await?
+            .context("imported workflow should exist")?;
+        assert_ne!(imported_workflow.try_get::<i64>("", "id")?, 41);
+        assert_eq!(
+            imported_workflow.try_get::<i64>("", "board_id")?,
+            boards[0].id
+        );
+        let imported_definition = imported_workflow.try_get::<String>("", "definition_json")?;
+        assert!(imported_definition.contains(&format!(r#""list_id":{}"#, lists[0].id)));
+        let imported_recurring = target_db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id, entry_id, rule_json, next_on, until_on, enabled, created_at, updated_at FROM recurring_task",
+            ))
+            .await?
+            .context("imported recurring task should exist")?;
+        assert_ne!(imported_recurring.try_get::<i64>("", "id")?, 61);
+        assert_eq!(
+            imported_recurring.try_get::<i64>("", "entry_id")?,
+            entries[0].id
+        );
+        assert_eq!(
+            imported_recurring.try_get::<String>("", "next_on")?,
+            "2026-09-04"
+        );
+        let imported_run = target_db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id, workflow_id, board_id, entry_id, trigger_kind, status, actions_json, error, started_at, finished_at FROM workflow_run",
+            ))
+            .await?
+            .context("imported workflow run should exist")?;
+        assert_ne!(imported_run.try_get::<i64>("", "id")?, 51);
+        assert_eq!(
+            imported_run.try_get::<i64>("", "workflow_id")?,
+            imported_workflow.try_get::<i64>("", "id")?
+        );
+        assert_eq!(imported_run.try_get::<i64>("", "entry_id")?, entries[0].id);
+        assert!(
+            imported_run
+                .try_get::<String>("", "actions_json")?
+                .contains(&format!(r#""list_id":{}"#, lists[0].id))
         );
         assert_eq!(
             note_link_index_state::Entity::find()

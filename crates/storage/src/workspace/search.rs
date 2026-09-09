@@ -971,7 +971,7 @@ async fn visible_entry_search_document(
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id AS id, e.title AS title, e.description AS description, c.id AS card_id, c.board_id AS board_id, b.project_id AS project_id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id LEFT JOIN project p ON p.id = b.project_id WHERE e.id = ? AND e.deleted_at IS NULL AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)",
+            "SELECT e.id AS id, e.title AS title, e.description AS description, c.id AS card_id, c.board_id AS board_id, b.project_id AS project_id FROM entry e JOIN card c ON c.id = e.card_id JOIN board b ON b.id = c.board_id LEFT JOIN project p ON p.id = b.project_id WHERE e.id = ? AND e.deleted_at IS NULL AND e.archived = 0 AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)",
             [Value::from(entry_id)],
         ))
         .await?;
@@ -1061,7 +1061,7 @@ async fn entries_by_card_for_board(
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT e.id AS id, e.card_id AS card_id, e.title AS title, e.description AS description, e.position AS position FROM entry e WHERE e.deleted_at IS NULL AND e.card_id IN (SELECT id FROM card WHERE board_id = ? AND deleted_at IS NULL) ORDER BY e.position ASC, e.id ASC",
+            "SELECT e.id AS id, e.card_id AS card_id, e.title AS title, e.description AS description, e.position AS position FROM entry e WHERE e.deleted_at IS NULL AND e.archived = 0 AND e.card_id IN (SELECT id FROM card WHERE board_id = ? AND deleted_at IS NULL) ORDER BY e.position ASC, e.id ASC",
             [Value::from(board_id)],
         ))
         .await?;
@@ -1139,7 +1139,7 @@ async fn refresh_card_search_document(
     let entry_rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL AND archived = 0 ORDER BY position ASC, id ASC",
             [Value::from(card_id)],
         ))
         .await?;
@@ -1286,7 +1286,7 @@ async fn index_visible_card_subtree(db: &impl ConnectionTrait, card_id: i64) -> 
     let entry_rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+            "SELECT id, title, description, position FROM entry WHERE card_id = ? AND deleted_at IS NULL AND archived = 0 ORDER BY position ASC, id ASC",
             [Value::from(card_id)],
         ))
         .await?;

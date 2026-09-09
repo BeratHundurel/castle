@@ -6,6 +6,7 @@ pub(crate) struct BoardListState {
     pub(crate) title: SharedString,
     pub(crate) board_id: u32,
     pub(crate) position: i32,
+    pub(crate) workflow_role: storage::board::ListWorkflowRole,
     pub(crate) entries: Vec<BoardCardState>,
 }
 
@@ -16,7 +17,11 @@ pub(crate) struct BoardCardState {
     pub(crate) description: SharedString,
     pub(crate) card_id: u32,
     pub(crate) position: i32,
+    pub(crate) start_on: Option<SharedString>,
     pub(crate) due_on: Option<SharedString>,
+    pub(crate) completed_at: Option<i64>,
+    pub(crate) cancelled_at: Option<i64>,
+    pub(crate) archived: bool,
     pub(crate) reminder_enabled: bool,
     pub(crate) labels: Vec<BoardLabel>,
     pub(crate) checklist_items: Vec<ChecklistItem>,
@@ -97,6 +102,7 @@ impl From<storage::board::BoardListRecord> for BoardListState {
             title: card.title.into(),
             board_id: card.board_id,
             position: card.position,
+            workflow_role: card.workflow_role,
             entries: card.entries.into_iter().map(BoardCardState::from).collect(),
         }
     }
@@ -110,7 +116,11 @@ impl From<storage::board::BoardCardRecord> for BoardCardState {
             description: entry.description.into(),
             card_id: entry.card_id,
             position: entry.position,
+            start_on: entry.start_on.map(SharedString::from),
             due_on: entry.due_on.map(SharedString::from),
+            completed_at: entry.completed_at,
+            cancelled_at: entry.cancelled_at,
+            archived: entry.archived,
             reminder_enabled: entry.reminder_enabled,
             labels: entry.labels.into_iter().map(BoardLabel::from).collect(),
             checklist_items: entry

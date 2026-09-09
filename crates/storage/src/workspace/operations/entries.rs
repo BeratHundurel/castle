@@ -7,6 +7,7 @@ where
     pub async fn get_entry(&self, entry_id: i64) -> Result<EntryDetail> {
         let entry = Entry::find_by_id(entry_id)
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .one(self.db.as_ref())
             .await?
             .with_context(|| format!("active board entry {entry_id} was not found"))?;
@@ -29,6 +30,7 @@ where
         let projects = self.active_project_map().await?;
         let entries = Entry::find()
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .filter(
                 entry::Column::CardId
                     .in_subquery(active_search_card_ids(input.project_id, input.board_id)),
@@ -60,6 +62,7 @@ where
                 title,
                 board_id: u32::try_from(input.board_id).context("board ID is out of range")?,
                 position,
+                workflow_role: crate::board::ListWorkflowRole::Neutral,
                 cards: Vec::new(),
             },
         )
@@ -68,6 +71,7 @@ where
             id: i64::from(list.id),
             title: list.title,
             position: list.position,
+            workflow_role: list.workflow_role,
             entries: Vec::new(),
             related_items: Vec::new(),
         })
@@ -87,6 +91,25 @@ where
             .into_iter()
             .find(|candidate| candidate.id == list.id)
             .with_context(|| format!("renamed list {} was not found", list.id))
+    }
+
+    pub async fn set_list_workflow_role(
+        &self,
+        input: SetListWorkflowRoleInput,
+    ) -> Result<ListDetail> {
+        let list = self.active_list(input.list_id).await?;
+        crate::board::commands::set_board_list_workflow_role(
+            self,
+            u32::try_from(list.id).context("list ID is out of range")?,
+            input.workflow_role,
+        )
+        .await?;
+        self.get_board(list.board_id)
+            .await?
+            .lists
+            .into_iter()
+            .find(|candidate| candidate.id == list.id)
+            .with_context(|| format!("updated list {} was not found", list.id))
     }
 
     pub async fn create_entry(&self, input: CreateEntryInput) -> Result<EntryDetail> {
@@ -122,6 +145,7 @@ where
         validate_due_on(input.due_on.as_deref())?;
         let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .one(self.db.as_ref())
             .await?
             .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
@@ -155,9 +179,82 @@ where
         self.get_entry(entry.id).await
     }
 
+    pub async fn set_entry_schedule(&self, input: SetEntryScheduleInput) -> Result<EntryDetail> {
+        if input.start_on.is_none()
+            && input.due_on.is_none()
+            && !input.clear_start_on
+            && !input.clear_due_on
+        {
+            bail!("provide a start date, due date, or a clear flag");
+        }
+        if input.clear_start_on && input.start_on.is_some() {
+            bail!("start_on and clear_start_on cannot be used together");
+        }
+        if input.clear_due_on && input.due_on.is_some() {
+            bail!("due_on and clear_due_on cannot be used together");
+        }
+        validate_start_on(input.start_on.as_deref())?;
+        validate_due_on(input.due_on.as_deref())?;
+        let entry = Entry::find_by_id(input.entry_id)
+            .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
+            .one(self.db.as_ref())
+            .await?
+            .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
+        let start_on = if input.clear_start_on {
+            None
+        } else {
+            input.start_on.or(entry.start_on.clone())
+        };
+        let due_on = if input.clear_due_on {
+            None
+        } else {
+            input.due_on.or(entry.due_on.clone())
+        };
+        if let (Some(start_on), Some(due_on)) = (&start_on, &due_on)
+            && start_on > due_on
+        {
+            bail!("due_on must not be before start_on");
+        }
+        let updated = entry::ActiveModel {
+            id: Set(entry.id),
+            start_on: Set(start_on),
+            due_on: Set(due_on),
+            reminder_notified_for: Set(None),
+            ..Default::default()
+        }
+        .update(self.db.as_ref())
+        .await?;
+        self.entry_detail(updated).await
+    }
+
+    pub async fn set_entry_lifecycle(&self, input: SetEntryLifecycleInput) -> Result<EntryDetail> {
+        let entry = Entry::find_by_id(input.entry_id)
+            .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
+            .one(self.db.as_ref())
+            .await?
+            .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
+        let (completed_at, cancelled_at) = match input.state {
+            EntryLifecycleState::Open => (None, None),
+            EntryLifecycleState::Completed => (Some(now_ts()), None),
+            EntryLifecycleState::Cancelled => (None, Some(now_ts())),
+        };
+        let updated = entry::ActiveModel {
+            id: Set(entry.id),
+            completed_at: Set(completed_at),
+            cancelled_at: Set(cancelled_at),
+            ..Default::default()
+        }
+        .update(self.db.as_ref())
+        .await?;
+        self.entry_detail(updated).await
+    }
+
     pub async fn set_entry_reminder(&self, input: SetEntryReminderInput) -> Result<EntryDetail> {
         let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .one(self.db.as_ref())
             .await?
             .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
@@ -274,6 +371,7 @@ where
         self.active_list(input.list_id).await?;
         let entry = Entry::find_by_id(input.entry_id)
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .one(self.db.as_ref())
             .await?
             .with_context(|| format!("active board entry {} was not found", input.entry_id))?;
@@ -294,6 +392,7 @@ where
         let position = Entry::find()
             .filter(entry::Column::CardId.eq(input.list_id))
             .filter(entry::Column::DeletedAt.is_null())
+            .filter(entry::Column::Archived.eq(false))
             .count(&transaction)
             .await? as i32;
         let moved = entry::ActiveModel {
@@ -458,7 +557,11 @@ where
                 id: entry.id,
                 title: entry.title,
                 description: entry.description,
+                start_on: entry.start_on,
                 due_on: entry.due_on,
+                completed_at: entry.completed_at,
+                cancelled_at: entry.cancelled_at,
+                archived: entry.archived,
                 reminder_enabled: entry.reminder_enabled,
                 position: entry.position,
                 list_id: list.id,

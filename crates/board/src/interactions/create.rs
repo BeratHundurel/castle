@@ -166,15 +166,19 @@ impl BoardView {
             cx.notify();
         }
 
+        let input = storage::workspace::api::CreateEntryInput {
+            list_id: i64::from(entry.card_id),
+            title: entry.title.to_string(),
+            description: entry.description.to_string(),
+            due_on: entry.due_on.as_deref().map(str::to_string),
+        };
         let task = cx.global::<AppRuntime>().spawn_store(
             cx.background_executor(),
             move |store| async move {
-                storage::board::commands::create_board_card(
-                    &store,
-                    board_card_draft(entry),
-                    storage::time::unix_timestamp_seconds(),
-                )
-                .await
+                store
+                    .mutations(storage::MutationOrigin::LocalApp)
+                    .create_entry(input)
+                    .await
             },
         );
 
@@ -184,7 +188,14 @@ impl BoardView {
             this.update(cx, |this, cx| match result {
                 Ok(Ok(inserted)) => {
                     this.mutation.mutation_error = None;
-                    let real_id = inserted.id;
+                    let Ok(real_id) = u32::try_from(inserted.id) else {
+                        this.mutation.mutation_error =
+                            Some("Created card ID is outside the board's supported range".into());
+                        if let Some(board_id) = this.data.board_id {
+                            this.enrich_board_async(cx, board_id);
+                        }
+                        return;
+                    };
                     if let Some(entry) = this
                         .data
                         .lists
@@ -327,7 +338,11 @@ impl BoardView {
                                     .find(|card| card.id == card_id)
                                     .map(|card| card.entries.len() as i32)
                                     .unwrap_or_default(),
+                                start_on: None,
                                 due_on: None,
+                                completed_at: None,
+                                cancelled_at: None,
+                                archived: false,
                                 reminder_enabled: false,
                                 labels: vec![],
                                 checklist_items: vec![],
@@ -413,6 +428,7 @@ fn board_list_draft(list: BoardListState) -> storage::board::commands::BoardList
         title: list.title.to_string(),
         board_id: list.board_id,
         position: list.position,
+        workflow_role: list.workflow_role,
         cards: list.entries.into_iter().map(board_card_draft).collect(),
     }
 }

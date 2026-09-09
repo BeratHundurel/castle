@@ -11,6 +11,7 @@ pub struct Model {
     pub title: String,
     pub board_id: i64,
     pub position: i32,
+    pub workflow_role: String,
     pub deleted_at: Option<i64>,
     #[sea_orm(
         belongs_to,

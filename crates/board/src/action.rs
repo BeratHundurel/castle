@@ -15,6 +15,13 @@ pub(crate) struct DuplicateCardAction(pub(crate) u32);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = board, no_json)]
+pub(crate) struct SetListWorkflowRoleAction {
+    pub(crate) list_id: u32,
+    pub(crate) workflow_role: storage::board::ListWorkflowRole,
+}
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = board, no_json)]
 pub(crate) struct CopyListInternalLinkAction(pub(crate) u32);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use entity::{
     board_label, board_label::Entity as BoardLabel, card, card::Entity as BoardList, entry,
     entry::Entity as BoardCard, entry_attachment, entry_attachment::Entity as EntryAttachment,
@@ -12,6 +12,7 @@ use sea_orm::{
 
 use crate::board::{
     AttachmentRecord, BoardCardRecord, BoardListRecord, ChecklistItemRecord, LabelRecord,
+    ListWorkflowRole,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +38,7 @@ pub struct BoardListDraft {
     pub title: String,
     pub board_id: u32,
     pub position: i32,
+    pub workflow_role: ListWorkflowRole,
     pub cards: Vec<BoardCardDraft>,
 }
 
@@ -123,7 +125,11 @@ async fn insert_card(
         description: card.description,
         card_id: card.card_id as u32,
         position: card.position,
+        start_on: card.start_on,
         due_on: card.due_on,
+        completed_at: card.completed_at,
+        cancelled_at: card.cancelled_at,
+        archived: card.archived,
         reminder_enabled: card.reminder_enabled,
         labels: Vec::new(),
         checklist_items,
@@ -140,6 +146,7 @@ pub async fn create_board_list(
         title: Set(draft.title),
         board_id: Set(i64::from(draft.board_id)),
         position: Set(draft.position),
+        workflow_role: Set(draft.workflow_role.as_str().to_string()),
         ..Default::default()
     }
     .insert(db)
@@ -149,6 +156,7 @@ pub async fn create_board_list(
         title: list.title,
         board_id: list.board_id as u32,
         position: list.position,
+        workflow_role: ListWorkflowRole::from_storage(&list.workflow_role),
         entries: Vec::new(),
     })
 }
@@ -172,6 +180,7 @@ pub async fn duplicate_board_list(
         title: Set(format!("Copy of {}", source.title)),
         board_id: Set(i64::from(source.board_id)),
         position: Set(source.position + 1),
+        workflow_role: Set(source.workflow_role.as_str().to_string()),
         ..Default::default()
     }
     .insert(&txn)
@@ -213,6 +222,29 @@ pub async fn rename_board_list(
     }
     .update(&txn)
     .await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+pub async fn set_board_list_workflow_role(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    list_id: u32,
+    workflow_role: ListWorkflowRole,
+) -> Result<()> {
+    let txn = db.begin().await?;
+    let current = BoardList::find_by_id(i64::from(list_id))
+        .one(&txn)
+        .await?
+        .ok_or_else(|| anyhow!("list {list_id} was not found"))?;
+    if current.workflow_role != workflow_role.as_str() {
+        card::ActiveModel {
+            id: Set(i64::from(list_id)),
+            workflow_role: Set(workflow_role.as_str().to_string()),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+    }
     txn.commit().await?;
     Ok(())
 }
@@ -271,6 +303,21 @@ pub async fn set_board_card_due_on(
         id: Set(i64::from(card_id)),
         due_on: Set(due_on),
         reminder_notified_for: Set(None),
+        ..Default::default()
+    }
+    .update(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_board_card_start_on(
+    db: &impl ConnectionTrait,
+    card_id: u32,
+    start_on: Option<String>,
+) -> Result<()> {
+    entry::ActiveModel {
+        id: Set(i64::from(card_id)),
+        start_on: Set(start_on),
         ..Default::default()
     }
     .update(db)
@@ -468,6 +515,7 @@ mod tests {
                 title: "Selected".to_string(),
                 board_id: board.id,
                 position: 0,
+                workflow_role: ListWorkflowRole::Neutral,
                 cards: Vec::new(),
             },
         )
@@ -516,6 +564,7 @@ mod tests {
                 title: "Approved".to_string(),
                 board_id: board.id,
                 position: 0,
+                workflow_role: ListWorkflowRole::Neutral,
                 cards: vec![draft],
             },
             3,
@@ -530,6 +579,52 @@ mod tests {
         assert_eq!(snapshot.cards[1].title, "Copy of Approved");
         assert_eq!(snapshot.cards[1].position, 1);
         assert_eq!(snapshot.cards[1].entries[0].title, "Ship release");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_workflow_roles_round_trip_and_duplicate() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let board = crate::workspace::create_board(&db, None, "Publishing".to_string()).await?;
+        let list = create_board_list(
+            &db,
+            BoardListDraft {
+                title: "Published".to_string(),
+                board_id: board.id,
+                position: 0,
+                workflow_role: ListWorkflowRole::Done,
+                cards: Vec::new(),
+            },
+        )
+        .await?;
+        assert_eq!(list.workflow_role, ListWorkflowRole::Done);
+
+        set_board_list_workflow_role(&db, list.id, ListWorkflowRole::Cancelled).await?;
+        let snapshot = crate::board::load_board_snapshot(&db, board.id).await?;
+        assert_eq!(snapshot.cards[0].workflow_role, ListWorkflowRole::Cancelled);
+
+        duplicate_board_list(
+            &db,
+            BoardListDraft {
+                title: "Published".to_string(),
+                board_id: board.id,
+                position: 0,
+                workflow_role: ListWorkflowRole::Cancelled,
+                cards: Vec::new(),
+            },
+            1,
+        )
+        .await?;
+        let snapshot = crate::board::load_board_snapshot(&db, board.id).await?;
+        assert_eq!(
+            snapshot
+                .cards
+                .iter()
+                .map(|list| list.workflow_role)
+                .collect::<Vec<_>>(),
+            vec![ListWorkflowRole::Cancelled, ListWorkflowRole::Cancelled]
+        );
         Ok(())
     }
 }

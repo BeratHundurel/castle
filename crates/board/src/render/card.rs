@@ -109,6 +109,12 @@ impl BoardView {
     ) -> impl IntoElement {
         let theme = cx.theme().clone();
         let card_id = card.id;
+        let workflow_role = card.workflow_role;
+        let (workflow_icon, workflow_color) = match workflow_role {
+            storage::board::ListWorkflowRole::Neutral => (IconName::Info, theme.muted_foreground),
+            storage::board::ListWorkflowRole::Done => (IconName::CircleCheck, theme.success),
+            storage::board::ListWorkflowRole::Cancelled => (IconName::CircleX, theme.danger),
+        };
 
         h_flex()
             .id(format!("card-list-title-{}", card_id))
@@ -139,20 +145,40 @@ impl BoardView {
             .on_drag(card_drag_info, |info: &CardDragInfo, position, _, cx| {
                 cx.new(|_| info.clone().position(position))
             })
-            .when_else(
-                self.entry_editing.renaming_list_id == Some(card_id),
-                |this| {
-                    this.child(
-                        Input::new(&self.entry_editing.rename_list_input)
-                            .bg(theme.secondary)
-                            .focus_bordered(false)
-                            .rounded_none()
-                            .border_0()
-                            .border_b_1()
-                            .border_color(theme.foreground),
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .items_center()
+                    .gap_1()
+                    .when_else(
+                        self.entry_editing.renaming_list_id == Some(card_id),
+                        |this| {
+                            this.child(
+                                Input::new(&self.entry_editing.rename_list_input)
+                                    .bg(theme.secondary)
+                                    .focus_bordered(false)
+                                    .rounded_none()
+                                    .border_0()
+                                    .border_b_1()
+                                    .border_color(theme.foreground),
+                            )
+                        },
+                        |this| this.child(card.title.clone()),
                     )
-                },
-                |this| this.child(card.title.clone()),
+                    .when(
+                        workflow_role != storage::board::ListWorkflowRole::Neutral,
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_0p5()
+                                    .text_xs()
+                                    .text_color(workflow_color)
+                                    .child(Icon::new(workflow_icon).xsmall())
+                                    .child(workflow_role.label()),
+                            )
+                        },
+                    ),
             )
             .child(
                 h_flex()
@@ -171,69 +197,99 @@ impl BoardView {
                             .ghost()
                             .compact()
                             .tooltip("List actions")
-                            .dropdown_menu_with_anchor(Anchor::LeftCenter, move |menu, _, cx| {
-                                let muted = cx.theme().muted_foreground;
+                            .dropdown_menu_with_anchor(
+                                Anchor::LeftCenter,
+                                move |menu, window, cx| {
+                                    let muted = cx.theme().muted_foreground;
 
-                                menu.menu_element(Box::new(EditCardAction(card_id)), move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .gap_2()
-                                        .items_center()
-                                        .justify_between()
-                                        .child("Rename list")
-                                        .child(
-                                            Icon::new(IconName::Replace).xsmall().text_color(muted),
-                                        )
-                                })
-                                .menu_element(
-                                    Box::new(DuplicateCardAction(card_id)),
-                                    move |_, _| {
+                                    menu.submenu(
+                                        format!("Workflow role · {}", workflow_role.label()),
+                                        window,
+                                        cx,
+                                        move |menu, _, _| {
+                                            storage::board::ListWorkflowRole::ALL.into_iter().fold(
+                                                menu,
+                                                |menu, role| {
+                                                    let current = if role == workflow_role {
+                                                        " (current)"
+                                                    } else {
+                                                        ""
+                                                    };
+                                                    menu.menu(
+                                                        format!("{}{}", role.label(), current),
+                                                        Box::new(SetListWorkflowRoleAction {
+                                                            list_id: card_id,
+                                                            workflow_role: role,
+                                                        }),
+                                                    )
+                                                },
+                                            )
+                                        },
+                                    )
+                                    .separator()
+                                    .menu_element(Box::new(EditCardAction(card_id)), move |_, _| {
                                         h_flex()
                                             .w_full()
                                             .gap_2()
                                             .items_center()
                                             .justify_between()
-                                            .child("Duplicate list")
+                                            .child("Rename list")
                                             .child(
-                                                Icon::new(IconName::Copy)
+                                                Icon::new(IconName::Replace)
                                                     .xsmall()
                                                     .text_color(muted),
                                             )
-                                    },
-                                )
-                                .menu_element(
-                                    Box::new(CopyListInternalLinkAction(card_id)),
-                                    move |_, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .items_center()
-                                            .justify_between()
-                                            .child("Copy internal link")
-                                            .child(
-                                                Icon::new(IconName::Copy)
-                                                    .xsmall()
-                                                    .text_color(muted),
-                                            )
-                                    },
-                                )
-                                .menu_element(
-                                    Box::new(DeleteCardAction(card_id)),
-                                    move |_, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .items_center()
-                                            .justify_between()
-                                            .child("Delete list")
-                                            .child(
-                                                Icon::new(IconName::Delete)
-                                                    .xsmall()
-                                                    .text_color(muted),
-                                            )
-                                    },
-                                )
-                            }),
+                                    })
+                                    .menu_element(
+                                        Box::new(DuplicateCardAction(card_id)),
+                                        move |_, _| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_2()
+                                                .items_center()
+                                                .justify_between()
+                                                .child("Duplicate list")
+                                                .child(
+                                                    Icon::new(IconName::Copy)
+                                                        .xsmall()
+                                                        .text_color(muted),
+                                                )
+                                        },
+                                    )
+                                    .menu_element(
+                                        Box::new(CopyListInternalLinkAction(card_id)),
+                                        move |_, _| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_2()
+                                                .items_center()
+                                                .justify_between()
+                                                .child("Copy internal link")
+                                                .child(
+                                                    Icon::new(IconName::Copy)
+                                                        .xsmall()
+                                                        .text_color(muted),
+                                                )
+                                        },
+                                    )
+                                    .menu_element(
+                                        Box::new(DeleteCardAction(card_id)),
+                                        move |_, _| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_2()
+                                                .items_center()
+                                                .justify_between()
+                                                .child("Delete list")
+                                                .child(
+                                                    Icon::new(IconName::Delete)
+                                                        .xsmall()
+                                                        .text_color(muted),
+                                                )
+                                        },
+                                    )
+                                },
+                            ),
                     ),
             )
     }

@@ -30,21 +30,25 @@ impl BoardView {
                 }
                 match value {
                     Some(value) => {
-                        storage::board::properties::set_entry_property(
-                            &store,
-                            entry_id,
-                            property_id,
-                            value,
-                        )
-                        .await?;
+                        store
+                            .mutations(storage::MutationOrigin::LocalApp)
+                            .set_entry_property(storage::workspace::api::SetEntryPropertyInput {
+                                entry_id,
+                                property_id,
+                                value: workspace_property_value(value),
+                            })
+                            .await?;
                     }
                     None => {
-                        storage::board::properties::clear_entry_property(
-                            &store,
-                            entry_id,
-                            property_id,
-                        )
-                        .await?;
+                        store
+                            .mutations(storage::MutationOrigin::LocalApp)
+                            .clear_entry_property(
+                                storage::workspace::api::ClearEntryPropertyInput {
+                                    entry_id,
+                                    property_id,
+                                },
+                            )
+                            .await?;
                     }
                 }
                 persisted_revisions.insert(key, revision);
@@ -112,5 +116,28 @@ impl BoardView {
                 self.properties.values.remove(&key);
             }
         }
+    }
+}
+
+fn workspace_property_value(
+    value: PropertyValue,
+) -> storage::workspace::api::BoardPropertyValueDetail {
+    match value {
+        PropertyValue::Text(value) => {
+            storage::workspace::api::BoardPropertyValueDetail::Text(value)
+        }
+        PropertyValue::Number(value) => {
+            storage::workspace::api::BoardPropertyValueDetail::Number(value)
+        }
+        PropertyValue::Checkbox(value) => {
+            storage::workspace::api::BoardPropertyValueDetail::Checkbox(value)
+        }
+        PropertyValue::Date(value) => {
+            storage::workspace::api::BoardPropertyValueDetail::Date(value)
+        }
+        PropertyValue::Select(value) => {
+            storage::workspace::api::BoardPropertyValueDetail::Select(value)
+        }
+        PropertyValue::Url(value) => storage::workspace::api::BoardPropertyValueDetail::Url(value),
     }
 }

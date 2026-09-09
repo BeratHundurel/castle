@@ -19,6 +19,7 @@ mod handlers;
 mod labels;
 mod move_card;
 mod move_entry;
+mod workflow;
 
 fn move_entry_to_list_end_in_memory(
     cards: &mut [BoardListState],
@@ -89,7 +90,11 @@ mod tests {
             description: SharedString::from(format!("{title} description")),
             card_id,
             position,
+            start_on: None,
             due_on: Some(SharedString::from("2026-07-31")),
+            completed_at: None,
+            cancelled_at: None,
+            archived: false,
             reminder_enabled: false,
             labels: vec![],
             checklist_items: vec![],
@@ -104,6 +109,7 @@ mod tests {
             title: SharedString::from(title),
             board_id: 1,
             position: id as i32,
+            workflow_role: storage::board::ListWorkflowRole::Neutral,
             entries,
         }
     }

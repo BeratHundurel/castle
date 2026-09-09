@@ -100,13 +100,15 @@ impl BoardView {
             "Could not update checklist item",
             false,
             move |store| async move {
-                storage::board::commands::update_checklist_item(
-                    &store,
-                    item_id,
-                    None,
-                    Some(checked),
-                )
-                .await
+                store
+                    .mutations(storage::MutationOrigin::LocalApp)
+                    .update_checklist_item(storage::workspace::api::UpdateChecklistItemInput {
+                        item_id: i64::from(item_id),
+                        title: None,
+                        checked: Some(checked),
+                    })
+                    .await
+                    .map(|_| ())
             },
         );
     }

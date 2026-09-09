@@ -49,7 +49,10 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
         ),
         ("runtime", set(&["storage"])),
         ("settings", set(&[])),
-        ("board", set(&["runtime", "storage", "workspace"])),
+        (
+            "board",
+            set(&["calendar", "runtime", "storage", "workflow", "workspace"]),
+        ),
         ("command_palette", set(&["runtime", "settings", "storage"])),
         ("quick_capture", set(&["runtime", "storage"])),
         ("castle-mcp", set(&["storage"])),
@@ -71,7 +74,12 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
                 "workspace",
             ]),
         ),
-        ("storage", set(&["entity", "migration"])),
+        (
+            "storage",
+            set(&["calendar", "entity", "migration", "workflow"]),
+        ),
+        ("calendar", set(&[])),
+        ("workflow", set(&[])),
         ("test_support", set(&[])),
         ("workspace", set(&["runtime", "settings", "storage"])),
     ]);

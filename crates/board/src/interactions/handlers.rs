@@ -9,6 +9,15 @@ use crate::filters::DueDateFilter;
 use crate::{BoardView, action::*};
 
 impl BoardView {
+    pub(crate) fn on_set_list_workflow_role_action(
+        &mut self,
+        action: &SetListWorkflowRoleAction,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_list_workflow_role(action.list_id, action.workflow_role, cx);
+    }
+
     pub(crate) fn on_copy_board_internal_link_action(
         &mut self,
         _: &CopyBoardInternalLinkAction,

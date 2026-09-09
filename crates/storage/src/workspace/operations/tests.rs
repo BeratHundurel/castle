@@ -1,6 +1,8 @@
 use super::*;
+use crate::board::ListWorkflowRole;
 use crate::workspace::api::{
     BoardPropertyKindInput, CreateBoardPropertyInput, SetEntryPropertyInput,
+    SetListWorkflowRoleInput,
 };
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
@@ -39,6 +41,13 @@ async fn creates_and_moves_a_complete_board_hierarchy() -> Result<()> {
             title: "Selected".to_string(),
         })
         .await?;
+    let selected_list = store
+        .set_list_workflow_role(SetListWorkflowRoleInput {
+            list_id: second_list.id,
+            workflow_role: ListWorkflowRole::Done,
+        })
+        .await?;
+    assert_eq!(selected_list.workflow_role, ListWorkflowRole::Done);
     let entry = store
         .create_entry(CreateEntryInput {
             list_id: first_list.id,

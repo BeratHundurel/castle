@@ -10,9 +10,17 @@ pub(super) fn required_text(value: String, field: &str) -> Result<String> {
 }
 
 pub(super) fn validate_due_on(due_on: Option<&str>) -> Result<()> {
-    if let Some(due_on) = due_on {
-        NaiveDate::parse_from_str(due_on, "%Y-%m-%d")
-            .with_context(|| format!("due_on must use YYYY-MM-DD, received {due_on:?}"))?;
+    validate_date(due_on, "due_on")
+}
+
+pub(super) fn validate_start_on(start_on: Option<&str>) -> Result<()> {
+    validate_date(start_on, "start_on")
+}
+
+fn validate_date(value: Option<&str>, field: &str) -> Result<()> {
+    if let Some(value) = value {
+        NaiveDate::parse_from_str(value, "%Y-%m-%d")
+            .with_context(|| format!("{field} must use YYYY-MM-DD, received {value:?}"))?;
     }
     Ok(())
 }

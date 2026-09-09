@@ -11,9 +11,12 @@ tokio = { workspace = true, features = ["sync", "time"] }
 serde.workspace = true
 image.workspace = true
 chrono.workspace = true
+calendar = { path = "../calendar" }
 storage = { path = "../storage" }
 runtime = { path = "../runtime" }
 workspace = { path = "../workspace" }
+workflow = { path = "../workflow" }
+serde_json.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

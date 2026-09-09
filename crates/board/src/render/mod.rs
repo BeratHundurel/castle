@@ -44,6 +44,7 @@ impl Render for BoardView {
             .on_action(cx.listener(Self::on_delete_card_action))
             .on_action(cx.listener(Self::on_edit_card_action))
             .on_action(cx.listener(Self::on_duplicate_card_action))
+            .on_action(cx.listener(Self::on_set_list_workflow_role_action))
             .on_action(cx.listener(Self::on_copy_list_internal_link_action))
             .on_action(cx.listener(Self::on_copy_card_internal_link_action))
             .on_action(cx.listener(Self::on_copy_board_internal_link_action))
@@ -64,5 +65,11 @@ impl Render for BoardView {
                 self.entry_editing.open && self.entry_editing.dialog.open,
                 |this| this.child(self.render_entry_detail_overlay(cx)),
             )
+            .when(self.workflow_editor.open, |this| {
+                this.child(self.render_workflow_editor_overlay(cx))
+            })
+            .when(self.calendar_panel.open, |this| {
+                this.child(self.render_calendar_panel_overlay(cx))
+            })
     }
 }

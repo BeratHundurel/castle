@@ -1,0 +1,9 @@
+[package]
+name = "workflow"
+version.workspace = true
+publish = false
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+
