@@ -4,4 +4,4 @@ target/agent-data/
 *.env
 docs/
 notes
-attachments/
+/attachments/
