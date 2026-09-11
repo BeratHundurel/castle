@@ -40,6 +40,7 @@ pub const DEFAULT_QUICK_CAPTURE_SHORTCUT: &str = "Ctrl+Alt+N";
 pub enum StoredTab {
     Chooser,
     Trash,
+    Cheatsheet,
     Board {
         board_id: u32,
         project_id: Option<u32>,
@@ -722,6 +723,7 @@ mod tests {
                         project_id: None,
                         title: "Scratchpad".to_string(),
                     },
+                    StoredTab::Cheatsheet,
                 ],
                 active_tab_index: 9,
                 active_project_id: Some(3),
@@ -734,7 +736,7 @@ mod tests {
         let restored: StoredSettings =
             serde_json::from_str(&serialized).expect("settings should deserialize");
 
-        assert_eq!(restored.tab_session.active_tab_index, 1);
+        assert_eq!(restored.tab_session.active_tab_index, 2);
         assert_eq!(restored.tab_session, settings.tab_session);
     }
 

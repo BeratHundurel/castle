@@ -10,15 +10,16 @@ use gpui_kit::component::{
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, Context, Entity, IntoElement, Keystroke, ParentElement,
-    SharedString, StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
-    px, rems,
+    App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement, SharedString,
+    StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _, px, rems,
 };
 
+use crate::shortcuts::shortcut_context_name;
 use std::{rc::Rc, sync::Arc};
 
 use crate::{
-    AppSettings, DEFAULT_QUICK_CAPTURE_SHORTCUT, DEFAULT_TRAY_SHORTCUT, scrollbar_show_key,
+    AppSettings, DEFAULT_QUICK_CAPTURE_SHORTCUT, DEFAULT_TRAY_SHORTCUT, ShortcutReference,
+    scrollbar_show_key,
 };
 
 const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
@@ -71,13 +72,6 @@ type PickerSelectState = SelectState<SearchableVec<PickerOption>>;
 struct SearchablePickerState {
     select: Entity<PickerSelectState>,
     _subscription: Subscription,
-}
-
-#[derive(Clone)]
-pub struct ShortcutReference {
-    pub action: SharedString,
-    pub context: SharedString,
-    pub keystrokes: Vec<Keystroke>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -901,41 +895,6 @@ fn shortcut_groups(settings: &Entity<SettingsView>, cx: &App) -> Vec<SettingGrou
 
 fn settings_row_is_stacked(layout: Axis) -> bool {
     layout == Axis::Vertical
-}
-
-fn shortcut_context_name(context: &str) -> SharedString {
-    match context {
-        "AppShell" => "Application".into(),
-        "CommandPalette" => "Command Palette".into(),
-        "DocumentEditor" => "Document Editor".into(),
-        "DocumentOutline" => "Document Outline".into(),
-        "EmmetInput" => "Emmet Input".into(),
-        "TextView" => "Text View".into(),
-        _ => humanize_identifier(context),
-    }
-}
-
-fn humanize_identifier(value: &str) -> SharedString {
-    let mut label = String::with_capacity(value.len() + 4);
-    let mut previous_is_lowercase = false;
-
-    for character in value.chars() {
-        if character == '_' || character == '-' {
-            if !label.ends_with(' ') {
-                label.push(' ');
-            }
-            previous_is_lowercase = false;
-            continue;
-        }
-
-        if character.is_uppercase() && previous_is_lowercase {
-            label.push(' ');
-        }
-        label.push(character);
-        previous_is_lowercase = character.is_lowercase();
-    }
-
-    label.into()
 }
 
 fn current_theme_name(cx: &App) -> SharedString {

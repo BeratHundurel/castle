@@ -101,6 +101,12 @@ impl CommandPaletteView {
                 kind: PaletteCommandKind::OpenSettingsFile,
             },
             PaletteCommand {
+                label: "Open cheatsheet".into(),
+                subtitle: "Browse keyboard shortcuts (F1)".into(),
+                icon: IconName::BookOpen,
+                kind: PaletteCommandKind::OpenCheatsheet,
+            },
+            PaletteCommand {
                 label: "Switch theme".into(),
                 subtitle: SharedString::from(format!(
                     "Preview available themes ({})",

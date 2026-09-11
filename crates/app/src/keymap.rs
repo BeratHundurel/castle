@@ -12,7 +12,9 @@ use document_editor::action::{
     ToggleDocumentPreview, ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, ToggleZenMode,
     VimKey, VimKeyAction,
 };
-use shell::{CycleNextTab, CyclePrevTab, OpenSettingsAction, ToggleSidebarAction};
+use shell::{
+    CycleNextTab, CyclePrevTab, OpenCheatsheetAction, OpenSettingsAction, ToggleSidebarAction,
+};
 
 struct ShortcutRegistry(Vec<ShortcutReference>);
 
@@ -51,6 +53,7 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
+        KeyBinding::new("f1", OpenCheatsheetAction, Some("AppShell")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-,", OpenSettingsAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]
@@ -609,6 +612,20 @@ pub(crate) fn humanize_identifier(value: &str) -> SharedString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cheatsheet_has_an_unambiguous_application_shortcut() {
+        let bindings = default_bindings();
+        let expected = KeyBinding::new("f1", OpenCheatsheetAction, Some("AppShell"));
+        let matching = bindings
+            .iter()
+            .filter(|binding| binding.keystrokes() == expected.keystrokes())
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert!(matching[0].action().as_any().is::<OpenCheatsheetAction>());
+        assert_eq!(matching[0].predicate(), expected.predicate());
+        assert_eq!(shortcut_action_name(matching[0]), "Open Cheatsheet");
+    }
 
     #[test]
     fn theme_shortcut_does_not_shadow_markdown_link() {

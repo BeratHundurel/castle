@@ -307,6 +307,7 @@ impl AppShell {
             OpenTabKind::Board { view, .. } => view.clone().into_any_element(),
             OpenTabKind::Note { view, .. } => view.clone().into_any_element(),
             OpenTabKind::Settings { view } => view.clone().into_any_element(),
+            OpenTabKind::Cheatsheet { view } => view.clone().into_any_element(),
         }
     }
 
@@ -358,6 +359,9 @@ impl Render for AppShell {
             }))
             .on_action(cx.listener(|this, _: &OpenSettingsAction, window, cx| {
                 this.open_settings(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenCheatsheetAction, window, cx| {
+                this.open_cheatsheet(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ExportWorkspaceAction, window, cx| {
                 this.export_workspace(window, cx);

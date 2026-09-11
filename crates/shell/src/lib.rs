@@ -8,8 +8,8 @@ mod workspace;
 
 pub(crate) use action::{CloseAllTabsAction, CloseOtherTabsAction, CloseTabAction};
 pub use action::{
-    CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction, OpenSettingsAction,
-    ToggleSidebarAction,
+    CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction, OpenCheatsheetAction,
+    OpenSettingsAction, ToggleSidebarAction,
 };
 use gpui_kit::component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
@@ -40,7 +40,7 @@ use document_editor::{
     unique_note_path,
 };
 use settings::{
-    AgentAccess, AppSettings, SettingsDocumentEvent, SettingsDocumentSaveState,
+    AgentAccess, AppSettings, CheatsheetView, SettingsDocumentEvent, SettingsDocumentSaveState,
     SettingsDocumentView, SettingsIntegration, SettingsView, ShortcutReference, StoredTab,
     WorkspaceArchiveActions,
 };
@@ -58,7 +58,7 @@ type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 pub struct ShellIntegration {
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
-    _shortcuts: ShortcutProvider,
+    shortcuts: ShortcutProvider,
     _agent_access: Arc<dyn AgentAccess>,
 }
 
@@ -72,7 +72,7 @@ impl ShellIntegration {
         Self {
             update_tray_shortcut: Rc::new(update_tray_shortcut),
             update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
-            _shortcuts: Rc::new(shortcuts),
+            shortcuts: Rc::new(shortcuts),
             _agent_access: agent_access,
         }
     }
@@ -123,6 +123,9 @@ enum OpenTabKind {
     },
     Settings {
         view: Entity<SettingsDocumentView>,
+    },
+    Cheatsheet {
+        view: Entity<CheatsheetView>,
     },
 }
 
@@ -245,6 +248,7 @@ pub struct AppShell {
     pub(crate) focus_handle: FocusHandle,
     sidebar: Entity<SidebarView>,
     settings_view: Entity<SettingsView>,
+    shortcuts: ShortcutProvider,
     title_input: Entity<InputState>,
     command_palette: Entity<CommandPaletteView>,
     tabs: TabsState,
@@ -468,7 +472,7 @@ impl AppShell {
             view,
             window,
             |this, _, event: &CommandPaletteEvent, window, cx| match event {
-                CommandPaletteEvent::Closed => this.focus_handle.focus(window, cx),
+                CommandPaletteEvent::Closed => this.focus_active_tab(window, cx),
                 CommandPaletteEvent::OpenNote {
                     note_id,
                     project_id,
@@ -494,6 +498,7 @@ impl AppShell {
                 CommandPaletteEvent::CloseAllTabs => this.close_all_tabs(window, cx),
                 CommandPaletteEvent::OpenSettings => this.open_settings(window, cx),
                 CommandPaletteEvent::OpenSettingsFile => this.open_settings_document(window, cx),
+                CommandPaletteEvent::OpenCheatsheet => this.open_cheatsheet(window, cx),
                 CommandPaletteEvent::CreateCardFromSelection => {
                     if let Some(note_view) = this.active_note_view() {
                         note_view.update(cx, |editor, cx| editor.create_card_from_selection(cx));
@@ -549,6 +554,12 @@ impl AppShell {
             let (title, kind) = match stored_tab {
                 StoredTab::Chooser => (SharedString::from("Home"), OpenTabKind::Chooser),
                 StoredTab::Trash => (SharedString::from("Trash"), OpenTabKind::Trash),
+                StoredTab::Cheatsheet => (
+                    SharedString::from("Cheatsheet"),
+                    OpenTabKind::Cheatsheet {
+                        view: CheatsheetView::view((integration.shortcuts)(cx), window, cx),
+                    },
+                ),
                 StoredTab::Board {
                     board_id,
                     project_id,
@@ -793,7 +804,7 @@ impl AppShell {
         let settings_open_file = cx.entity().downgrade();
         let settings_update_tray_shortcut = update_tray_shortcut.clone();
         let settings_update_quick_capture_shortcut = update_quick_capture_shortcut.clone();
-        let shortcuts = integration._shortcuts.clone();
+        let shortcuts = integration.shortcuts.clone();
         let agent_access = integration._agent_access.clone();
         let settings_import_workspace = cx.entity().downgrade();
         let settings_export_workspace = cx.entity().downgrade();
@@ -859,6 +870,7 @@ impl AppShell {
             focus_handle: cx.focus_handle(),
             sidebar,
             settings_view: settings_view.clone(),
+            shortcuts: integration.shortcuts,
             title_input,
             command_palette,
             tabs: TabsState {

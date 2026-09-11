@@ -170,6 +170,7 @@ impl AppShell {
             .filter_map(|tab| match &tab.kind {
                 OpenTabKind::Chooser => Some(StoredTab::Chooser),
                 OpenTabKind::Trash => Some(StoredTab::Trash),
+                OpenTabKind::Cheatsheet { .. } => Some(StoredTab::Cheatsheet),
                 OpenTabKind::Board {
                     board_id,
                     project_id,
@@ -255,7 +256,9 @@ impl AppShell {
                         cx.notify();
                     });
                 }
-                OpenTabKind::Trash | OpenTabKind::Settings { .. } => {
+                OpenTabKind::Trash
+                | OpenTabKind::Settings { .. }
+                | OpenTabKind::Cheatsheet { .. } => {
                     self.sidebar.update(cx, |sidebar, cx| {
                         sidebar.clear_active_item();
                         cx.notify();
@@ -319,16 +322,30 @@ impl AppShell {
             } => {
                 self.workspace.active_project_id = *project_id;
             }
-            OpenTabKind::Chooser | OpenTabKind::Trash | OpenTabKind::Settings { .. } => {}
+            OpenTabKind::Chooser
+            | OpenTabKind::Trash
+            | OpenTabKind::Settings { .. }
+            | OpenTabKind::Cheatsheet { .. } => {}
         }
 
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
-        self.focus_handle.focus(window, cx);
+        self.focus_active_tab(window, cx);
         self.persist_tab_session(cx);
         cx.notify();
     }
 
+    pub(super) fn focus_active_tab(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match self
+            .tabs
+            .open_tabs
+            .get(self.tabs.active_tab_index)
+            .map(|tab| &tab.kind)
+        {
+            Some(OpenTabKind::Cheatsheet { view }) => view.focus_handle(cx).focus(window, cx),
+            _ => self.focus_handle.focus(window, cx),
+        }
+    }
     pub(super) fn activate_project(
         &mut self,
         project_id: u32,
@@ -557,7 +574,10 @@ impl AppShell {
                 Some(WorkspaceTitleTarget::Note(*note_id))
             }
             OpenTabKind::Board { board_id, .. } => Some(WorkspaceTitleTarget::Board(*board_id)),
-            OpenTabKind::Chooser | OpenTabKind::Trash | OpenTabKind::Settings { .. } => None,
+            OpenTabKind::Chooser
+            | OpenTabKind::Trash
+            | OpenTabKind::Settings { .. }
+            | OpenTabKind::Cheatsheet { .. } => None,
         };
 
         if let Some(target) = target {

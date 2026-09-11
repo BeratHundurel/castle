@@ -31,6 +31,10 @@ pub struct OpenSettingsAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
+pub struct OpenCheatsheetAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
 pub struct ExportWorkspaceAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
