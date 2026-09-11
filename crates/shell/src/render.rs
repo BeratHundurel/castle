@@ -258,7 +258,7 @@ impl AppShell {
                     .icon(IconName::Plus)
                     .ghost()
                     .xsmall()
-                    .tooltip("New tab")
+                    .tooltip_with_action("New tab", &NewTabAction, Some("AppShell"))
                     .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
             )
             .suffix(div().w_0())
@@ -275,6 +275,13 @@ impl AppShell {
                             .when_else(index == active_index, |b| b.primary(), |b| b.ghost())
                             .xsmall()
                             .tooltip("Close tab")
+                            .when(index == active_index, |button| {
+                                button.tooltip_with_action(
+                                    "Close tab",
+                                    &CloseActiveTabAction,
+                                    Some("AppShell"),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.close_tab(index, window, cx);
                             })),
@@ -337,6 +344,28 @@ impl Render for AppShell {
             .key_context("AppShell")
             .size_full()
             .overflow_hidden()
+            .on_action(cx.listener(|this, action: &NewTabAction, window, cx| {
+                this.on_new_tab_action(action, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &CloseActiveTabAction, window, cx| {
+                    this.on_close_active_tab_action(action, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, action: &NewNoteAction, window, cx| {
+                this.on_new_note_action(action, window, cx);
+            }))
+            .on_action(cx.listener(|this, action: &NewBoardAction, window, cx| {
+                this.on_new_board_action(action, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &FocusSidebarSearchAction, window, cx| {
+                    this.on_focus_sidebar_search_action(action, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, action: &NewProjectAction, window, cx| {
+                this.on_new_project_action(action, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &CycleNextTab, window, cx| {
                 this.cycle_next_tab(window, cx);
             }))

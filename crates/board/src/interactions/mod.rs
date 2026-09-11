@@ -10,12 +10,13 @@ use gpui_kit::component::{
 use gpui_kit::{Context, ParentElement, SharedString, Styled, Window};
 use runtime::AppRuntime;
 
-use super::{BoardView, BoardViewEvent, drag::*, model::*};
+use super::{BoardView, BoardViewEvent, drag::*, model::*, state::BoardSelection};
 
 mod checklist;
 mod create;
 mod entry_detail;
 mod handlers;
+mod keyboard;
 mod labels;
 mod move_card;
 mod move_entry;

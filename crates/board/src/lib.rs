@@ -56,6 +56,11 @@ use gpui_kit::*;
 use model::*;
 use state::*;
 
+pub use action::{
+    AddBoardCardAction, AddBoardListAction, ClearBoardSelectionAction,
+    DeleteSelectedBoardItemAction, OpenSelectedBoardItemAction, SelectBoardDownAction,
+    SelectBoardLeftAction, SelectBoardRightAction, SelectBoardUpAction,
+};
 pub use notifications::{NotificationAvailability, NotificationGateway};
 pub use template_picker::{BoardTemplatePicker, BoardTemplatePickerEvent};
 
@@ -112,6 +117,7 @@ pub struct BoardView {
     entry_editing: EntryEditingState,
     filters: filters::BoardFilters,
     filter_panel_open: bool,
+    selection: Option<state::BoardSelection>,
     board_scroll_handle: ScrollHandle,
     filter_scroll_handle: ScrollHandle,
     pending_reveal_target: Option<workspace::WorkspaceNavigationTarget>,
@@ -613,6 +619,7 @@ impl BoardView {
             },
             filters: filters::BoardFilters::default(),
             filter_panel_open: false,
+            selection: None,
             board_scroll_handle: ScrollHandle::new(),
             filter_scroll_handle: ScrollHandle::new(),
             pending_reveal_target: None,

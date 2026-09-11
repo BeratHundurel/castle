@@ -798,6 +798,8 @@ impl Render for SidebarView {
         let show_standalone = search_lower.is_empty() || !standalone_items.is_empty();
 
         div()
+            .id("sidebar-root")
+            .track_focus(&self.focus_handle)
             .relative()
             .h_full()
             .flex_shrink_0()
@@ -905,16 +907,13 @@ impl Render for SidebarView {
                                                 .outline()
                                                 .flex_1()
                                                 .min_w_0()
+                                                .tooltip_with_action(
+                                                    "New project",
+                                                    &NewProjectAction,
+                                                    Some("AppShell"),
+                                                )
                                                 .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.is_adding_project = true;
-                                                    this.new_project_input.update(
-                                                        cx,
-                                                        |input, cx| {
-                                                            input.set_value("", window, cx);
-                                                            input.focus(window, cx);
-                                                        },
-                                                    );
-                                                    cx.notify();
+                                                    this.start_adding_project(window, cx);
                                                 })),
                                         )
                                         .child(

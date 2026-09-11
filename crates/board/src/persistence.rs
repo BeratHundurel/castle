@@ -81,6 +81,7 @@ impl BoardView {
         self.data.board_id = Some(board_id);
         self.mutation.load_error = None;
         self.entry_editing.adding_list = false;
+        self.selection = None;
         self.entry_editing.next_checklist_item_position = 0;
         self.enrich_board_async(cx, board_id);
     }

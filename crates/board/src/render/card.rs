@@ -1,3 +1,4 @@
+use super::super::state::BoardSelection;
 use super::*;
 
 fn accepts_entry_card_drop(value: &dyn std::any::Any) -> bool {
@@ -63,6 +64,19 @@ impl BoardView {
             .bg(theme.secondary)
             .text_color(theme.secondary_foreground)
             .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.secondary)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.focus_handle.focus(window, cx);
+                    this.select_list(card_id, cx);
+                }),
+            )
+            .when(
+                self.selection == Some(BoardSelection::List(card_id)),
+                |this| this.border_color(theme.ring),
+            )
             .when(self.revealed_list_id == Some(card_id), |this| {
                 this.border_2().border_color(theme.primary).shadow_md()
             })
@@ -346,6 +360,18 @@ impl BoardView {
             .text_color(cx.theme().primary_foreground)
             .rounded(cx.theme().radius)
             .hover(|this| this.bg(cx.theme().primary_hover))
+            .when(
+                self.selection
+                    == Some(BoardSelection::Entry {
+                        list_id: card_id,
+                        entry_id,
+                    }),
+                |this| {
+                    this.border_2()
+                        .border_color(cx.theme().accent_foreground)
+                        .shadow_md()
+                },
+            )
             .when(drag_enabled, |this| {
                 this.drag_over::<DragInfo>(|this, _, _, cx| {
                     this.border_l_4()
@@ -383,6 +409,8 @@ impl BoardView {
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
+                this.focus_handle.focus(window, cx);
+                this.select_entry(card_id, entry_id, cx);
                 this.open_entry_dialog(entry_id, window, cx);
             }))
             .when(drag_enabled, |this| {
@@ -415,6 +443,8 @@ impl BoardView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
+                    this.focus_handle.focus(window, cx);
+                    this.select_list(card_id, cx);
                     this.entry_editing.pending_list_id = Some(card_id);
                     this.show_add_entry_dialog(window, cx);
                 }),

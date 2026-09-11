@@ -13,7 +13,7 @@ impl BoardView {
         })
     }
 
-    pub(super) fn entry_matches_filters(&self, entry: &BoardCardState) -> bool {
+    pub(crate) fn entry_matches_filters(&self, entry: &BoardCardState) -> bool {
         storage::board::projection::entry_matches_view(
             entry,
             &self.properties.active_view_config,
@@ -23,7 +23,7 @@ impl BoardView {
         )
     }
 
-    pub(super) fn compare_entries_for_active_sort(
+    pub(crate) fn compare_entries_for_active_sort(
         &self,
         left: &BoardCardState,
         right: &BoardCardState,

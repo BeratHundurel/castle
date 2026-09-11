@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BoardSelection {
+    List(u32),
+    Entry { list_id: u32, entry_id: u32 },
+}
+
 pub(super) struct BoardDataState {
     pub(super) board_id: Option<u32>,
     pub(super) lists: Vec<BoardListState>,

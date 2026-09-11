@@ -1,11 +1,85 @@
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{Context, Pixels, Window, px};
 
 use gpui_kit::Focusable as _;
 use settings::{AppSettings, CheatsheetView, SettingsDocumentView};
+use workspace::{FocusSidebarSearchAction, NewProjectAction};
 
 use super::AppShell;
 
 impl AppShell {
+    pub(crate) fn on_new_tab_action(
+        &mut self,
+        _: &super::NewTabAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        self.new_tab(window, cx);
+    }
+
+    pub(crate) fn on_close_active_tab_action(
+        &mut self,
+        _: &super::CloseActiveTabAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        self.on_close_command_palette_action(window, cx);
+        let active_tab_index = self.tabs.active_tab_index;
+        self.close_tab(active_tab_index, window, cx);
+    }
+
+    pub(crate) fn on_new_note_action(
+        &mut self,
+        _: &super::NewNoteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        self.create_note(self.workspace.active_project_id, window, cx);
+    }
+
+    pub(crate) fn on_new_board_action(
+        &mut self,
+        _: &super::NewBoardAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        self.create_board(self.workspace.active_project_id, window, cx);
+    }
+
+    pub(crate) fn on_focus_sidebar_search_action(
+        &mut self,
+        _: &FocusSidebarSearchAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        if self.sidebar.read(cx).is_collapsed() {
+            self.set_sidebar_visible(true, cx);
+        }
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.focus_search(window, cx));
+    }
+
+    pub(crate) fn on_new_project_action(
+        &mut self,
+        _: &NewProjectAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        if self.sidebar.read(cx).is_collapsed() {
+            self.set_sidebar_visible(true, cx);
+        }
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.start_adding_project(window, cx));
+    }
+
     pub(crate) fn on_command_palette_action(
         &mut self,
         window: &mut Window,

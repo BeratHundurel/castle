@@ -6,11 +6,12 @@ mod render;
 mod tabs;
 mod workspace;
 
-pub(crate) use action::{CloseAllTabsAction, CloseOtherTabsAction, CloseTabAction};
 pub use action::{
-    CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction, OpenCheatsheetAction,
-    OpenSettingsAction, ToggleSidebarAction,
+    CloseActiveTabAction, CycleNextTab, CyclePrevTab, ExportWorkspaceAction, ImportWorkspaceAction,
+    NewBoardAction, NewNoteAction, NewTabAction, OpenCheatsheetAction, OpenSettingsAction,
+    ToggleSidebarAction,
 };
+pub(crate) use action::{CloseAllTabsAction, CloseOtherTabsAction, CloseTabAction};
 use gpui_kit::component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -32,6 +33,7 @@ use gpui_kit::{
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 use storage::workspace::WorkspaceTitleTarget;
 
+pub use ::workspace::{FocusSidebarSearchAction, NewProjectAction};
 use ::workspace::{SidebarEvent, SidebarView};
 use board::{BoardTemplatePicker, BoardTemplatePickerEvent, BoardView, BoardViewEvent};
 use command_palette::{CommandPaletteEvent, CommandPaletteView};

@@ -560,6 +560,9 @@ fn apply_theme_name(theme_name: &str, cx: &mut App) {
 
 fn apply_values_to_theme(values: &StoredSettings, cx: &mut App) {
     apply_theme_name(&values.theme_name, cx);
+    // Keep focus on the control's existing 1px border; the kit's outer ring
+    // is too prominent for Castle's compact surfaces.
+    Theme::global_mut(cx).focus_ring = false;
     apply_font_family(&values.font_family, cx);
     apply_font_size(values.font_size, cx);
     apply_radius(values.radius, cx);
@@ -649,6 +652,7 @@ mod tests {
                     .expect("active handle should be set"),
                 Theme::global(cx).drag_border
             );
+            assert!(!Theme::global(cx).focus_ring);
         });
     }
 

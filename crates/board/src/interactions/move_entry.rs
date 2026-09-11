@@ -36,6 +36,18 @@ impl BoardView {
             .find(|card| card.entries.iter().any(|entry| entry.id == entry_id))
             .map(|card| card.id);
         if move_entry_to_list_end_in_memory(&mut self.data.lists, entry_id, target_card_id) {
+            if matches!(
+                self.selection,
+                Some(BoardSelection::Entry {
+                    entry_id: selected_entry_id,
+                    ..
+                }) if selected_entry_id == entry_id
+            ) {
+                self.selection = Some(BoardSelection::Entry {
+                    list_id: target_card_id,
+                    entry_id,
+                });
+            }
             self.persist_board_layout(cx);
             if let (Some(board_id), Some(source_card_id)) = (self.data.board_id, source_card_id) {
                 self.run_move_workflow_after_layout(
@@ -154,6 +166,18 @@ impl BoardView {
                 target_index
             };
             target_card.entries.insert(insert_index, entry);
+            if matches!(
+                self.selection,
+                Some(BoardSelection::Entry {
+                    entry_id: selected_entry_id,
+                    ..
+                }) if selected_entry_id == info.entry_id
+            ) {
+                self.selection = Some(BoardSelection::Entry {
+                    list_id: target_card_id,
+                    entry_id: info.entry_id,
+                });
+            }
             self.persist_board_layout(cx);
             self.run_move_workflow_after_layout(
                 board_id,

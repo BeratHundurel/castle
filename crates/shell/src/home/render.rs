@@ -52,22 +52,32 @@ impl AppShell {
                                         Button::new("home-new-note")
                                             .flex_1()
                                             .icon(IconName::Plus)
-                                            .label(match active_project {
-                                                Some(project) => format!("Note in {}", project.name),
-                                                None => "New note".to_string(),
-                                            })
-                                            .primary()
-                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                             .label(match active_project {
+                                                 Some(project) => format!("Note in {}", project.name),
+                                                 None => "New note".to_string(),
+                                             })
+                                             .primary()
+                                             .tooltip_with_action(
+                                                 "New note",
+                                                 &NewNoteAction,
+                                                 Some("AppShell"),
+                                             )
+                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.create_note(active_project_id, window, cx);
                                             })),
                                     )
                                     .child(
                                         Button::new("home-new-board")
                                             .flex_1()
-                                            .icon(IconName::LayoutDashboard)
-                                            .label("New board")
-                                            .outline()
-                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                             .icon(IconName::LayoutDashboard)
+                                             .label("New board")
+                                             .outline()
+                                             .tooltip_with_action(
+                                                 "New board",
+                                                 &NewBoardAction,
+                                                 Some("AppShell"),
+                                             )
+                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.create_board(active_project_id, window, cx);
                                             })),
                                     ),

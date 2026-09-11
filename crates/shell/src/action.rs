@@ -15,6 +15,22 @@ pub(crate) struct CloseAllTabsAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = castle, no_json)]
+pub struct NewTabAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+pub struct CloseActiveTabAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+pub struct NewNoteAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
+pub struct NewBoardAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = castle, no_json)]
 pub struct CycleNextTab;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]

@@ -1,19 +1,26 @@
 use gpui_kit::{App, AsKeystroke as _, Global, KeyBinding, SharedString};
 use settings::{SaveSettingsDocument, ShortcutReference};
 
+use board::{
+    AddBoardCardAction, AddBoardListAction, ClearBoardSelectionAction,
+    DeleteSelectedBoardItemAction, OpenSelectedBoardItemAction, SelectBoardDownAction,
+    SelectBoardLeftAction, SelectBoardRightAction, SelectBoardUpAction,
+};
 use command_palette::{
     CloseCommandPaletteAction, CommandPaletteAction, OpenWorkspaceSearchAction,
     SelectNextCommandPaletteItem, SelectPrevCommandPaletteItem, SwitchThemeAction,
 };
 use document_editor::action::{
-    ApplyMarkdownFormat, EmmetCancelWrap, EmmetSubmitWrap, ExpandEmmet, FormatDocument,
-    MarkdownFormat, MoveLineDown, MoveLineUp, OutlineClose, OutlineLeft, OutlineNext, OutlineOpen,
-    OutlinePrevious, OutlineRight, SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline,
-    ToggleDocumentPreview, ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, ToggleZenMode,
-    VimKey, VimKeyAction,
+    ApplyMarkdownFormat, CreateCardFromSelectionAction, EmmetCancelWrap, EmmetSubmitWrap,
+    ExpandEmmet, FormatDocument, InsertBoardViewAction, MarkdownFormat, MoveLineDown, MoveLineUp,
+    OutlineClose, OutlineLeft, OutlineNext, OutlineOpen, OutlinePrevious, OutlineRight,
+    SaveDocumentFile, SaveDocumentFileAs, ToggleDocumentOutline, ToggleDocumentPreview,
+    ToggleFocusMode, ToggleTask, ToggleTypewriterScrolling, ToggleZenMode, VimKey, VimKeyAction,
 };
 use shell::{
-    CycleNextTab, CyclePrevTab, OpenCheatsheetAction, OpenSettingsAction, ToggleSidebarAction,
+    CloseActiveTabAction, CycleNextTab, CyclePrevTab, ExportWorkspaceAction,
+    FocusSidebarSearchAction, ImportWorkspaceAction, NewBoardAction, NewNoteAction,
+    NewProjectAction, NewTabAction, OpenCheatsheetAction, OpenSettingsAction, ToggleSidebarAction,
 };
 
 struct ShortcutRegistry(Vec<ShortcutReference>);
@@ -52,6 +59,38 @@ fn default_bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("ctrl-tab", CycleNextTab, Some("AppShell")),
         KeyBinding::new("ctrl-shift-tab", CyclePrevTab, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-t", NewTabAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-t", NewTabAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-w", CloseActiveTabAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-w", CloseActiveTabAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-n", NewNoteAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-n", NewNoteAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-n", NewBoardAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-n", NewBoardAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-p", NewProjectAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-p", NewProjectAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-k", FocusSidebarSearchAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-k", FocusSidebarSearchAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-i", ImportWorkspaceAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-i", ImportWorkspaceAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-e", ExportWorkspaceAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-e", ExportWorkspaceAction, Some("AppShell")),
         KeyBinding::new("ctrl-p", CommandPaletteAction, Some("AppShell")),
         KeyBinding::new("f1", OpenCheatsheetAction, Some("AppShell")),
         #[cfg(target_os = "macos")]
@@ -74,6 +113,26 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-b", ToggleSidebarAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-b", ToggleSidebarAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-enter", AddBoardCardAction, Some("BoardView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-enter", AddBoardCardAction, Some("BoardView")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-enter", AddBoardListAction, Some("BoardView")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-enter", AddBoardListAction, Some("BoardView")),
+        KeyBinding::new("up", SelectBoardUpAction, Some("BoardView")),
+        KeyBinding::new("down", SelectBoardDownAction, Some("BoardView")),
+        KeyBinding::new("left", SelectBoardLeftAction, Some("BoardView")),
+        KeyBinding::new("right", SelectBoardRightAction, Some("BoardView")),
+        KeyBinding::new("enter", OpenSelectedBoardItemAction, Some("BoardView")),
+        KeyBinding::new("escape", ClearBoardSelectionAction, Some("BoardView")),
+        KeyBinding::new("delete", DeleteSelectedBoardItemAction, Some("BoardView")),
+        KeyBinding::new(
+            "backspace",
+            DeleteSelectedBoardItemAction,
+            Some("BoardView"),
+        ),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-alt-e", ExpandEmmet, Some("MarkdownSource")),
         #[cfg(not(target_os = "macos"))]
@@ -308,6 +367,22 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-s", SaveDocumentFileAs, Some("DocumentEditor")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "cmd-alt-k",
+            CreateCardFromSelectionAction,
+            Some("DocumentEditor"),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new(
+            "ctrl-alt-k",
+            CreateCardFromSelectionAction,
+            Some("DocumentEditor"),
+        ),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-b", InsertBoardViewAction, Some("DocumentEditor")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-b", InsertBoardViewAction, Some("DocumentEditor")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", SaveSettingsDocument, Some("SettingsDocument")),
         #[cfg(not(target_os = "macos"))]
@@ -766,5 +841,98 @@ mod tests {
             Some("MarkdownSource"),
         );
         assert_eq!(toggle_task.keystrokes(), expected_shortcut.keystrokes());
+    }
+
+    #[test]
+    fn new_shortcuts_are_scoped_to_their_own_contexts() {
+        let bindings = default_bindings();
+        let platform = |mac, other| {
+            if cfg!(target_os = "macos") {
+                mac
+            } else {
+                other
+            }
+        };
+
+        assert!(has_binding::<NewTabAction>(
+            &bindings,
+            platform("cmd-t", "ctrl-t"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<CloseActiveTabAction>(
+            &bindings,
+            platform("cmd-w", "ctrl-w"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<FocusSidebarSearchAction>(
+            &bindings,
+            platform("cmd-shift-k", "ctrl-shift-k"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<ImportWorkspaceAction>(
+            &bindings,
+            platform("cmd-shift-i", "ctrl-shift-i"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<ExportWorkspaceAction>(
+            &bindings,
+            platform("cmd-shift-e", "ctrl-shift-e"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<AddBoardCardAction>(
+            &bindings,
+            platform("cmd-enter", "ctrl-enter"),
+            Some("BoardView")
+        ));
+        assert!(has_binding::<SelectBoardDownAction>(
+            &bindings,
+            "down",
+            Some("BoardView")
+        ));
+        assert!(has_binding::<CreateCardFromSelectionAction>(
+            &bindings,
+            platform("cmd-alt-k", "ctrl-alt-k"),
+            Some("DocumentEditor")
+        ));
+        assert!(has_binding::<InsertBoardViewAction>(
+            &bindings,
+            platform("cmd-alt-b", "ctrl-alt-b"),
+            Some("DocumentEditor")
+        ));
+
+        let editor_action = bindings
+            .iter()
+            .find(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .is::<CreateCardFromSelectionAction>()
+            })
+            .expect("editor action should be registered");
+        let markdown_context = KeyBinding::new(
+            platform("cmd-alt-k", "ctrl-alt-k"),
+            CommandPaletteAction,
+            Some("MarkdownSource"),
+        );
+        assert!(!bindings.iter().any(|binding| {
+            binding.predicate() == markdown_context.predicate()
+                && binding.keystrokes() == editor_action.keystrokes()
+        }));
+
+        let board_action = bindings
+            .iter()
+            .find(|binding| binding.action().as_any().is::<SelectBoardDownAction>())
+            .expect("board navigation should be registered");
+        let board_context = KeyBinding::new("down", CommandPaletteAction, Some("BoardView"));
+        assert_eq!(board_action.predicate(), board_context.predicate());
+    }
+
+    fn has_binding<T: 'static>(bindings: &[KeyBinding], key: &str, context: Option<&str>) -> bool {
+        let expected = KeyBinding::new(key, CommandPaletteAction, context);
+        bindings.iter().any(|binding| {
+            binding.action().as_any().is::<T>()
+                && binding.keystrokes() == expected.keystrokes()
+                && binding.predicate() == expected.predicate()
+        })
     }
 }

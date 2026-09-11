@@ -423,15 +423,12 @@ impl BoardView {
         self.start_renaming_card(action, window, cx)
     }
 
-    pub(crate) fn on_delete_entry_action(
+    pub(crate) fn confirm_delete_entry(
         &mut self,
-        _: &DeleteEntryAction,
+        entry_id: u32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
-            return;
-        };
         let Some((title, _, _)) = self.entry_values(entry_id) else {
             return;
         };
@@ -453,11 +450,23 @@ impl BoardView {
                 .on_ok({
                     let view = view.clone();
                     move |_, _, cx| {
-                        view.update(cx, |this, cx| this.delete_selected_entry(cx));
+                        view.update(cx, |this, cx| this.delete_entry(entry_id, cx));
                         true
                     }
                 })
         });
+    }
+
+    pub(crate) fn on_delete_entry_action(
+        &mut self,
+        _: &DeleteEntryAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
+            return;
+        };
+        self.confirm_delete_entry(entry_id, window, cx);
     }
 
     pub(crate) fn on_duplicate_entry_action(

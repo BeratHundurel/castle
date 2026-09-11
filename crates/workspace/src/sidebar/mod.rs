@@ -17,6 +17,7 @@ use settings::AppSettings;
 const SIDEBAR_MIN_WIDTH: Pixels = px(200.);
 const SIDEBAR_MAX_WIDTH: Pixels = px(480.);
 
+pub use action::{FocusSidebarSearchAction, NewProjectAction};
 pub use event::SidebarEvent;
 pub use model::ActiveItem;
 
@@ -240,6 +241,21 @@ impl SidebarView {
 
     pub fn clear_active_item(&mut self) {
         self.active_item = None;
+    }
+
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+    }
+
+    pub fn start_adding_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.is_adding_project = true;
+        self.new_project_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
     }
 
     #[cfg(any(test, feature = "test-support"))]

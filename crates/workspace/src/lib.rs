@@ -13,7 +13,9 @@ pub use navigation::{
     WorkspaceNavigationHandler, WorkspaceNavigationTarget, weak_navigation_handler,
 };
 pub use request_tracker::RequestTracker;
-pub use sidebar::{ActiveItem, SidebarEvent, SidebarView};
+pub use sidebar::{
+    ActiveItem, FocusSidebarSearchAction, NewProjectAction, SidebarEvent, SidebarView,
+};
 pub use wikilinks::{
     WikiLinkCompletionProvider, WikiLinkPreviewPlugin, WorkspaceReferenceCompletionProvider,
     workspace_navigation_target,

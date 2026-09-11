@@ -1,11 +1,7 @@
 use super::*;
 
 impl BoardView {
-    pub(crate) fn delete_selected_entry(&mut self, cx: &mut Context<Self>) {
-        let Some(entry_id) = self.entry_editing.dialog.entry_id else {
-            return;
-        };
-
+    pub(crate) fn delete_entry(&mut self, entry_id: u32, cx: &mut Context<Self>) {
         for card in &mut self.data.lists {
             card.entries.retain(|entry| entry.id != entry_id);
         }
@@ -14,6 +10,15 @@ impl BoardView {
         self.entry_editing.dialog.open = false;
         self.entry_editing.dialog.entry_id = None;
         self.entry_editing.dialog.editing = false;
+        if matches!(
+            self.selection,
+            Some(crate::state::BoardSelection::Entry {
+                entry_id: selected_entry_id,
+                ..
+            }) if selected_entry_id == entry_id
+        ) {
+            self.selection = None;
+        }
         cx.notify();
 
         self.commit_board_mutation(cx, "Could not delete card", true, move |store| async move {
@@ -99,6 +104,15 @@ impl BoardView {
 
     pub(crate) fn delete_card(&mut self, cx: &mut Context<Self>, card_id: u32) {
         self.data.lists.retain(|card| card.id != card_id);
+        if self.selection.is_some_and(|selection| match selection {
+            crate::state::BoardSelection::List(list_id)
+            | crate::state::BoardSelection::Entry {
+                list_id,
+                entry_id: _,
+            } => list_id == card_id,
+        }) {
+            self.selection = None;
+        }
         cx.notify();
 
         self.commit_board_mutation(cx, "Could not delete list", true, move |store| async move {

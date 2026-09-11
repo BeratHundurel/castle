@@ -45,13 +45,16 @@ impl CommandPaletteView {
         commands.extend([
             PaletteCommand {
                 label: "New tab".into(),
-                subtitle: "Open an empty chooser tab".into(),
+                subtitle: format!("Open an empty chooser tab ({})", shortcut("", "T")).into(),
                 icon: IconName::Plus,
                 kind: PaletteCommandKind::NewTab,
             },
             PaletteCommand {
                 label: "New note".into(),
-                subtitle: SharedString::from(format!("Create in {project_label}")),
+                subtitle: SharedString::from(format!(
+                    "Create in {project_label} ({})",
+                    shortcut("", "N")
+                )),
                 icon: IconName::BookOpen,
                 kind: PaletteCommandKind::NewNote {
                     project_id: self.active_project_id,
@@ -60,7 +63,10 @@ impl CommandPaletteView {
             },
             PaletteCommand {
                 label: "New board".into(),
-                subtitle: SharedString::from(format!("Create in {project_label}")),
+                subtitle: SharedString::from(format!(
+                    "Create in {project_label} ({})",
+                    shortcut("⇧", "N")
+                )),
                 icon: IconName::LayoutDashboard,
                 kind: PaletteCommandKind::NewBoard {
                     project_id: self.active_project_id,
@@ -75,13 +81,21 @@ impl CommandPaletteView {
             },
             PaletteCommand {
                 label: "Import workspace".into(),
-                subtitle: "Restore or merge a Castle workspace archive".into(),
+                subtitle: format!(
+                    "Restore or merge a Castle workspace archive ({})",
+                    shortcut("⇧", "I")
+                )
+                .into(),
                 icon: IconName::FolderOpen,
                 kind: PaletteCommandKind::ImportWorkspace,
             },
             PaletteCommand {
                 label: "Export workspace".into(),
-                subtitle: "Save notes, boards, links, and settings as a ZIP".into(),
+                subtitle: format!(
+                    "Save notes, boards, links, and settings as a ZIP ({})",
+                    shortcut("⇧", "E")
+                )
+                .into(),
                 icon: IconName::Folder,
                 kind: PaletteCommandKind::ExportWorkspace,
             },
@@ -117,7 +131,7 @@ impl CommandPaletteView {
             },
             PaletteCommand {
                 label: "Close all tabs".into(),
-                subtitle: "Return to a new chooser tab".into(),
+                subtitle: "Return to a new chooser tab (command palette only)".into(),
                 icon: IconName::Close,
                 kind: PaletteCommandKind::CloseAllTabs,
             },
@@ -132,13 +146,21 @@ impl CommandPaletteView {
             },
             PaletteCommand {
                 label: "Create card from selection".into(),
-                subtitle: "Link the current note to a new card".into(),
+                subtitle: format!(
+                    "Link the current note to a new card ({})",
+                    shortcut("⌥", "K")
+                )
+                .into(),
                 icon: IconName::Plus,
                 kind: PaletteCommandKind::CreateCardFromSelection,
             },
             PaletteCommand {
                 label: "Insert board view".into(),
-                subtitle: "Embed a read-only board projection in this note".into(),
+                subtitle: format!(
+                    "Embed a read-only board projection in this note ({})",
+                    shortcut("⌥", "B")
+                )
+                .into(),
                 icon: IconName::LayoutDashboard,
                 kind: PaletteCommandKind::InsertBoardView,
             },
@@ -191,6 +213,20 @@ fn workspace_search_shortcut() -> &'static str {
         "Cmd+Shift+F"
     } else {
         "Ctrl+Shift+F"
+    }
+}
+
+fn shortcut(modifiers: &str, key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("⌘{modifiers}{key}")
+    } else if modifiers.is_empty() {
+        format!("Ctrl+{key}")
+    } else {
+        format!(
+            "Ctrl+{}{}",
+            modifiers.replace('⇧', "Shift+").replace('⌥', "Alt+"),
+            key
+        )
     }
 }
 
@@ -261,7 +297,7 @@ fn new_note_command(
 ) -> PaletteCommand {
     PaletteCommand {
         label: SharedString::from(format!("New note: {title}")),
-        subtitle: SharedString::from(format!("Create in {project_label}")),
+        subtitle: SharedString::from(format!("Create in {project_label} ({})", shortcut("", "N"))),
         icon: IconName::BookOpen,
         kind: PaletteCommandKind::NewNote { project_id, title },
     }
@@ -274,7 +310,10 @@ fn new_board_command(
 ) -> PaletteCommand {
     PaletteCommand {
         label: SharedString::from(format!("New board: {title}")),
-        subtitle: SharedString::from(format!("Create in {project_label}")),
+        subtitle: SharedString::from(format!(
+            "Create in {project_label} ({})",
+            shortcut("⇧", "N")
+        )),
         icon: IconName::LayoutDashboard,
         kind: PaletteCommandKind::NewBoard { project_id, title },
     }
