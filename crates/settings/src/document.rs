@@ -317,6 +317,7 @@ impl Render for SettingsDocumentView {
             .child(
                 h_flex()
                     .id("settings-document-status")
+                    .debug_selector(|| "settings-document-status".to_owned())
                     .w_full()
                     .items_center()
                     .justify_between()
@@ -342,7 +343,10 @@ impl Render for SettingsDocumentView {
                             .items_center()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .flex_shrink_0()
                                     .text_color(state.1)
                                     .child(Icon::new(state.0).xsmall())
                                     .child(state.2.clone()),
@@ -826,5 +830,36 @@ mod tests {
         let document = document_content_without_tab_session(&content);
         assert!(document.contains("theme_name"));
         assert!(!document.contains("tab_session"));
+    }
+
+    #[gpui_kit::test]
+    fn settings_document_status_bar_stays_on_one_row(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let directory = tempfile::tempdir().expect("isolated settings directory");
+        let mut view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(AppSettings::load(directory.path()));
+            cx.open_window(Default::default(), |window, cx| {
+                let settings = SettingsDocumentView::view(window, cx);
+                view = Some(settings.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(settings, window, cx))
+            })
+            .expect("settings test window should open")
+        });
+        let _view = view.expect("settings view should exist");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(1_200.), gpui_kit::px(800.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let status_bar = cx
+            .debug_bounds("settings-document-status")
+            .expect("settings status bar should render");
+        assert!(
+            status_bar.size.height <= gpui_kit::px(40.),
+            "settings status bar should remain a single row: {status_bar:?}"
+        );
     }
 }
