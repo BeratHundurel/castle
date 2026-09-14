@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     ActiveTheme, Disableable as _, Icon, IconName, IndexPath, Sizable as _, Size, ThemeRegistry,
     WindowExt as _,
@@ -10,8 +12,9 @@ use gpui_kit::component::{
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement, SharedString,
-    StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _, px, rems,
+    App, AppContext as _, Axis, Context, Entity, InteractiveElement, IntoElement, ParentElement,
+    SharedString, StyleRefinement, Styled, Subscription, Window, div, prelude::FluentBuilder as _,
+    px, rems,
 };
 
 use crate::shortcuts::shortcut_context_name;
@@ -90,6 +93,7 @@ type SidebarVisible = Rc<dyn Fn(&App) -> bool>;
 type SetSidebarVisible = Rc<dyn Fn(bool, &mut App)>;
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
 type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
+type UpdateStartAtLogin = Rc<dyn Fn(bool) -> Result<(), String>>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 type OpenSettingsFileAction = Rc<dyn Fn(&mut Window, &mut App)>;
 type WorkspaceArchiveAction = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -117,6 +121,7 @@ pub struct SettingsIntegration {
     set_sidebar_visible: SetSidebarVisible,
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
+    update_start_at_login: UpdateStartAtLogin,
     shortcuts: ShortcutProvider,
     open_settings_file: OpenSettingsFileAction,
     import_workspace: WorkspaceArchiveAction,
@@ -139,12 +144,21 @@ impl SettingsIntegration {
             set_sidebar_visible: Rc::new(set_sidebar_visible),
             update_tray_shortcut: Rc::new(update_tray_shortcut),
             update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
+            update_start_at_login: Rc::new(|_| Ok(())),
             shortcuts: Rc::new(shortcuts),
             open_settings_file: Rc::new(|_, _| {}),
             import_workspace: archive_actions.import,
             export_workspace: archive_actions.export,
             agent_access,
         }
+    }
+
+    pub fn with_start_at_login(
+        mut self,
+        update_start_at_login: impl Fn(bool) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.update_start_at_login = Rc::new(update_start_at_login);
+        self
     }
 
     pub fn with_open_settings_file(
@@ -394,6 +408,63 @@ fn settings_sidebar_footer(
         )
 }
 
+#[cfg(target_os = "windows")]
+fn start_at_login_field(settings: Entity<SettingsView>) -> SettingField<SharedString> {
+    let settings_for_render = settings.clone();
+    SettingField::render(move |options, _window, cx| {
+        let update_start_at_login = settings_for_render
+            .read(cx)
+            .integration
+            .update_start_at_login
+            .clone();
+
+        div()
+            .when(cfg!(test), |this| {
+                this.debug_selector(|| "settings-start-at-login".to_owned())
+            })
+            .child(
+                Switch::new("settings-start-at-login")
+                    .checked(AppSettings::start_at_login(cx))
+                    .disabled(options.is_disabled())
+                    .with_size(options.size())
+                    .on_change(
+                        move |enabled, window, cx| match update_start_at_login(*enabled) {
+                            Ok(()) => {
+                                AppSettings::set_start_at_login(*enabled, cx);
+                                cx.refresh_windows();
+                            }
+                            Err(error) => {
+                                window.push_notification(
+                                    Notification::error(format!(
+                                        "Could not update startup setting: {error}"
+                                    )),
+                                    cx,
+                                );
+                                cx.refresh_windows();
+                            }
+                        },
+                    ),
+            )
+    })
+    .on_reset(AppSettings::start_at_login, move |window, cx| {
+        let update_start_at_login = settings.read(cx).integration.update_start_at_login.clone();
+
+        match update_start_at_login(false) {
+            Ok(()) => {
+                AppSettings::set_start_at_login(false, cx);
+                cx.refresh_windows();
+            }
+            Err(error) => {
+                window.push_notification(
+                    Notification::error(format!("Could not update startup setting: {error}")),
+                    cx,
+                );
+                cx.refresh_windows();
+            }
+        }
+    })
+}
+
 fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPage> {
     vec![
         SettingPage::new("General")
@@ -498,6 +569,14 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                         .default_value("scrolling"),
                     )
                     .description("Choose when scrollbars are shown in long lists and editors."),
+                ]),
+                #[cfg(target_os = "windows")]
+                SettingGroup::new().title("Startup").items(vec![
+                    SettingItem::new(
+                        "Start Castle at Login",
+                        start_at_login_field(settings.clone()),
+                    )
+                    .description("Launch Castle automatically each time you sign in to Windows."),
                 ]),
                 SettingGroup::new().title("Tray").items(vec![
                     SettingItem::new(
@@ -1004,6 +1083,51 @@ fn with_selected_option(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+    #[cfg(target_os = "windows")]
+    struct TestAgentAccess;
+
+    #[cfg(target_os = "windows")]
+    impl AgentAccess for TestAgentAccess {
+        fn status(&self) -> Result<AgentAccessAvailability, String> {
+            Ok(AgentAccessAvailability::ServerUnavailable)
+        }
+
+        fn set_enabled(&self, _enabled: bool) -> Result<AgentAccessAvailability, String> {
+            Ok(AgentAccessAvailability::ServerUnavailable)
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    struct StartupSettingHarness {
+        settings: Entity<SettingsView>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl gpui_kit::Render for StartupSettingHarness {
+        fn render(
+            &mut self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            Settings::new("startup-setting-test").pages(vec![
+                SettingPage::new("General").default_open(true).group(
+                    SettingGroup::new().title("Startup").item(
+                        SettingItem::new(
+                            "Start Castle at Login",
+                            start_at_login_field(self.settings.clone()),
+                        )
+                        .description(
+                            "Launch Castle automatically each time you sign in to Windows.",
+                        ),
+                    ),
+                ),
+            ])
+        }
+    }
+
     #[test]
     fn settings_sidebar_uses_the_dialog_background() {
         let background = gpui_kit::hsla(0.6, 0.2, 0.15, 1.0);
@@ -1021,5 +1145,72 @@ mod tests {
     fn custom_setting_rows_follow_the_settings_stack_layout() {
         assert!(settings_row_is_stacked(Axis::Vertical));
         assert!(!settings_row_is_stacked(Axis::Horizontal));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[gpui_kit::test]
+    fn startup_setting_switch_updates_the_preference_and_platform_registration(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        let directory = tempfile::tempdir().expect("settings directory should be created");
+        let updates = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(directory.path()));
+        });
+        let settings = cx.update(|cx| {
+            let updates = updates.clone();
+            cx.new(|_| {
+                SettingsView::new(
+                    SettingsIntegration::new(
+                        |_| true,
+                        |_, _| {},
+                        |_, _| {},
+                        |_, _| {},
+                        |_| Vec::new(),
+                        WorkspaceArchiveActions::new(|_, _| {}, |_, _| {}),
+                        Arc::new(TestAgentAccess),
+                    )
+                    .with_start_at_login(move |enabled| {
+                        updates.borrow_mut().push(enabled);
+                        Ok(())
+                    }),
+                )
+            })
+        });
+        let window = cx.update(|cx| {
+            let settings = settings.clone();
+            cx.open_window(Default::default(), move |window, cx| {
+                let harness = cx.new(|_| StartupSettingHarness { settings });
+                cx.new(|cx| gpui_kit::component::Root::new(harness, window, cx))
+            })
+            .expect("startup settings test window should open")
+        });
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(600.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let switch_bounds = cx
+            .debug_bounds("settings-start-at-login")
+            .expect("startup setting switch should render");
+        cx.simulate_click(
+            gpui_kit::point(
+                switch_bounds.origin.x + gpui_kit::px(10.),
+                switch_bounds.origin.y + gpui_kit::px(10.),
+            ),
+            gpui_kit::Modifiers::default(),
+        );
+
+        assert_eq!(*updates.borrow(), vec![true]);
+        cx.update(|_, cx| assert!(AppSettings::start_at_login(cx)));
+
+        let flush = cx.update(|_, cx| AppSettings::flush(cx));
+        runtime.block_on(flush);
     }
 }

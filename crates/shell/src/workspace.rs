@@ -964,7 +964,7 @@ impl AppShell {
                             Ok(Ok(summary)) => {
                                 let settings_error =
                                     AppSettings::import_json(&summary.settings_json, cx).err();
-                                if settings_error.is_none() {
+                                let startup_error = if settings_error.is_none() {
                                     let tray_shortcut = AppSettings::tray_shortcut(cx);
                                     (this.update_tray_shortcut)(tray_shortcut.as_ref(), cx);
                                     let quick_capture_shortcut =
@@ -973,7 +973,11 @@ impl AppShell {
                                         quick_capture_shortcut.as_ref(),
                                         cx,
                                     );
-                                }
+                                    (this.update_start_at_login)(AppSettings::start_at_login(cx))
+                                        .err()
+                                } else {
+                                    None
+                                };
                                 if mode == storage::workspace::archive::ImportMode::Replace {
                                     this.workspace.active_project_id = None;
                                     this.close_all_tabs(window, cx);
@@ -1008,6 +1012,11 @@ impl AppShell {
                                 if let Some(error) = settings_error {
                                     message.push_str(&format!(
                                         " Workspace settings could not be applied: {error}."
+                                    ));
+                                }
+                                if let Some(error) = startup_error {
+                                    message.push_str(&format!(
+                                        " The startup setting could not be applied: {error}."
                                     ));
                                 }
                                 Notification::success(message)

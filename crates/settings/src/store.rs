@@ -31,6 +31,7 @@ const DEFAULT_EDITOR_VIM_MODE: bool = false;
 const DEFAULT_EDITOR_FOCUS_MODE: bool = false;
 const DEFAULT_EDITOR_TYPEWRITER_SCROLLING: bool = false;
 const DEFAULT_DOCUMENT_OUTLINE_VISIBLE: bool = true;
+const DEFAULT_START_AT_LOGIN: bool = false;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 pub const DEFAULT_QUICK_CAPTURE_SHORTCUT: &str = "Ctrl+Alt+N";
@@ -93,6 +94,7 @@ pub(crate) struct StoredSettings {
     editor_typewriter_scrolling: bool,
     #[serde(alias = "markdown_outline_visible")]
     document_outline_visible: bool,
+    start_at_login: bool,
     close_to_tray: bool,
     tray_shortcut: String,
     quick_capture_shortcut: String,
@@ -120,6 +122,7 @@ impl Default for StoredSettings {
             editor_focus_mode: DEFAULT_EDITOR_FOCUS_MODE,
             editor_typewriter_scrolling: DEFAULT_EDITOR_TYPEWRITER_SCROLLING,
             document_outline_visible: DEFAULT_DOCUMENT_OUTLINE_VISIBLE,
+            start_at_login: DEFAULT_START_AT_LOGIN,
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
             quick_capture_shortcut: DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string(),
@@ -411,6 +414,16 @@ impl AppSettings {
         });
     }
 
+    pub fn start_at_login(cx: &App) -> bool {
+        cx.global::<Self>().values.start_at_login
+    }
+
+    pub fn set_start_at_login(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.start_at_login = enabled;
+        });
+    }
+
     pub fn close_to_tray(cx: &App) -> bool {
         cx.global::<Self>().values.close_to_tray
     }
@@ -671,6 +684,7 @@ mod tests {
         assert!(!settings.editor_vim_mode);
         assert!(!settings.editor_focus_mode);
         assert!(!settings.editor_typewriter_scrolling);
+        assert!(!settings.start_at_login);
         assert!(settings.close_to_tray);
         assert_eq!(settings.tray_shortcut, DEFAULT_TRAY_SHORTCUT);
         assert_eq!(
@@ -686,6 +700,20 @@ mod tests {
         let serialized = serde_json::to_value(settings).expect("settings should serialize");
 
         assert!(serialized.get("format_on_auto_save").is_none());
+    }
+
+    #[test]
+    fn start_at_login_round_trips() {
+        let settings: StoredSettings = serde_json::from_str(r#"{"start_at_login":true}"#)
+            .expect("startup setting should deserialize");
+
+        assert!(settings.start_at_login);
+
+        let serialized = serde_json::to_value(settings).expect("settings should serialize");
+        assert_eq!(
+            serialized.get("start_at_login"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

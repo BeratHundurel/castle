@@ -504,6 +504,11 @@ const SETTINGS_SCHEMA: &[SettingDefinition] = &[
         kind: SettingValueKind::Boolean,
     },
     SettingDefinition {
+        name: "start_at_login",
+        detail: "Start Castle when you sign in",
+        kind: SettingValueKind::Boolean,
+    },
+    SettingDefinition {
         name: "close_to_tray",
         detail: "Close the app to the tray",
         kind: SettingValueKind::Boolean,
@@ -813,6 +818,15 @@ mod tests {
         let items = settings_completion_items(text, text.len() - 2, &catalog(), &rope);
         assert!(!items.iter().any(|item| item.label == "theme_name"));
         assert!(items.iter().any(|item| item.label == "font_family"));
+    }
+
+    #[test]
+    fn startup_setting_is_available_in_document_completion() {
+        let text = "{\n  \"start_at_l\n}";
+        let rope = Rope::from(text);
+        let items = settings_completion_items(text, text.len() - 2, &catalog(), &rope);
+
+        assert!(items.iter().any(|item| item.label == "start_at_login"));
     }
 
     #[test]

@@ -56,12 +56,14 @@ const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
 
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
 type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
+type UpdateStartAtLogin = Rc<dyn Fn(bool) -> Result<(), String>>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 
 #[derive(Clone)]
 pub struct ShellIntegration {
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
+    update_start_at_login: UpdateStartAtLogin,
     shortcuts: ShortcutProvider,
     _agent_access: Arc<dyn AgentAccess>,
 }
@@ -70,12 +72,14 @@ impl ShellIntegration {
     pub fn new(
         update_tray_shortcut: impl Fn(&str, &mut App) + 'static,
         update_quick_capture_shortcut: impl Fn(&str, &mut App) + 'static,
+        update_start_at_login: impl Fn(bool) -> Result<(), String> + 'static,
         shortcuts: impl Fn(&App) -> Vec<ShortcutReference> + 'static,
         agent_access: Arc<dyn AgentAccess>,
     ) -> Self {
         Self {
             update_tray_shortcut: Rc::new(update_tray_shortcut),
             update_quick_capture_shortcut: Rc::new(update_quick_capture_shortcut),
+            update_start_at_login: Rc::new(update_start_at_login),
             shortcuts: Rc::new(shortcuts),
             _agent_access: agent_access,
         }
@@ -101,6 +105,7 @@ fn test_shell_integration() -> ShellIntegration {
     ShellIntegration::new(
         |_, _| {},
         |_, _| {},
+        |_| Ok(()),
         |_| Vec::new(),
         Arc::new(TestAgentAccess),
     )
@@ -267,6 +272,7 @@ pub struct AppShell {
     record_opened_task: Option<Task<()>>,
     update_tray_shortcut: UpdateTrayShortcut,
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
+    update_start_at_login: UpdateStartAtLogin,
     workspace_archive_busy: bool,
 }
 
@@ -364,7 +370,7 @@ impl AppShell {
         cx.subscribe_in(
             view,
             window,
-            |this, view, event: &SettingsDocumentEvent, _, cx| {
+            |this, view, event: &SettingsDocumentEvent, window, cx| {
                 if matches!(event, SettingsDocumentEvent::StateChanged) {
                     cx.notify();
                 }
@@ -378,6 +384,16 @@ impl AppShell {
                         AppSettings::quick_capture_shortcut(cx).as_ref(),
                         cx,
                     );
+                    if let Err(error) =
+                        (this.update_start_at_login)(AppSettings::start_at_login(cx))
+                    {
+                        window.push_notification(
+                            Notification::error(format!(
+                                "Could not update startup setting: {error}"
+                            )),
+                            cx,
+                        );
+                    }
                     let show_sidebar = AppSettings::show_sidebar(cx);
                     this.sidebar.update(cx, |sidebar, cx| {
                         sidebar.set_width(AppSettings::sidebar_width(cx), cx);
@@ -803,11 +819,13 @@ impl AppShell {
 
         let update_tray_shortcut = integration.update_tray_shortcut.clone();
         let update_quick_capture_shortcut = integration.update_quick_capture_shortcut.clone();
+        let update_start_at_login = integration.update_start_at_login.clone();
         let sidebar_for_visibility = sidebar.clone();
         let shell_for_sidebar = cx.entity().downgrade();
         let settings_open_file = cx.entity().downgrade();
         let settings_update_tray_shortcut = update_tray_shortcut.clone();
         let settings_update_quick_capture_shortcut = update_quick_capture_shortcut.clone();
+        let settings_update_start_at_login = update_start_at_login.clone();
         let shortcuts = integration.shortcuts.clone();
         let agent_access = integration._agent_access.clone();
         let settings_import_workspace = cx.entity().downgrade();
@@ -844,6 +862,7 @@ impl AppShell {
                     ),
                     agent_access,
                 )
+                .with_start_at_login(move |enabled| settings_update_start_at_login(enabled))
                 .with_open_settings_file(move |window, cx| {
                     if let Some(shell) = settings_open_file.upgrade() {
                         shell.update(cx, |shell, cx| {
@@ -922,6 +941,7 @@ impl AppShell {
             record_opened_task: None,
             update_tray_shortcut,
             update_quick_capture_shortcut,
+            update_start_at_login,
             workspace_archive_busy: false,
         };
 

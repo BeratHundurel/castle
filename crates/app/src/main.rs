@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
 
         settings.apply_to_theme(cx);
         cx.set_global(settings.clone());
+        if let Err(error) = app::startup::set_start_at_login(AppSettings::start_at_login(cx)) {
+            eprintln!("Failed to synchronize the start-at-login setting: {error}");
+        }
         cx.set_global(app_runtime);
         system_notifications::install_board_gateway(cx);
 
@@ -87,6 +90,10 @@ async fn main() -> Result<()> {
                     let integration = ShellIntegration::new(
                         app::tray::update_shortcut,
                         app::tray::update_quick_capture_shortcut,
+                        |enabled| {
+                            app::startup::set_start_at_login(enabled)
+                                .map_err(|error| error.to_string())
+                        },
                         |cx| app::keymap::shortcuts(cx).to_vec(),
                         Arc::new(app::mcp_registration::McpAgentAccess),
                     );
