@@ -19,8 +19,9 @@ use document_editor::action::{
 };
 use shell::{
     CloseActiveTabAction, CycleNextTab, CyclePrevTab, ExportWorkspaceAction,
-    FocusSidebarSearchAction, ImportWorkspaceAction, NewBoardAction, NewNoteAction,
-    NewProjectAction, NewTabAction, OpenCheatsheetAction, OpenSettingsAction, ToggleSidebarAction,
+    FocusSidebarSearchAction, ImportFileAction, ImportFolderProjectAction, ImportWorkspaceAction,
+    NewBoardAction, NewNoteAction, NewProjectAction, NewTabAction, OpenCheatsheetAction,
+    OpenSettingsAction, ToggleSidebarAction,
 };
 
 struct ShortcutRegistry(Vec<ShortcutReference>);
@@ -79,6 +80,14 @@ fn default_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-p", NewProjectAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-p", NewProjectAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-o", ImportFileAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-o", ImportFileAction, Some("AppShell")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-o", ImportFolderProjectAction, Some("AppShell")),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-o", ImportFolderProjectAction, Some("AppShell")),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-k", FocusSidebarSearchAction, Some("AppShell")),
         #[cfg(not(target_os = "macos"))]
@@ -867,6 +876,16 @@ mod tests {
         assert!(has_binding::<FocusSidebarSearchAction>(
             &bindings,
             platform("cmd-shift-k", "ctrl-shift-k"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<ImportFileAction>(
+            &bindings,
+            platform("cmd-o", "ctrl-o"),
+            Some("AppShell")
+        ));
+        assert!(has_binding::<ImportFolderProjectAction>(
+            &bindings,
+            platform("cmd-alt-o", "ctrl-alt-o"),
             Some("AppShell")
         ));
         assert!(has_binding::<ImportWorkspaceAction>(

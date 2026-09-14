@@ -33,7 +33,9 @@ use gpui_kit::{
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 use storage::workspace::WorkspaceTitleTarget;
 
-pub use ::workspace::{FocusSidebarSearchAction, NewProjectAction};
+pub use ::workspace::{
+    FocusSidebarSearchAction, ImportFileAction, ImportFolderProjectAction, NewProjectAction,
+};
 use ::workspace::{SidebarEvent, SidebarView};
 use board::{BoardTemplatePicker, BoardTemplatePickerEvent, BoardView, BoardViewEvent};
 use command_palette::{CommandPaletteEvent, CommandPaletteView};

@@ -3,7 +3,9 @@ use gpui_kit::{Context, Pixels, Window, px};
 
 use gpui_kit::Focusable as _;
 use settings::{AppSettings, CheatsheetView, SettingsDocumentView};
-use workspace::{FocusSidebarSearchAction, NewProjectAction};
+use workspace::{
+    FocusSidebarSearchAction, ImportFileAction, ImportFolderProjectAction, NewProjectAction,
+};
 
 use super::AppShell;
 
@@ -78,6 +80,30 @@ impl AppShell {
         }
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.start_adding_project(window, cx));
+    }
+
+    pub(crate) fn on_import_file_action(
+        &mut self,
+        _: &ImportFileAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        self.import_file(window, cx);
+    }
+
+    pub(crate) fn on_import_folder_project_action(
+        &mut self,
+        _: &ImportFolderProjectAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close_command_palette_action(window, cx);
+        if self.sidebar.read(cx).is_collapsed() {
+            self.set_sidebar_visible(true, cx);
+        }
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.add_folder_project(window, cx));
     }
 
     pub(crate) fn on_command_palette_action(

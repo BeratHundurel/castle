@@ -17,7 +17,9 @@ use settings::AppSettings;
 const SIDEBAR_MIN_WIDTH: Pixels = px(200.);
 const SIDEBAR_MAX_WIDTH: Pixels = px(480.);
 
-pub use action::{FocusSidebarSearchAction, NewProjectAction};
+pub use action::{
+    FocusSidebarSearchAction, ImportFileAction, ImportFolderProjectAction, NewProjectAction,
+};
 pub use event::SidebarEvent;
 pub use model::ActiveItem;
 

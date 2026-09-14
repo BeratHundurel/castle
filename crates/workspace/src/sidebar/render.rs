@@ -920,7 +920,11 @@ impl Render for SidebarView {
                                             Button::new("import-file-btn")
                                                 .icon(IconName::File)
                                                 .outline()
-                                                .tooltip("Import file")
+                                                .tooltip_with_action(
+                                                    "Import file",
+                                                    &ImportFileAction,
+                                                    Some("AppShell"),
+                                                )
                                                 .on_click(cx.listener(|_, _, _, cx| {
                                                     cx.emit(SidebarEvent::ImportFile);
                                                 })),
@@ -929,7 +933,11 @@ impl Render for SidebarView {
                                             Button::new("add-folder-project-btn")
                                                 .icon(IconName::FolderOpen)
                                                 .outline()
-                                                .tooltip("Add folder as project")
+                                                .tooltip_with_action(
+                                                    "Add folder as project",
+                                                    &ImportFolderProjectAction,
+                                                    Some("AppShell"),
+                                                )
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.add_folder_project(window, cx);
                                                 })),

@@ -11,6 +11,14 @@ pub struct NewProjectAction;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = sidebar, no_json)]
+pub struct ImportFileAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = sidebar, no_json)]
+pub struct ImportFolderProjectAction;
+
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = sidebar, no_json)]
 pub(crate) struct DeleteBoardAction(pub(crate) u32);
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]

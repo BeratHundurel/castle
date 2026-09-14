@@ -366,6 +366,14 @@ impl Render for AppShell {
             .on_action(cx.listener(|this, action: &NewProjectAction, window, cx| {
                 this.on_new_project_action(action, window, cx);
             }))
+            .on_action(cx.listener(|this, action: &ImportFileAction, window, cx| {
+                this.on_import_file_action(action, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &ImportFolderProjectAction, window, cx| {
+                    this.on_import_folder_project_action(action, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &CycleNextTab, window, cx| {
                 this.cycle_next_tab(window, cx);
             }))

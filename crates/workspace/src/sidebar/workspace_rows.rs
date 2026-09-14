@@ -127,7 +127,7 @@ impl SidebarView {
         .detach();
     }
 
-    pub(super) fn add_folder_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn add_folder_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,

@@ -14,7 +14,8 @@ pub use navigation::{
 };
 pub use request_tracker::RequestTracker;
 pub use sidebar::{
-    ActiveItem, FocusSidebarSearchAction, NewProjectAction, SidebarEvent, SidebarView,
+    ActiveItem, FocusSidebarSearchAction, ImportFileAction, ImportFolderProjectAction,
+    NewProjectAction, SidebarEvent, SidebarView,
 };
 pub use wikilinks::{
     WikiLinkCompletionProvider, WikiLinkPreviewPlugin, WorkspaceReferenceCompletionProvider,
