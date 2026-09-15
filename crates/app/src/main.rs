@@ -16,6 +16,9 @@ use runtime::AppRuntime;
 use settings::AppSettings;
 use shell::{AppShell, ShellIntegration};
 
+const MAIN_WINDOW_MIN_WIDTH: f32 = 800.;
+const MAIN_WINDOW_MIN_HEIGHT: f32 = 600.;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
@@ -79,6 +82,8 @@ async fn main() -> Result<()> {
         cx.set_global(app_runtime);
         system_notifications::install_board_gateway(cx);
 
+        let (main_window_visibility, main_window_visibility_receiver) =
+            tokio::sync::watch::channel(!start_in_tray);
         let note_created_handler = Rc::new(RefCell::new(None));
         let note_created_handler_for_window = note_created_handler.clone();
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
@@ -92,6 +97,7 @@ async fn main() -> Result<()> {
                         app::startup::set_start_at_login(enabled).map_err(|error| error.to_string())
                     },
                     |cx| app::keymap::shortcuts(cx).to_vec(),
+                    main_window_visibility_receiver,
                     Arc::new(app::mcp_registration::McpAgentAccess),
                 );
                 let view = AppShell::view(window, integration, cx);
@@ -111,7 +117,7 @@ async fn main() -> Result<()> {
             .expect("Failed to open window");
 
         if let Some(note_created) = note_created_handler.borrow_mut().take() {
-            if let Err(err) = tray::init(window.into(), note_created, cx) {
+            if let Err(err) = tray::init(window.into(), note_created, main_window_visibility, cx) {
                 eprintln!("Failed to initialize tray mode: {err}");
             }
         } else {
@@ -128,6 +134,7 @@ fn main_window_options(bounds: Bounds<Pixels>, start_in_tray: bool) -> WindowOpt
         titlebar: Some(TitleBar::title_bar_options()),
         focus: !start_in_tray,
         show: !start_in_tray,
+        window_min_size: Some(size(px(MAIN_WINDOW_MIN_WIDTH), px(MAIN_WINDOW_MIN_HEIGHT))),
         ..Default::default()
     }
 }
@@ -221,7 +228,7 @@ fn apply_default_theme(cx: &mut App) {
 mod tests {
     use std::collections::HashMap;
 
-    use gpui_kit::Bounds;
+    use gpui_kit::{Bounds, px, size};
     use serde::Deserialize;
 
     use super::main_window_options;
@@ -248,6 +255,13 @@ mod tests {
 
         assert!(!options.show);
         assert!(!options.focus);
+    }
+
+    #[test]
+    fn main_window_has_a_usable_minimum_size() {
+        let options = main_window_options(Bounds::default(), false);
+
+        assert_eq!(options.window_min_size, Some(size(px(800.), px(600.))));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
@@ -14,6 +14,7 @@ use settings::AppSettings;
 
 struct TrayController {
     window: AnyWindowHandle,
+    main_window_visibility: tokio::sync::watch::Sender<bool>,
     hotkey_manager: GlobalHotKeyManager,
     hotkey: Option<HotKey>,
     quick_capture_window: Option<WindowHandle<QuickCaptureView>>,
@@ -26,9 +27,23 @@ struct TrayController {
 
 impl Global for TrayController {}
 
+enum TrayEvent {
+    HotKey(GlobalHotKeyEvent),
+    Icon(TrayIconEvent),
+    Menu(MenuEvent),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrayCommand {
+    ShowMainWindow,
+    ShowQuickCapture,
+    Quit,
+}
+
 pub fn init(
     window_handle: AnyWindowHandle,
     note_created: NoteCreatedHandler,
+    main_window_visibility: tokio::sync::watch::Sender<bool>,
     cx: &mut App,
 ) -> Result<()> {
     let menu = Menu::new();
@@ -88,6 +103,7 @@ pub fn init(
 
     cx.set_global(TrayController {
         window: window_handle,
+        main_window_visibility,
         hotkey_manager,
         hotkey,
         quick_capture_window: Some(quick_capture_window),
@@ -98,12 +114,11 @@ pub fn init(
         quit_menu_id: quit_item.id().clone(),
     });
 
+    let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel();
+    install_event_handlers(event_sender);
     cx.spawn(async move |cx| {
-        loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
-            cx.update(poll_events);
+        while let Some(event) = event_receiver.recv().await {
+            cx.update(|cx| handle_event(event, cx));
         }
     })
     .detach();
@@ -177,65 +192,109 @@ fn replace_hotkey(
     *current_hotkey = Some(new_hotkey);
 }
 
-fn poll_events(cx: &mut App) {
-    let (
-        window,
-        hotkey_id,
-        quick_capture_window,
-        quick_capture_hotkey_id,
-        note_created,
-        open_menu_id,
-        quit_menu_id,
-    ) = {
+fn install_event_handlers(sender: tokio::sync::mpsc::UnboundedSender<TrayEvent>) {
+    let hotkey_sender = sender.clone();
+    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+        let _ = hotkey_sender.send(TrayEvent::HotKey(event));
+    }));
+
+    let icon_sender = sender.clone();
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let _ = icon_sender.send(TrayEvent::Icon(event));
+    }));
+
+    MenuEvent::set_event_handler(Some(move |event| {
+        let _ = sender.send(TrayEvent::Menu(event));
+    }));
+}
+
+fn handle_event(event: TrayEvent, cx: &mut App) {
+    let command = {
         let controller = cx.global::<TrayController>();
-        (
-            controller.window,
-            controller.hotkey.map(|hotkey| hotkey.id()),
-            controller.quick_capture_window,
-            controller.quick_capture_hotkey.map(|hotkey| hotkey.id()),
-            controller.note_created.clone(),
-            controller.open_menu_id.clone(),
-            controller.quit_menu_id.clone(),
-        )
+        match &event {
+            TrayEvent::HotKey(event) => command_for_hotkey(
+                event,
+                controller.hotkey.map(|hotkey| hotkey.id()),
+                controller.quick_capture_hotkey.map(|hotkey| hotkey.id()),
+            ),
+            TrayEvent::Icon(event) => command_for_icon(event),
+            TrayEvent::Menu(event) => {
+                command_for_menu(event, &controller.open_menu_id, &controller.quit_menu_id)
+            }
+        }
     };
 
-    while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-        if Some(event.id) == hotkey_id && event.state == HotKeyState::Pressed {
+    match command {
+        Some(TrayCommand::ShowMainWindow) => {
+            let window = cx.global::<TrayController>().window;
             show_window(window, cx);
-        } else if Some(event.id) == quick_capture_hotkey_id && event.state == HotKeyState::Pressed {
-            show_quick_capture(quick_capture_window, note_created.clone(), cx);
         }
+        Some(TrayCommand::ShowQuickCapture) => {
+            let (window, note_created) = {
+                let controller = cx.global::<TrayController>();
+                (
+                    controller.quick_capture_window,
+                    controller.note_created.clone(),
+                )
+            };
+            show_quick_capture(window, note_created, cx);
+        }
+        Some(TrayCommand::Quit) => cx.quit(),
+        None => {}
     }
+}
 
-    while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-        if matches!(
-            event,
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            }
-        ) {
-            show_window(window, cx);
-        }
+fn command_for_hotkey(
+    event: &GlobalHotKeyEvent,
+    main_hotkey_id: Option<u32>,
+    quick_capture_hotkey_id: Option<u32>,
+) -> Option<TrayCommand> {
+    if event.state != HotKeyState::Pressed {
+        return None;
     }
+    if Some(event.id) == main_hotkey_id {
+        Some(TrayCommand::ShowMainWindow)
+    } else if Some(event.id) == quick_capture_hotkey_id {
+        Some(TrayCommand::ShowQuickCapture)
+    } else {
+        None
+    }
+}
 
-    while let Ok(event) = MenuEvent::receiver().try_recv() {
-        if event.id == open_menu_id {
-            show_window(window, cx);
-        } else if event.id == quit_menu_id {
-            cx.quit();
+fn command_for_icon(event: &TrayIconEvent) -> Option<TrayCommand> {
+    matches!(
+        event,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
         }
+    )
+    .then_some(TrayCommand::ShowMainWindow)
+}
+
+fn command_for_menu(
+    event: &MenuEvent,
+    open_menu_id: &MenuId,
+    quit_menu_id: &MenuId,
+) -> Option<TrayCommand> {
+    if event.id == *open_menu_id {
+        Some(TrayCommand::ShowMainWindow)
+    } else if event.id == *quit_menu_id {
+        Some(TrayCommand::Quit)
+    } else {
+        None
     }
 }
 
 fn show_window(window_handle: AnyWindowHandle, cx: &mut App) {
-    if let Err(err) = window_handle.update(cx, |_, window, cx| {
+    match window_handle.update(cx, |_, window, cx| {
         set_window_visible(window, true);
         cx.activate(true);
         window.activate_window();
     }) {
-        eprintln!("Failed to restore Castle window: {err}");
+        Ok(()) => set_main_window_visibility(true, cx),
+        Err(err) => eprintln!("Failed to restore Castle window: {err}"),
     }
 }
 
@@ -272,9 +331,25 @@ fn show_quick_capture(
     cx.global_mut::<TrayController>().quick_capture_window = Some(window_handle);
 }
 
-fn hide_window(window: &Window, cx: &App) {
+fn hide_window(window: &Window, cx: &mut App) {
+    set_main_window_visibility(false, cx);
     set_window_visible(window, false);
     cx.hide();
+}
+
+fn set_main_window_visibility(visible: bool, cx: &mut App) {
+    let sender = &cx.global::<TrayController>().main_window_visibility;
+    publish_main_window_visibility(sender, visible);
+}
+
+fn publish_main_window_visibility(sender: &tokio::sync::watch::Sender<bool>, visible: bool) {
+    sender.send_if_modified(|current| {
+        if *current == visible {
+            return false;
+        }
+        *current = visible;
+        true
+    });
 }
 
 #[cfg(target_os = "windows")]
@@ -307,10 +382,126 @@ fn castle_icon() -> Result<Icon> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use tray_icon::TrayIconId;
+
+    fn icon_click(button: MouseButton, button_state: MouseButtonState) -> TrayIconEvent {
+        TrayIconEvent::Click {
+            id: TrayIconId::new("test-tray"),
+            position: Default::default(),
+            rect: Default::default(),
+            button,
+            button_state,
+        }
+    }
+
     #[test]
     fn bundled_tray_icon_decodes() {
         if let Err(err) = super::castle_icon() {
             panic!("bundled tray icon should be valid: {err}");
         }
+    }
+
+    #[test]
+    fn hotkey_commands_require_a_matching_pressed_event() {
+        let main = GlobalHotKeyEvent {
+            id: 11,
+            state: HotKeyState::Pressed,
+        };
+        let quick_capture = GlobalHotKeyEvent {
+            id: 22,
+            state: HotKeyState::Pressed,
+        };
+        let released = GlobalHotKeyEvent {
+            id: 11,
+            state: HotKeyState::Released,
+        };
+        let unrelated = GlobalHotKeyEvent {
+            id: 33,
+            state: HotKeyState::Pressed,
+        };
+
+        assert_eq!(
+            command_for_hotkey(&main, Some(11), Some(22)),
+            Some(TrayCommand::ShowMainWindow)
+        );
+        assert_eq!(
+            command_for_hotkey(&quick_capture, Some(11), Some(22)),
+            Some(TrayCommand::ShowQuickCapture)
+        );
+        assert_eq!(command_for_hotkey(&released, Some(11), Some(22)), None);
+        assert_eq!(command_for_hotkey(&unrelated, Some(11), Some(22)), None);
+    }
+
+    #[test]
+    fn only_a_completed_left_click_opens_the_main_window() {
+        assert_eq!(
+            command_for_icon(&icon_click(MouseButton::Left, MouseButtonState::Up)),
+            Some(TrayCommand::ShowMainWindow)
+        );
+        assert_eq!(
+            command_for_icon(&icon_click(MouseButton::Left, MouseButtonState::Down)),
+            None
+        );
+        assert_eq!(
+            command_for_icon(&icon_click(MouseButton::Right, MouseButtonState::Up)),
+            None
+        );
+    }
+
+    #[test]
+    fn menu_commands_ignore_items_not_owned_by_castle() {
+        let open_menu_id = MenuId::new("open");
+        let quit_menu_id = MenuId::new("quit");
+
+        assert_eq!(
+            command_for_menu(
+                &MenuEvent {
+                    id: open_menu_id.clone(),
+                },
+                &open_menu_id,
+                &quit_menu_id,
+            ),
+            Some(TrayCommand::ShowMainWindow)
+        );
+        assert_eq!(
+            command_for_menu(
+                &MenuEvent {
+                    id: quit_menu_id.clone(),
+                },
+                &open_menu_id,
+                &quit_menu_id,
+            ),
+            Some(TrayCommand::Quit)
+        );
+        assert_eq!(
+            command_for_menu(
+                &MenuEvent {
+                    id: MenuId::new("other"),
+                },
+                &open_menu_id,
+                &quit_menu_id,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn visibility_signal_only_notifies_on_real_transitions() {
+        let (sender, mut receiver) = tokio::sync::watch::channel(true);
+
+        publish_main_window_visibility(&sender, true);
+        assert!(receiver.has_changed().is_ok_and(|changed| !changed));
+
+        publish_main_window_visibility(&sender, false);
+        assert!(receiver.has_changed().is_ok_and(|changed| changed));
+        assert!(!*receiver.borrow_and_update());
+
+        publish_main_window_visibility(&sender, false);
+        assert!(receiver.has_changed().is_ok_and(|changed| !changed));
+
+        publish_main_window_visibility(&sender, true);
+        assert!(receiver.has_changed().is_ok_and(|changed| changed));
+        assert!(*receiver.borrow_and_update());
     }
 }

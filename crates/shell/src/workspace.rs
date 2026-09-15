@@ -48,6 +48,7 @@ impl AppShell {
     pub(crate) fn start_external_change_watcher(
         &mut self,
         window: &mut Window,
+        main_window_visibility: tokio::sync::watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) {
         let store = cx.global::<AppRuntime>().store();
@@ -57,6 +58,7 @@ impl AppShell {
             .spawn_tokio_detached(watch_change_revisions(
                 store,
                 revision_sender,
+                main_window_visibility,
                 EXTERNAL_CHANGE_POLL_INTERVAL,
             ));
 
@@ -1093,18 +1095,32 @@ impl AppShell {
 async fn watch_change_revisions(
     store: storage::Store,
     sender: tokio::sync::watch::Sender<Option<ChangeRevision>>,
+    mut main_window_visibility: tokio::sync::watch::Receiver<bool>,
     interval: std::time::Duration,
 ) {
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_published = None;
 
     loop {
-        ticker.tick().await;
+        if !*main_window_visibility.borrow_and_update() {
+            if main_window_visibility.changed().await.is_err() {
+                break;
+            }
+            continue;
+        }
+
         match publish_change_revision(&store, &sender, &mut last_published).await {
             Ok(true) => {}
             Ok(false) => break,
             Err(err) => eprintln!("Failed to check for external Castle changes: {err}"),
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(interval) => {}
+            visibility = main_window_visibility.changed() => {
+                if visibility.is_err() {
+                    break;
+                }
+            }
         }
     }
 }
@@ -1202,6 +1218,100 @@ mod tests {
         last_published = None;
         assert!(!publish_change_revision(&db, &sender, &mut last_published).await?);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn external_change_watcher_is_quiet_while_hidden_and_refreshes_on_each_resume()
+    -> anyhow::Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        tokio::time::pause();
+        let store = storage::Store::from(db.clone());
+        let (visibility_sender, visibility_receiver) = tokio::sync::watch::channel(false);
+        let (revision_sender, mut revision_receiver) = tokio::sync::watch::channel(None);
+        let watcher = tokio::spawn(watch_change_revisions(
+            store,
+            revision_sender,
+            visibility_receiver,
+            Duration::from_secs(10),
+        ));
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+        assert!(!revision_receiver.has_changed()?);
+
+        visibility_sender
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("visibility receiver closed before first restore"))?;
+        tokio::time::resume();
+        let initial = next_watched_revision(&mut revision_receiver).await?;
+
+        visibility_sender
+            .send(false)
+            .map_err(|_| anyhow::anyhow!("visibility receiver closed while hiding"))?;
+        tokio::task::yield_now().await;
+        bump_change_revision(&db).await?;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(30)).await;
+        assert!(!revision_receiver.has_changed()?);
+
+        visibility_sender
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("visibility receiver closed before second restore"))?;
+        tokio::time::resume();
+        let first_resume = next_watched_revision(&mut revision_receiver).await?;
+        assert_eq!(first_resume.revision, initial.revision + 1);
+        assert_eq!(first_resume.board_revision, initial.board_revision + 1);
+
+        bump_change_revision(&db).await?;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        tokio::time::resume();
+        let visible_poll = next_watched_revision(&mut revision_receiver).await?;
+        assert_eq!(visible_poll.revision, first_resume.revision + 1);
+
+        visibility_sender
+            .send(false)
+            .map_err(|_| anyhow::anyhow!("visibility receiver closed before second hide"))?;
+        tokio::task::yield_now().await;
+        bump_change_revision(&db).await?;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(!revision_receiver.has_changed()?);
+
+        visibility_sender
+            .send(true)
+            .map_err(|_| anyhow::anyhow!("visibility receiver closed before final restore"))?;
+        tokio::time::resume();
+        let second_resume = next_watched_revision(&mut revision_receiver).await?;
+        assert_eq!(second_resume.revision, visible_poll.revision + 1);
+
+        watcher.abort();
+        Ok(())
+    }
+
+    async fn bump_change_revision(db: &impl ConnectionTrait) -> anyhow::Result<()> {
+        db.execute_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE castle_change_revision
+             SET revision = revision + 1, board_revision = board_revision + 1
+             WHERE id = 1",
+        ))
+        .await?;
+        Ok(())
+    }
+
+    async fn next_watched_revision(
+        receiver: &mut tokio::sync::watch::Receiver<Option<ChangeRevision>>,
+    ) -> anyhow::Result<ChangeRevision> {
+        tokio::time::timeout(Duration::from_secs(1), receiver.changed())
+            .await
+            .map_err(|_| anyhow::anyhow!("watcher did not publish a revision promptly"))??;
+        receiver
+            .borrow_and_update()
+            .as_ref()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("watcher published an empty revision"))
     }
 
     #[tokio::test]
