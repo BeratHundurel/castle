@@ -1067,9 +1067,9 @@ fn focused_paragraph_range(text: &Rope, selection: Range<usize>) -> Range<usize>
 mod tests {
     use super::{
         DocumentEditorView, DocumentKind, DocumentOutline, JsonOutline,
-        OUTLINE_SCROLL_LAYOUT_DELAY, analysis_is_current, analyze_document, changed_document_kind,
-        document_language, focused_paragraph_range, row_is_in_visible_layout,
-        source_row_centers_at_document_start,
+        OUTLINE_SCROLL_LAYOUT_DELAY, SaveState, analysis_is_current, analyze_document,
+        changed_document_kind, document_language, focused_paragraph_range,
+        row_is_in_visible_layout, source_row_centers_at_document_start,
     };
     use entity::note;
     use gpui_kit::AppContext as _;
@@ -1080,6 +1080,103 @@ mod tests {
     use settings::AppSettings;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use test_support as test_alloc;
+
+    #[gpui_kit::test]
+    fn external_note_can_be_moved_to_castle_managed_storage(cx: &mut gpui_kit::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let missing_external_path = directory.path().join("external").join("features.md");
+        let managed_notes_dir = directory.path().join("notes");
+        std::fs::create_dir_all(&managed_notes_dir)
+            .expect("managed notes directory should be created");
+        std::fs::write(managed_notes_dir.join("features.md"), "existing note")
+            .expect("colliding managed note should be created");
+        let content = "# Features\n\nKeep this backlog.\n";
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("Features".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(Some(missing_external_path.display().to_string())),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set(content.to_string()),
+                    file_missing_since: Set(Some(1)),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("managed storage test database should initialize");
+        let db = Arc::new(db);
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(directory.path()));
+            cx.set_global(AppRuntime::new(db.clone(), directory.path().to_path_buf()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("managed storage test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(view.read_with(&cx, |editor, _| editor.can_manage_in_castle()));
+        let manage_button = cx
+            .debug_bounds("manage-note-in-castle")
+            .expect("externally tracked notes should offer managed storage");
+
+        cx.simulate_click(manage_button.center(), Default::default());
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| {
+                editor.save_state() == SaveState::Saved && !editor.is_externally_tracked()
+            }) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let managed_path = managed_notes_dir.join("features-2.md");
+        assert_eq!(
+            std::fs::read_to_string(&managed_path)
+                .expect("the converted note should exist in managed storage"),
+            content
+        );
+        assert!(!missing_external_path.exists());
+        let stored = runtime
+            .block_on(storage::note::documents::load_document(
+                db.as_ref(),
+                note_id,
+            ))
+            .expect("converted note should load")
+            .expect("converted note should still exist");
+        assert_eq!(
+            stored.file_path.as_deref(),
+            Some(managed_path.to_string_lossy().as_ref())
+        );
+        assert!(stored.file_managed_by_app);
+        assert_eq!(stored.file_missing_since, None);
+        assert!(cx.debug_bounds("manage-note-in-castle").is_none());
+    }
 
     #[gpui_kit::test]
     fn json_autosave_preserves_unformatted_content(cx: &mut gpui_kit::TestAppContext) {

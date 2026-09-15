@@ -11,6 +11,7 @@ use runtime::AppRuntime;
 
 use super::file_paths::{
     suggested_save_as_file_name, suggested_save_as_file_name_with_extension, unique_note_path,
+    unique_note_path_with_extension,
 };
 use super::outline::DocumentOutline;
 use super::{AUTO_SAVE_IDLE_DELAY, DocumentEditorEvent, DocumentEditorView};
@@ -404,6 +405,29 @@ impl DocumentEditorView {
             self.title.as_ref(),
         );
         self.prompt_save_as(file_name, window, cx);
+    }
+
+    pub fn is_externally_tracked(&self) -> bool {
+        self.persistence.current_path.is_some() && !self.persistence.file_managed_by_app
+    }
+
+    pub fn can_manage_in_castle(&self) -> bool {
+        self.is_externally_tracked()
+            && !self.persistence.is_loading
+            && !matches!(self.persistence.save_state, SaveState::Saving)
+    }
+
+    pub fn manage_in_castle(&mut self, cx: &mut Context<Self>) {
+        if !self.can_manage_in_castle() {
+            return;
+        }
+
+        let path = unique_note_path_with_extension(
+            cx.global::<AppRuntime>().data_dir().join("notes"),
+            self.title.as_ref(),
+            self.kind.extension(),
+        );
+        self.save_to_path(path, true, cx);
     }
 
     pub fn change_document_kind(

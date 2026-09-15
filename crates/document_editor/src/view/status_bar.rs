@@ -58,6 +58,18 @@ impl DocumentEditorView {
                                     .child(path.file_name),
                             ),
                     )
+                    .children(self.is_externally_tracked().then(|| {
+                        Button::new("manage-note-in-castle")
+                            .debug_selector(|| "manage-note-in-castle".to_string())
+                            .label("Manage in Castle")
+                            .outline()
+                            .xsmall()
+                            .disabled(!self.can_manage_in_castle())
+                            .tooltip("Copy into Castle storage and stop tracking the external file")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.manage_in_castle(cx);
+                            }))
+                    }))
                     .child(self.render_save_state(cx)),
             )
             .child(

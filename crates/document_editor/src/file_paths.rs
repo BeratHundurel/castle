@@ -22,7 +22,15 @@ pub(crate) fn suggested_save_as_file_name_with_extension(
 }
 
 pub fn unique_note_path(dir: PathBuf, title: &str) -> PathBuf {
-    let file_name = suggested_file_name(title);
+    unique_note_path_with_extension(dir, title, "md")
+}
+
+pub(crate) fn unique_note_path_with_extension(
+    dir: PathBuf,
+    title: &str,
+    extension: &str,
+) -> PathBuf {
+    let file_name = storage::workspace::suggested_note_file_name(title, extension);
     let candidate = dir.join(&file_name);
     if !candidate.exists() {
         return candidate;
