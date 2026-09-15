@@ -396,10 +396,10 @@ fn settings_sidebar_footer(
         .p_2()
         .child(
             Button::new("settings-open-file")
+                .debug_selector(|| "settings-open-file".into())
                 .icon(IconName::File)
                 .label("Open settings file")
                 .outline()
-                .with_size(Size::Small)
                 .w_full()
                 .on_click(move |_, window, cx| {
                     window.close_dialog(cx);
@@ -1083,6 +1083,23 @@ fn with_selected_option(
 mod tests {
     use super::*;
 
+    struct SettingsFooterHarness;
+
+    impl gpui_kit::Render for SettingsFooterHarness {
+        fn render(
+            &mut self,
+            _: &mut gpui_kit::Window,
+            _: &mut gpui_kit::Context<Self>,
+        ) -> impl gpui_kit::IntoElement {
+            div().relative().size_full().child(settings_sidebar_footer(
+                Rc::new(|_, _| {}),
+                320.,
+                gpui_kit::hsla(0.6, 0.2, 0.15, 1.0),
+                gpui_kit::hsla(0.6, 0.1, 0.3, 1.0),
+            ))
+        }
+    }
+
     #[cfg(target_os = "windows")]
     use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -1145,6 +1162,32 @@ mod tests {
     fn custom_setting_rows_follow_the_settings_stack_layout() {
         assert!(settings_row_is_stacked(Axis::Vertical));
         assert!(!settings_row_is_stacked(Axis::Horizontal));
+    }
+
+    #[gpui_kit::test]
+    fn settings_file_action_uses_default_control_size(cx: &mut gpui_kit::TestAppContext) {
+        let window = cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.open_window(Default::default(), |window, cx| {
+                let harness = cx.new(|_| SettingsFooterHarness);
+                cx.new(|cx| gpui_kit::component::Root::new(harness, window, cx))
+            })
+            .expect("settings footer test window should open")
+        });
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(400.), gpui_kit::px(200.)));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        assert_eq!(
+            cx.debug_bounds("settings-open-file")
+                .expect("open settings file button")
+                .size
+                .height,
+            gpui_kit::px(32.),
+            "a standalone settings action should use the default control size"
+        );
     }
 
     #[cfg(target_os = "windows")]
