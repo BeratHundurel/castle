@@ -1,6 +1,18 @@
 use anyhow::Result;
 #[cfg(any(target_os = "windows", test))]
 use std::path::Path;
+use std::{ffi::OsStr, ffi::OsString};
+
+const START_IN_TRAY_ARGUMENT: &str = "--start-in-tray";
+
+pub fn starts_in_tray<I>(arguments: I) -> bool
+where
+    I: IntoIterator<Item = OsString>,
+{
+    arguments
+        .into_iter()
+        .any(|argument| argument == OsStr::new(START_IN_TRAY_ARGUMENT))
+}
 
 pub fn set_start_at_login(enabled: bool) -> Result<()> {
     #[cfg(target_os = "windows")]
@@ -18,7 +30,7 @@ pub fn set_start_at_login(enabled: bool) -> Result<()> {
 
 #[cfg(any(target_os = "windows", test))]
 fn startup_command(executable: &Path) -> String {
-    format!("\"{}\"", executable.display())
+    format!("\"{}\" {START_IN_TRAY_ARGUMENT}", executable.display())
 }
 
 #[cfg(target_os = "windows")]
@@ -159,7 +171,14 @@ mod tests {
     fn startup_command_quotes_the_executable_path() {
         assert_eq!(
             startup_command(Path::new(r"C:\Program Files\Castle\castle.exe")),
-            r#""C:\Program Files\Castle\castle.exe""#
+            r#""C:\Program Files\Castle\castle.exe" --start-in-tray"#
         );
+    }
+
+    #[test]
+    fn startup_mode_requires_the_start_in_tray_argument() {
+        assert!(starts_in_tray([OsString::from("--start-in-tray")]));
+        assert!(!starts_in_tray([OsString::from("--register-mcp")]));
+        assert!(!starts_in_tray(std::iter::empty()));
     }
 }

@@ -1,10 +1,12 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use anyhow::Result;
 #[cfg(debug_assertions)]
 use dotenvy::dotenv;
 use gpui_kit::component::{Root, Theme, ThemeRegistry, TitleBar};
-use gpui_kit::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    App, AppContext, Bounds, Pixels, SharedString, WindowBounds, WindowOptions, px, size,
+};
 use std::{borrow::Cow, cell::RefCell, fs, rc::Rc, sync::Arc};
 use storage::{Store, StoreOptions};
 
@@ -16,7 +18,8 @@ use shell::{AppShell, ShellIntegration};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if let Some(argument) = std::env::args_os().nth(1) {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let Some(argument) = arguments.first() {
         if argument == "--register-mcp" {
             app::mcp_registration::register_installed()?;
             return Ok(());
@@ -26,6 +29,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
+    let start_in_tray = app::startup::starts_in_tray(arguments);
 
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     #[cfg(debug_assertions)]
@@ -79,39 +83,31 @@ async fn main() -> Result<()> {
         let note_created_handler_for_window = note_created_handler.clone();
         let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
         let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitleBar::title_bar_options()),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let note_created_handler_for_shell = note_created_handler_for_window.clone();
-                    let integration = ShellIntegration::new(
-                        app::tray::update_shortcut,
-                        app::tray::update_quick_capture_shortcut,
-                        |enabled| {
-                            app::startup::set_start_at_login(enabled)
-                                .map_err(|error| error.to_string())
-                        },
-                        |cx| app::keymap::shortcuts(cx).to_vec(),
-                        Arc::new(app::mcp_registration::McpAgentAccess),
-                    );
-                    let view = AppShell::view(window, integration, cx);
-                    let shell_for_capture = view.downgrade();
-                    let note_created: NoteCreatedHandler = Rc::new(move |cx| {
-                        if let Some(shell) = shell_for_capture.upgrade() {
-                            shell.update(cx, |shell, cx| {
-                                shell.refresh_after_quick_capture(cx);
-                            });
-                        }
-                    });
-                    note_created_handler_for_shell
-                        .borrow_mut()
-                        .replace(note_created);
-                    cx.new(|cx| Root::new(view, window, cx))
-                },
-            )
+            .open_window(main_window_options(bounds, start_in_tray), |window, cx| {
+                let note_created_handler_for_shell = note_created_handler_for_window.clone();
+                let integration = ShellIntegration::new(
+                    app::tray::update_shortcut,
+                    app::tray::update_quick_capture_shortcut,
+                    |enabled| {
+                        app::startup::set_start_at_login(enabled).map_err(|error| error.to_string())
+                    },
+                    |cx| app::keymap::shortcuts(cx).to_vec(),
+                    Arc::new(app::mcp_registration::McpAgentAccess),
+                );
+                let view = AppShell::view(window, integration, cx);
+                let shell_for_capture = view.downgrade();
+                let note_created: NoteCreatedHandler = Rc::new(move |cx| {
+                    if let Some(shell) = shell_for_capture.upgrade() {
+                        shell.update(cx, |shell, cx| {
+                            shell.refresh_after_quick_capture(cx);
+                        });
+                    }
+                });
+                note_created_handler_for_shell
+                    .borrow_mut()
+                    .replace(note_created);
+                cx.new(|cx| Root::new(view, window, cx))
+            })
             .expect("Failed to open window");
 
         if let Some(note_created) = note_created_handler.borrow_mut().take() {
@@ -124,6 +120,16 @@ async fn main() -> Result<()> {
     });
 
     Ok(())
+}
+
+fn main_window_options(bounds: Bounds<Pixels>, start_in_tray: bool) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitleBar::title_bar_options()),
+        focus: !start_in_tray,
+        show: !start_in_tray,
+        ..Default::default()
+    }
 }
 
 fn load_bundled_fonts(cx: &mut App) {
@@ -215,7 +221,10 @@ fn apply_default_theme(cx: &mut App) {
 mod tests {
     use std::collections::HashMap;
 
+    use gpui_kit::Bounds;
     use serde::Deserialize;
+
+    use super::main_window_options;
 
     #[derive(Deserialize)]
     struct ThemeSet {
@@ -231,6 +240,14 @@ mod tests {
     #[derive(Deserialize)]
     struct HighlightConfig {
         syntax: serde_json::Value,
+    }
+
+    #[test]
+    fn startup_window_is_created_hidden_and_unfocused() {
+        let options = main_window_options(Bounds::default(), true);
+
+        assert!(!options.show);
+        assert!(!options.focus);
     }
 
     #[test]
