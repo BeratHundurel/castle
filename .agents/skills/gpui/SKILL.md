@@ -19,7 +19,7 @@ For application work, use GPUI Kit's semantic controls and Actions rather than c
 - Keep `render` declarative and side-effect-free. Do not recreate retained entities, subscriptions, focus handles, or expensive data per frame. Use `RenderOnce` for value-like presentation and `Entity<T>` only when behavior must persist.
 - Use `cx.theme()` and rem-scale helpers such as `gap_2`, `p_2`, and `text_sm`; use raw colors, radii, or `px(...)` only for an intentional physical/platform boundary, measured geometry, or token definition.
 - Make focus, keyboard, disabled, overlay, and accessibility behavior explicit.
-- Represent async work with loading, success, and failure states; retain usable data while refreshing and discard results whose request or revision is stale.
+- Represent async work internally with pending, success, and failure states, and discard results whose request or revision is stale. Follow the `design` skill for loading presentation and control-density decisions.
 - Never block the foreground executor. Run SeaORM and SQLx work on the current Tokio runtime, not in `cx.spawn`, `cx.spawn_in`, or GPUI's background executor; apply completed results to entities on the foreground executor.
 
 For UI behavior, test the lowest proving layer: pure state or geometry tests, then GPUI context tests, then `VisualTestContext` interaction or layout tests. Cover pointer and keyboard paths, stable identity, focus, disabled behavior, and relevant empty, loading, and failure states.
@@ -42,7 +42,7 @@ Load the relevant reference file based on the task:
 | Layout, measurement & scrolling | [layout-measurement-scroll.md](references/layout-measurement-scroll.md) | Geometry-dependent behavior, prepaint bounds, alignment, overlays, scroll ownership                 |
 | Performance & failure modes     | [performance.md](references/performance.md)                             | Render hot paths, notification ownership, retained state, virtualization, caching, closure captures |
 | ElementId                       | [element-id.md](references/element-id.md)                               | `ElementId`, `.id()`, uniqueness rules, stateful elements                                           |
-| Testing                         | [test.md](references/test.md)                                           | `#[gpui_kit::test]`, `TestAppContext`, `VisualTestContext`                                              |
+| Testing                         | [test.md](references/test.md)                                           | `#[gpui_kit::test]`, `TestAppContext`, `VisualTestContext`                                          |
 
 ## Extended References
 

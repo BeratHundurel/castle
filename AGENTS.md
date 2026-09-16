@@ -8,7 +8,9 @@ Before editing, an agent must read the nearest implementation, its tests, the
 re-export seam, and the relevant component documentation. It must search the
 current source for signatures instead of translating a React, CSS, or old GPUI
 example by analogy. For GPUI work, it must load the `gpui` skill and the
-references it routes to for the task.
+references it routes to for the task. It must also load the `design` skill when
+the work changes visual hierarchy, control density, loading presentation, or
+interaction behavior.
 
 ## Common failure modes
 

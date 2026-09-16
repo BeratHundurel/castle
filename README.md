@@ -49,3 +49,7 @@ Restart the MCP client after adding the server. You can then ask an agent things
 - “Add a QA checklist and a reminder to the release todo, then mark the first check complete.”
 
 This is a trusted local stdio server with direct access to the selected Castle database. Do not expose it over a network or configure it for agents you do not trust. It intentionally has no delete tools.
+
+## License
+
+Apache-2.0

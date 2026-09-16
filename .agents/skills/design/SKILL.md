@@ -41,6 +41,9 @@ and recovery guarantees unless the requested change calls for changing them.
 
 - Use Castle's configured fonts, semantic theme tokens, spacing helpers, radii,
   and icon family. Use compact hierarchy and preserve working space.
+- Use the default control size for primary and standalone actions. Reserve small
+  or compact controls for dense repeated rows, toolbars, and constrained
+  compound controls; do not compress full-width empty-state or settings actions.
 - Group related controls with spacing and alignment; add borders or elevation
   when they explain a boundary. Avoid decorative badges, gradients, and panels.
 - Use monospaced or tabular numerals when alignment aids comparison. Truncate
@@ -56,6 +59,10 @@ and recovery guarantees unless the requested change calls for changing them.
   error, and save states. Essential commands must be discoverable without hover.
 - Keep errors contextual and actionable. Show what can happen next in empty
   states; preserve useful content while refreshing.
+- A model loading state does not require visible loading UI. Do not replace
+  counts, content, empty states, or footers during a background refresh. For
+  work expected to finish within roughly 300 ms, keep the stable presentation;
+  when slower work needs feedback, defer the indicator and reserve its geometry.
 - Give dragged items visible lift and valid destinations clear emphasis.
   Keep neighboring items and the selected item visually anchored during reordering.
 - Return focus to the trigger when a transient surface closes. Make Tab order
