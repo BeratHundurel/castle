@@ -30,7 +30,7 @@ use gpui_kit::component::{
 use gpui_kit::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     MouseButton, ParentElement, PathPromptOptions, Pixels, Render, ScrollHandle, SharedString,
-    Styled, Task, Window, div, prelude::FluentBuilder as _, px,
+    Styled, Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 use storage::workspace::WorkspaceTitleTarget;
@@ -70,6 +70,64 @@ pub struct ShellIntegration {
     update_start_at_login: UpdateStartAtLogin,
     shortcuts: ShortcutProvider,
     _agent_access: Arc<dyn AgentAccess>,
+    main_window_visibility: tokio::sync::watch::Receiver<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrayReleaseState {
+    Ready,
+    Saving,
+    NeedsAttention,
+}
+
+impl TrayReleaseState {
+    fn with_note_save_state(self, save_state: SaveState) -> Self {
+        let next = match save_state {
+            SaveState::Saved => Self::Ready,
+            SaveState::Dirty | SaveState::Saving => Self::Saving,
+            SaveState::Missing | SaveState::Error(_) => Self::NeedsAttention,
+        };
+        self.merge(next)
+    }
+
+    fn with_settings_save_state(self, save_state: SettingsDocumentSaveState) -> Self {
+        let next = match save_state {
+            SettingsDocumentSaveState::Saved => Self::Ready,
+            SettingsDocumentSaveState::Dirty | SettingsDocumentSaveState::Saving => Self::Saving,
+            SettingsDocumentSaveState::Error(_) => Self::NeedsAttention,
+        };
+        self.merge(next)
+    }
+
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::NeedsAttention, _) | (_, Self::NeedsAttention) => Self::NeedsAttention,
+            (Self::Saving, _) | (_, Self::Saving) => Self::Saving,
+            _ => Self::Ready,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tray_release_tests {
+    use super::*;
+
+    #[test]
+    fn errors_block_release_even_when_other_editors_are_still_saving() {
+        assert_eq!(
+            TrayReleaseState::Saving.with_note_save_state(SaveState::Error("disk full".into())),
+            TrayReleaseState::NeedsAttention
+        );
+        assert_eq!(
+            TrayReleaseState::NeedsAttention
+                .with_settings_save_state(SettingsDocumentSaveState::Saved),
+            TrayReleaseState::NeedsAttention
+        );
+        assert_eq!(
+            TrayReleaseState::Ready.with_note_save_state(SaveState::Missing),
+            TrayReleaseState::NeedsAttention
+        );
+    }
 }
 
 impl ShellIntegration {
@@ -78,6 +136,7 @@ impl ShellIntegration {
         update_quick_capture_shortcut: impl Fn(&str, &mut App) + 'static,
         update_start_at_login: impl Fn(bool) -> Result<(), String> + 'static,
         shortcuts: impl Fn(&App) -> Vec<ShortcutReference> + 'static,
+        main_window_visibility: tokio::sync::watch::Receiver<bool>,
         agent_access: Arc<dyn AgentAccess>,
     ) -> Self {
         Self {
@@ -86,6 +145,7 @@ impl ShellIntegration {
             update_start_at_login: Rc::new(update_start_at_login),
             shortcuts: Rc::new(shortcuts),
             _agent_access: agent_access,
+            main_window_visibility,
         }
     }
 }
@@ -106,11 +166,13 @@ impl AgentAccess for TestAgentAccess {
 
 #[cfg(test)]
 fn test_shell_integration() -> ShellIntegration {
+    let (_visibility_sender, main_window_visibility) = tokio::sync::watch::channel(true);
     ShellIntegration::new(
         |_, _| {},
         |_, _| {},
         |_| Ok(()),
         |_| Vec::new(),
+        main_window_visibility,
         Arc::new(TestAgentAccess),
     )
 }
@@ -279,6 +341,7 @@ pub struct AppShell {
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
     update_start_at_login: UpdateStartAtLogin,
     workspace_archive_busy: bool,
+    _app_quit_subscription: Option<Subscription>,
 }
 
 impl AppShell {
@@ -289,6 +352,25 @@ impl AppShell {
     pub fn refresh_after_quick_capture(&mut self, cx: &mut Context<Self>) {
         self.refresh_workspace(cx);
         self.load_home(cx);
+    }
+
+    pub fn tray_release_state(&self, cx: &App) -> TrayReleaseState {
+        let mut state =
+            if self.workspace.pending_title_saves.is_empty() && !self.workspace_archive_busy {
+                TrayReleaseState::Ready
+            } else {
+                TrayReleaseState::Saving
+            };
+
+        for view in self.tabs.note_views.values() {
+            state = state.with_note_save_state(view.read(cx).save_state());
+        }
+        for tab in &self.tabs.open_tabs {
+            if let OpenTabKind::Settings { view } = &tab.kind {
+                state = state.with_settings_save_state(view.read(cx).save_state());
+            }
+        }
+        state
     }
 
     fn observe_document_editor(
@@ -571,6 +653,7 @@ impl AppShell {
     }
 
     fn new(window: &mut Window, integration: ShellIntegration, cx: &mut Context<Self>) -> Self {
+        let main_window_visibility = integration.main_window_visibility.clone();
         let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
         let mut open_tabs = Vec::with_capacity(tab_session.tabs.len().max(1));
@@ -953,6 +1036,7 @@ impl AppShell {
             update_quick_capture_shortcut,
             update_start_at_login,
             workspace_archive_busy: false,
+            _app_quit_subscription: None,
         };
 
         settings_view.update(cx, |settings, cx| settings.refresh_agent_access(cx));
@@ -965,15 +1049,9 @@ impl AppShell {
             this.sync_sidebar_with_window_width(window.bounds().size.width, cx);
         })
         .detach();
-        cx.on_app_quit(|this, cx| {
-            let title_flush = this.flush_pending_workspace_title_saves(cx);
-            let settings_flush = AppSettings::flush(cx);
-            async move {
-                tokio::join!(title_flush, settings_flush);
-            }
-        })
-        .detach();
-        this.start_external_change_watcher(window, cx);
+        this._app_quit_subscription =
+            Some(cx.on_app_quit(|this, cx| this.flush_pending_workspace_title_saves(cx)));
+        this.start_external_change_watcher(window, main_window_visibility, cx);
         this.start_note_link_reindex(cx);
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);

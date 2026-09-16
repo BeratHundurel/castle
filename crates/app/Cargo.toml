@@ -18,7 +18,7 @@ serde_json.workspace = true
 toml_edit.workspace = true
 image.workspace = true
 chrono.workspace = true
-notify = "7.0.0"
+notify = "8.2.0"
 storage = { path = "../storage" }
 runtime = { path = "../runtime" }
 settings = { path = "../settings" }

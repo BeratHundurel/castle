@@ -1,17 +1,14 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 #[cfg(debug_assertions)]
 use dotenvy::dotenv;
 use gpui_kit::component::{Root, Theme, ThemeRegistry, TitleBar};
-use gpui_kit::{
-    App, AppContext, Bounds, Pixels, SharedString, WindowBounds, WindowOptions, px, size,
-};
-use std::{borrow::Cow, cell::RefCell, fs, rc::Rc, sync::Arc};
+use gpui_kit::{App, AppContext, Bounds, SharedString, WindowBounds, WindowOptions, px, size};
+use std::{borrow::Cow, fs, rc::Rc, sync::Arc};
 use storage::{Store, StoreOptions};
 
 use app::{app_paths::AppPaths, keymap, system_notifications, tray};
-use quick_capture::NoteCreatedHandler;
 use runtime::AppRuntime;
 use settings::AppSettings;
 use shell::{AppShell, ShellIntegration};
@@ -76,6 +73,7 @@ async fn main() -> Result<()> {
 
         settings.apply_to_theme(cx);
         cx.set_global(settings.clone());
+        cx.on_app_quit(AppSettings::flush).detach();
         if let Err(error) = app::startup::set_start_at_login(AppSettings::start_at_login(cx)) {
             eprintln!("Failed to synchronize the start-at-login setting: {error}");
         }
@@ -84,56 +82,73 @@ async fn main() -> Result<()> {
 
         let (main_window_visibility, main_window_visibility_receiver) =
             tokio::sync::watch::channel(!start_in_tray);
-        let note_created_handler = Rc::new(RefCell::new(None));
-        let note_created_handler_for_window = note_created_handler.clone();
-        let bounds = Bounds::centered(None, size(px(1200.), px(768.)), cx);
-        let window = cx
-            .open_window(main_window_options(bounds, start_in_tray), |window, cx| {
-                let note_created_handler_for_shell = note_created_handler_for_window.clone();
-                let integration = ShellIntegration::new(
-                    app::tray::update_shortcut,
-                    app::tray::update_quick_capture_shortcut,
-                    |enabled| {
-                        app::startup::set_start_at_login(enabled).map_err(|error| error.to_string())
-                    },
-                    |cx| app::keymap::shortcuts(cx).to_vec(),
-                    main_window_visibility_receiver,
-                    Arc::new(app::mcp_registration::McpAgentAccess),
-                );
-                let view = AppShell::view(window, integration, cx);
-                let shell_for_capture = view.downgrade();
-                let note_created: NoteCreatedHandler = Rc::new(move |cx| {
-                    if let Some(shell) = shell_for_capture.upgrade() {
-                        shell.update(cx, |shell, cx| {
-                            shell.refresh_after_quick_capture(cx);
-                        });
-                    }
-                });
-                note_created_handler_for_shell
-                    .borrow_mut()
-                    .replace(note_created);
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("Failed to open window");
 
-        if let Some(note_created) = note_created_handler.borrow_mut().take() {
-            if let Err(err) = tray::init(window.into(), note_created, main_window_visibility, cx) {
-                eprintln!("Failed to initialize tray mode: {err}");
-            }
-        } else {
-            eprintln!("Failed to initialize quick capture callback");
+        let window_factory: tray::MainWindowFactory = Rc::new(move |bounds, cx| {
+            create_main_window(main_window_visibility_receiver.clone(), bounds, cx)
+        });
+
+        let initial_window = open_initial_window(start_in_tray, || window_factory(None, cx))
+            .expect("Failed to open Castle window");
+
+        if let Err(_err) = tray::init(
+            window_factory.clone(),
+            initial_window,
+            main_window_visibility.clone(),
+            cx,
+        ) && start_in_tray
+        {
+            main_window_visibility.send_replace(true);
+            window_factory(None, cx)
+                .expect("Failed to open Castle window after tray initialization failed");
         }
     });
 
     Ok(())
 }
 
-fn main_window_options(bounds: Bounds<Pixels>, start_in_tray: bool) -> WindowOptions {
+fn open_initial_window<T>(
+    start_in_tray: bool,
+    open: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if start_in_tray {
+        Ok(None)
+    } else {
+        open().map(Some)
+    }
+}
+
+fn create_main_window(
+    main_window_visibility: tokio::sync::watch::Receiver<bool>,
+    saved_bounds: Option<WindowBounds>,
+    cx: &mut App,
+) -> Result<tray::MainWindow> {
+    let bounds = saved_bounds.unwrap_or_else(|| {
+        WindowBounds::Windowed(Bounds::centered(None, size(px(1200.), px(768.)), cx))
+    });
+    let mut shell = None;
+    let window = cx.open_window(main_window_options(bounds), |window, cx| {
+        let integration = ShellIntegration::new(
+            app::tray::update_shortcut,
+            app::tray::update_quick_capture_shortcut,
+            |enabled| app::startup::set_start_at_login(enabled).map_err(|error| error.to_string()),
+            |cx| app::keymap::shortcuts(cx).to_vec(),
+            main_window_visibility,
+            Arc::new(app::mcp_registration::McpAgentAccess),
+        );
+        let view = AppShell::view(window, integration, cx);
+        shell = Some(view.downgrade());
+        cx.new(|cx| Root::new(view, window, cx))
+    })?;
+    let shell = shell.context("Castle window did not construct its shell")?;
+    Ok(tray::MainWindow::new(window.into(), shell))
+}
+
+fn main_window_options(bounds: WindowBounds) -> WindowOptions {
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(bounds),
         titlebar: Some(TitleBar::title_bar_options()),
-        focus: !start_in_tray,
-        show: !start_in_tray,
+        focus: true,
+        show: true,
         window_min_size: Some(size(px(MAIN_WINDOW_MIN_WIDTH), px(MAIN_WINDOW_MIN_HEIGHT))),
         ..Default::default()
     }
@@ -226,12 +241,14 @@ fn apply_default_theme(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
 
-    use gpui_kit::{Bounds, px, size};
+    use gpui_kit::{Bounds, TestAppContext, WindowBounds, point, px, size};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
     use serde::Deserialize;
 
-    use super::main_window_options;
+    use super::{create_main_window, main_window_options, open_initial_window};
 
     #[derive(Deserialize)]
     struct ThemeSet {
@@ -250,18 +267,104 @@ mod tests {
     }
 
     #[test]
-    fn startup_window_is_created_hidden_and_unfocused() {
-        let options = main_window_options(Bounds::default(), true);
+    fn tray_startup_does_not_create_a_main_window() {
+        let mut creations = 0;
+        let window = open_initial_window(true, || {
+            creations += 1;
+            Ok::<_, anyhow::Error>(())
+        })
+        .expect("startup should succeed");
 
-        assert!(!options.show);
-        assert!(!options.focus);
+        assert!(window.is_none());
+        assert_eq!(creations, 0);
+        let window = open_initial_window(false, || {
+            creations += 1;
+            Ok::<_, anyhow::Error>(())
+        })
+        .expect("normal startup should succeed");
+        assert_eq!(window, Some(()));
+        assert_eq!(creations, 1);
     }
 
     #[test]
     fn main_window_has_a_usable_minimum_size() {
-        let options = main_window_options(Bounds::default(), false);
+        let bounds = WindowBounds::Windowed(Bounds::default());
+        let options = main_window_options(bounds);
 
+        assert_eq!(options.window_bounds, Some(bounds));
         assert_eq!(options.window_min_size, Some(size(px(800.), px(600.))));
+        assert!(options.show);
+        assert!(options.focus);
+    }
+
+    #[test]
+    fn main_window_preserves_a_maximized_restore_state() {
+        let bounds = WindowBounds::Maximized(Bounds::default());
+        assert_eq!(main_window_options(bounds).window_bounds, Some(bounds));
+    }
+
+    #[gpui_kit::test]
+    fn closing_the_window_releases_the_shell_before_restore(cx: &mut TestAppContext) {
+        let tokio = tokio::runtime::Runtime::new().expect("Tokio runtime");
+        let _runtime_guard = tokio.enter();
+        cx.executor().allow_parking();
+        let db = tokio.block_on(async {
+            let db = Database::connect("sqlite::memory:")
+                .await
+                .expect("test database");
+            Migrator::up(&db, None).await.expect("database migrations");
+            db
+        });
+        let settings_dir = tempfile::tempdir().expect("settings directory");
+        let (visibility_sender, visibility) = tokio::sync::watch::channel(true);
+        let first = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(settings::AppSettings::load(settings_dir.path()));
+            cx.set_global(runtime::AppRuntime::new(db, PathBuf::new()));
+            create_main_window(visibility.clone(), None, cx).expect("first window")
+        });
+        let original_shell = first.shell();
+        let original_id = original_shell
+            .upgrade()
+            .expect("first shell should exist")
+            .entity_id();
+        cx.update(|cx| {
+            first
+                .handle()
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("first window should close");
+        });
+        drop(first);
+        cx.run_until_parked();
+        assert!(
+            original_shell.upgrade().is_none(),
+            "closed shell must be released"
+        );
+
+        let saved_bounds = WindowBounds::Windowed(Bounds {
+            origin: point(px(92.), px(144.)),
+            size: size(px(1024.), px(700.)),
+        });
+        let second = cx.update(|cx| {
+            create_main_window(visibility, Some(saved_bounds), cx).expect("restored window")
+        });
+        assert_ne!(
+            second
+                .shell()
+                .upgrade()
+                .expect("restored shell")
+                .entity_id(),
+            original_id
+        );
+        let restored_bounds = cx.update(|cx| {
+            second
+                .handle()
+                .update(cx, |_, window, _| window.window_bounds())
+                .expect("restored window should exist")
+        });
+        assert_eq!(restored_bounds, saved_bounds);
+        assert!(*visibility_sender.borrow());
     }
 
     #[test]

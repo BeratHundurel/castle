@@ -486,6 +486,11 @@ mod tests {
             SaveState::Dirty
         );
         assert_eq!(
+            shell.read_with(&cx, |shell, cx| shell.tray_release_state(cx)),
+            TrayReleaseState::Saving,
+            "a dirty editor must keep the window graph alive for autosave"
+        );
+        assert_eq!(
             shell.read_with(&cx, |shell, _| {
                 shell.tabs.note_views.get(&note_id).map(Entity::entity_id)
             }),
@@ -533,6 +538,11 @@ mod tests {
         assert!(
             closed_dirty_note.upgrade().is_none(),
             "a closed editor must be released after autosave succeeds"
+        );
+        assert_eq!(
+            shell.read_with(&cx, |shell, cx| shell.tray_release_state(cx)),
+            TrayReleaseState::Ready,
+            "successful autosave should allow the hidden graph to be released"
         );
     }
 

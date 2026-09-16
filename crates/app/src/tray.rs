@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
-use gpui_kit::{AnyWindowHandle, App, Global, Window, WindowHandle};
+use gpui_kit::{AnyWindowHandle, App, Global, WeakEntity, Window, WindowBounds, WindowHandle};
 use raw_window_handle::RawWindowHandle;
 use tray_icon::{
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -11,9 +11,34 @@ use tray_icon::{
 
 use quick_capture::{NoteCreatedHandler, QuickCaptureView, WindowVisibilityHandler};
 use settings::AppSettings;
+use shell::{AppShell, TrayReleaseState};
+
+pub struct MainWindow {
+    handle: AnyWindowHandle,
+    shell: WeakEntity<AppShell>,
+}
+
+impl MainWindow {
+    pub fn new(handle: AnyWindowHandle, shell: WeakEntity<AppShell>) -> Self {
+        Self { handle, shell }
+    }
+
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.handle
+    }
+
+    pub fn shell(&self) -> WeakEntity<AppShell> {
+        self.shell.clone()
+    }
+}
+
+pub type MainWindowFactory = Rc<dyn Fn(Option<WindowBounds>, &mut App) -> Result<MainWindow>>;
 
 struct TrayController {
-    window: AnyWindowHandle,
+    main_window: Option<MainWindow>,
+    create_main_window: MainWindowFactory,
+    hide_generation: u64,
+    last_main_window_bounds: Option<WindowBounds>,
     main_window_visibility: tokio::sync::watch::Sender<bool>,
     hotkey_manager: GlobalHotKeyManager,
     hotkey: Option<HotKey>,
@@ -41,8 +66,8 @@ enum TrayCommand {
 }
 
 pub fn init(
-    window_handle: AnyWindowHandle,
-    note_created: NoteCreatedHandler,
+    create_main_window: MainWindowFactory,
+    initial_window: Option<MainWindow>,
     main_window_visibility: tokio::sync::watch::Sender<bool>,
     cx: &mut App,
 ) -> Result<()> {
@@ -85,24 +110,32 @@ pub fn init(
         }
     };
 
+    let note_created: NoteCreatedHandler = Rc::new(|cx| {
+        let shell = cx
+            .global::<TrayController>()
+            .main_window
+            .as_ref()
+            .and_then(|main_window| main_window.shell.upgrade());
+        if let Some(shell) = shell {
+            shell.update(cx, |shell, cx| shell.refresh_after_quick_capture(cx));
+        }
+    });
+
     let set_window_visible: WindowVisibilityHandler = Rc::new(set_window_visible);
+
     let quick_capture_window =
         quick_capture::open_window(note_created.clone(), set_window_visible, cx)
             .context("failed to prewarm quick capture window")?;
 
-    window_handle.update(cx, |_, window, cx| {
-        window.on_window_should_close(cx, |window, cx| {
-            if !AppSettings::close_to_tray(cx) {
-                return true;
-            }
-
-            hide_window(window, cx);
-            false
-        });
-    })?;
+    if let Some(window) = &initial_window {
+        install_main_window_close_handler(window, cx)?;
+    }
 
     cx.set_global(TrayController {
-        window: window_handle,
+        main_window: initial_window,
+        create_main_window,
+        hide_generation: 0,
+        last_main_window_bounds: None,
         main_window_visibility,
         hotkey_manager,
         hotkey,
@@ -225,10 +258,7 @@ fn handle_event(event: TrayEvent, cx: &mut App) {
     };
 
     match command {
-        Some(TrayCommand::ShowMainWindow) => {
-            let window = cx.global::<TrayController>().window;
-            show_window(window, cx);
-        }
+        Some(TrayCommand::ShowMainWindow) => show_main_window(cx),
         Some(TrayCommand::ShowQuickCapture) => {
             let (window, note_created) = {
                 let controller = cx.global::<TrayController>();
@@ -287,9 +317,61 @@ fn command_for_menu(
     }
 }
 
-fn show_window(window_handle: AnyWindowHandle, cx: &mut App) {
-    match window_handle.update(cx, |_, window, cx| {
-        set_window_visible(window, true);
+fn install_main_window_close_handler(main_window: &MainWindow, cx: &mut App) -> Result<()> {
+    main_window.handle.update(cx, |_, window, cx| {
+        window.on_window_should_close(cx, |window, cx| {
+            if !AppSettings::close_to_tray(cx) {
+                return true;
+            }
+            hide_window(window, cx);
+            false
+        });
+    })?;
+    Ok(())
+}
+
+fn show_main_window(cx: &mut App) {
+    let existing = cx
+        .global::<TrayController>()
+        .main_window
+        .as_ref()
+        .map(|main_window| main_window.handle);
+    if let Some(handle) = existing
+        && handle
+            .update(cx, |_, window, cx| {
+                set_window_visible(window, true);
+                cx.activate(true);
+                window.activate_window();
+            })
+            .is_ok()
+    {
+        let controller = cx.global_mut::<TrayController>();
+        controller.hide_generation = controller.hide_generation.saturating_add(1);
+        set_main_window_visibility(true, cx);
+        return;
+    }
+
+    let (create, bounds) = {
+        let controller = cx.global::<TrayController>();
+        (
+            controller.create_main_window.clone(),
+            controller.last_main_window_bounds,
+        )
+    };
+    let Ok(main_window) = create(bounds, cx) else {
+        eprintln!("Failed to recreate Castle window");
+        return;
+    };
+    if let Err(error) = install_main_window_close_handler(&main_window, cx) {
+        eprintln!("Failed to install Castle window close handler: {error}");
+    }
+    let handle = main_window.handle;
+    {
+        let controller = cx.global_mut::<TrayController>();
+        controller.main_window = Some(main_window);
+        controller.hide_generation = controller.hide_generation.saturating_add(1);
+    }
+    match handle.update(cx, |_, window, cx| {
         cx.activate(true);
         window.activate_window();
     }) {
@@ -331,10 +413,87 @@ fn show_quick_capture(
     cx.global_mut::<TrayController>().quick_capture_window = Some(window_handle);
 }
 
-fn hide_window(window: &Window, cx: &mut App) {
+fn hide_window(window: &mut Window, cx: &mut App) {
+    let bounds = window.window_bounds();
     set_main_window_visibility(false, cx);
     set_window_visible(window, false);
     cx.hide();
+
+    let state = cx
+        .global::<TrayController>()
+        .main_window
+        .as_ref()
+        .and_then(|main_window| main_window.shell.upgrade())
+        .map(|shell| shell.read(cx).tray_release_state(cx))
+        .unwrap_or(TrayReleaseState::Ready);
+
+    let (generation, handle) = {
+        let controller = cx.global_mut::<TrayController>();
+        controller.hide_generation = controller.hide_generation.saturating_add(1);
+        controller.last_main_window_bounds = Some(bounds);
+        let handle = controller
+            .main_window
+            .as_ref()
+            .map(|main_window| main_window.handle);
+        (controller.hide_generation, handle)
+    };
+
+    match state {
+        TrayReleaseState::Ready => {
+            window.remove_window();
+            cx.global_mut::<TrayController>().main_window = None;
+        }
+        TrayReleaseState::Saving => {
+            if let Some(handle) = handle {
+                schedule_release_when_saved(handle, generation, cx);
+            }
+        }
+        TrayReleaseState::NeedsAttention => {
+            eprintln!("Castle kept the hidden window alive because an editor needs attention");
+        }
+    }
+}
+
+fn schedule_release_when_saved(handle: AnyWindowHandle, generation: u64, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let mut delay = Duration::from_millis(100);
+        loop {
+            cx.background_executor().timer(delay).await;
+            let done = cx.update(|cx| try_release_hidden_window(handle, generation, cx));
+            if done {
+                break;
+            }
+            delay = delay.saturating_mul(2).min(Duration::from_secs(5));
+        }
+    })
+    .detach();
+}
+
+fn try_release_hidden_window(handle: AnyWindowHandle, generation: u64, cx: &mut App) -> bool {
+    let controller = cx.global::<TrayController>();
+    if controller.hide_generation != generation {
+        return true;
+    }
+    let state = controller
+        .main_window
+        .as_ref()
+        .and_then(|main_window| main_window.shell.upgrade())
+        .map(|shell| shell.read(cx).tray_release_state(cx))
+        .unwrap_or(TrayReleaseState::Ready);
+    match state {
+        TrayReleaseState::Ready => {
+            if let Err(error) = handle.update(cx, |_, window, _| window.remove_window()) {
+                eprintln!("Failed to release hidden Castle window: {error}");
+            }
+            cx.global_mut::<TrayController>().main_window = None;
+            true
+        }
+        TrayReleaseState::Saving => false,
+        TrayReleaseState::NeedsAttention => {
+            eprintln!("Castle kept the hidden window alive because an editor needs attention");
+            true
+        }
+    }
 }
 
 fn set_main_window_visibility(visible: bool, cx: &mut App) {
@@ -354,7 +513,7 @@ fn publish_main_window_visibility(sender: &tokio::sync::watch::Sender<bool>, vis
 
 #[cfg(target_os = "windows")]
 pub fn set_window_visible(window: &Window, visible: bool) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, ShowWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOW, ShowWindow};
 
     let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
         return;
@@ -362,7 +521,7 @@ pub fn set_window_visible(window: &Window, visible: bool) {
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
         return;
     };
-    let command = if visible { SW_RESTORE } else { SW_HIDE };
+    let command = if visible { SW_SHOW } else { SW_HIDE };
     unsafe {
         ShowWindow(handle.hwnd.get() as *mut _, command);
     }
