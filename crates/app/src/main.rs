@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    system_notifications::start(store);
+    system_notifications::start(store, &db_path);
 
     app.run(move |cx| {
         gpui_kit::init(cx);

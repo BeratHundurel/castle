@@ -1,6 +1,7 @@
-use std::{sync::Arc, sync::OnceLock, time::Duration};
+use std::{path::Path, sync::Arc, sync::OnceLock, time::Duration};
 
-use chrono::Local;
+use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use notify::Watcher;
 use storage::Store;
 use storage::note::reminders::DueReminder;
 use tokio::sync::Notify;
@@ -29,24 +30,135 @@ pub fn install_board_gateway(cx: &mut gpui_kit::App) {
     ::board::init_with_notification_gateway(cx, Arc::new(SystemNotificationGateway));
 }
 
-pub fn start(store: Store) {
+const RETRY_DELAY: Duration = Duration::from_secs(300);
+const MAX_DEADLINE_SLEEP: Duration = Duration::from_secs(12 * 60 * 60);
+
+type ReminderPresenter = dyn Fn(&DueReminder) -> anyhow::Result<()> + Send + Sync;
+
+pub fn start(store: Store, database_path: &Path) {
     let wake = REMINDER_WAKE
         .get_or_init(|| Arc::new(Notify::new()))
         .clone();
 
+    let database_watcher = match watch_database_changes(database_path, wake.clone()) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            eprintln!("Failed to watch Castle database for reminder changes: {error}");
+            None
+        }
+    };
+
+    let fallback_rescan = database_watcher.is_none().then_some(RETRY_DELAY);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = wake.notified() => {}
-            }
-            if let Err(error) = deliver_due_reminders(&store).await {
-                eprintln!("Failed to deliver card reminders: {error}");
+        let _database_watcher = database_watcher;
+        run_reminder_scheduler(
+            store,
+            wake,
+            Arc::new(show_system_notification),
+            fallback_rescan,
+        )
+        .await;
+    });
+}
+
+fn watch_database_changes(
+    database_path: &Path,
+    wake: Arc<Notify>,
+) -> notify::Result<notify::RecommendedWatcher> {
+    let database_path = database_path.canonicalize().map_err(notify::Error::io)?;
+    let watched_path = database_path.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok_and(|event| is_database_change(&event, &watched_path)) {
+            wake.notify_one();
+        }
+    })?;
+    let directory = database_path.parent().unwrap_or_else(|| Path::new("."));
+    watcher.watch(directory, notify::RecursiveMode::NonRecursive)?;
+    Ok(watcher)
+}
+
+fn is_database_change(event: &notify::Event, database_path: &Path) -> bool {
+    let wal_path = database_path.with_file_name(format!(
+        "{}-wal",
+        database_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ));
+    event
+        .paths
+        .iter()
+        .any(|path| path == database_path || path == &wal_path)
+}
+
+async fn run_reminder_scheduler(
+    store: Store,
+    wake: Arc<Notify>,
+    present: Arc<ReminderPresenter>,
+    fallback_rescan: Option<Duration>,
+) {
+    loop {
+        let now = Local::now();
+        let today = now.date_naive().format("%Y-%m-%d").to_string();
+        if let Err(error) = deliver_due_reminders(&store, &today, present.as_ref()).await {
+            eprintln!("Failed to deliver card reminders: {error}");
+            wait_for_wake_or_retry(&wake).await;
+            continue;
+        }
+
+        match storage::note::reminders::next_pending_reminder_due_on(&store).await {
+            Ok(Some(due_on)) => match NaiveDate::parse_from_str(&due_on, "%Y-%m-%d") {
+                Ok(date) => {
+                    let delay = duration_until_due_date(date, Local::now());
+                    if delay.is_zero() {
+                        continue;
+                    }
+                    let delay = delay.min(MAX_DEADLINE_SLEEP);
+                    let delay = fallback_rescan.map_or(delay, |fallback| delay.min(fallback));
+                    wait_for_deadline_or_wake(&wake, Some(delay)).await;
+                }
+                Err(error) => {
+                    eprintln!("Invalid card reminder due date {due_on}: {error}");
+                    wait_for_wake_or_retry(&wake).await;
+                }
+            },
+            Ok(None) => wait_for_deadline_or_wake(&wake, fallback_rescan).await,
+            Err(error) => {
+                eprintln!("Failed to schedule card reminders: {error}");
+                wait_for_wake_or_retry(&wake).await;
             }
         }
-    });
+    }
+}
+
+fn duration_until_due_date(date: NaiveDate, now: DateTime<Local>) -> Duration {
+    for hour in 0..24 {
+        let Some(local_time) = date.and_hms_opt(hour, 0, 0) else {
+            continue;
+        };
+        if let Some(deadline) = Local.from_local_datetime(&local_time).earliest() {
+            return deadline
+                .signed_duration_since(now)
+                .to_std()
+                .unwrap_or_default();
+        }
+    }
+    RETRY_DELAY
+}
+
+async fn wait_for_wake_or_retry(wake: &Notify) {
+    wait_for_deadline_or_wake(wake, Some(RETRY_DELAY)).await;
+}
+
+async fn wait_for_deadline_or_wake(wake: &Notify, delay: Option<Duration>) {
+    if let Some(delay) = delay {
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            () = wake.notified() => {}
+        }
+    } else {
+        wake.notified().await;
+    }
 }
 
 pub(crate) fn wake() {
@@ -98,12 +210,15 @@ pub(crate) fn show_test_notification() -> anyhow::Result<()> {
     )
 }
 
-async fn deliver_due_reminders(store: &Store) -> anyhow::Result<()> {
-    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    let due = storage::note::reminders::load_due_reminders(store, &today).await?;
+async fn deliver_due_reminders(
+    store: &Store,
+    today: &str,
+    present: &ReminderPresenter,
+) -> anyhow::Result<()> {
+    let due = storage::note::reminders::load_due_reminders(store, today).await?;
     let mut notified = Vec::with_capacity(due.len());
     for reminder in &due {
-        if let Err(error) = show_system_notification(reminder) {
+        if let Err(error) = present(reminder) {
             if !notified.is_empty() {
                 storage::note::reminders::mark_many_reminders_notified(store, &notified).await?;
             }
@@ -211,6 +326,207 @@ fn castle_shortcut_is_registered() -> bool {
                 .is_file()
         })
     })
+}
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+    use anyhow::Result;
+    use entity::{board, card, entry};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn store_with_due_reminders() -> Result<(Store, String, i64)> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let due_on = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let board = board::ActiveModel {
+            title: Set("Delivery".to_string()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let list = card::ActiveModel {
+            title: Set("Today".to_string()),
+            board_id: Set(board.id),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        for (position, title) in [(0, "First"), (1, "Second")] {
+            entry::ActiveModel {
+                title: Set(title.to_string()),
+                description: Set(String::new()),
+                card_id: Set(list.id),
+                position: Set(position),
+                due_on: Set(Some(due_on.clone())),
+                reminder_enabled: Set(true),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        Ok((Store::from(db), due_on, list.id))
+    }
+
+    #[tokio::test]
+    async fn delivery_marks_only_successfully_presented_reminders() -> Result<()> {
+        let (store, today, _) = store_with_due_reminders().await?;
+        let calls = AtomicUsize::new(0);
+        let presenter = move |_: &DueReminder| {
+            let call = calls.fetch_add(1, Ordering::Relaxed);
+            if call == 1 {
+                anyhow::bail!("notification service failed");
+            }
+            Ok(())
+        };
+
+        let error = deliver_due_reminders(&store, &today, &presenter)
+            .await
+            .expect_err("second notification should fail");
+        assert_eq!(error.to_string(), "notification service failed");
+        let remaining = storage::note::reminders::load_due_reminders(&store, &today).await?;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].title, "Second");
+
+        deliver_due_reminders(&store, &today, &|_| Ok(())).await?;
+        assert!(
+            storage::note::reminders::load_due_reminders(&store, &today)
+                .await?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn scheduler_reschedules_on_change_and_delivers_each_reminder_once() -> Result<()> {
+        let (store, today, list_id) = store_with_due_reminders().await?;
+        let wake = Arc::new(Notify::new());
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let presenter: Arc<ReminderPresenter> = Arc::new(move |reminder: &DueReminder| {
+            sender.send(reminder.title.clone())?;
+            Ok(())
+        });
+        let scheduler = tokio::spawn(run_reminder_scheduler(
+            store.clone(),
+            wake.clone(),
+            presenter,
+            None,
+        ));
+
+        for title in ["First", "Second"] {
+            let delivered = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("scheduler stopped"))?;
+            assert_eq!(delivered, title);
+        }
+
+        entry::ActiveModel {
+            title: Set("Added later".to_string()),
+            description: Set(String::new()),
+            card_id: Set(list_id),
+            position: Set(2),
+            due_on: Set(Some(today.clone())),
+            reminder_enabled: Set(true),
+            ..Default::default()
+        }
+        .insert(&store)
+        .await?;
+        wake.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await?,
+            Some("Added later".to_string())
+        );
+
+        wake.notify_one();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), receiver.recv())
+                .await
+                .is_err()
+        );
+        assert!(
+            storage::note::reminders::load_due_reminders(&store, &today)
+                .await?
+                .is_empty()
+        );
+        scheduler.abort();
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduler_waits_for_deadline_or_change_without_minute_ticks() {
+        let wake = Arc::new(Notify::new());
+        let deadline_wait = tokio::spawn({
+            let wake = wake.clone();
+            async move {
+                wait_for_deadline_or_wake(&wake, Some(Duration::from_secs(3_600))).await;
+            }
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert!(!deadline_wait.is_finished());
+        wake.notify_one();
+        deadline_wait
+            .await
+            .expect("wake should interrupt the deadline");
+
+        let idle_wait = tokio::spawn({
+            let wake = wake.clone();
+            async move { wait_for_deadline_or_wake(&wake, None).await }
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(86_400)).await;
+        assert!(!idle_wait.is_finished());
+        wake.notify_one();
+        idle_wait
+            .await
+            .expect("a database change should interrupt idle wait");
+    }
+
+    #[test]
+    fn due_date_is_scheduled_at_the_start_of_its_local_day() {
+        let now = Local::now();
+        assert_eq!(
+            duration_until_due_date(now.date_naive(), now),
+            Duration::ZERO
+        );
+        let tomorrow = now.date_naive().succ_opt().expect("date should advance");
+        let delay = duration_until_due_date(tomorrow, now);
+        assert!(delay > Duration::ZERO);
+        assert!(delay <= Duration::from_secs(25 * 60 * 60));
+    }
+
+    #[test]
+    fn database_watcher_accepts_database_and_wal_events() {
+        use notify::{Event, EventKind};
+        let database = Path::new("C:/data/castle.db");
+        let event =
+            |path| Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(path);
+        assert!(is_database_change(&event(database.to_path_buf()), database));
+        assert!(is_database_change(
+            &event("C:/data/castle.db-wal".into()),
+            database
+        ));
+        assert!(!is_database_change(
+            &event("C:/data/other.db-wal".into()),
+            database
+        ));
+    }
+
+    #[tokio::test]
+    async fn database_watcher_wakes_for_external_wal_write() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let database = directory.path().join("castle.db");
+        std::fs::write(&database, [])?;
+        let wake = Arc::new(Notify::new());
+        let _watcher = watch_database_changes(&database, wake.clone())?;
+
+        std::fs::write(directory.path().join("castle.db-wal"), b"changed")?;
+        tokio::time::timeout(Duration::from_secs(5), wake.notified()).await?;
+        Ok(())
+    }
 }
 
 #[cfg(all(test, target_os = "windows"))]

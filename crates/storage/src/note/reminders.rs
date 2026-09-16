@@ -9,6 +9,35 @@ pub struct DueReminder {
     pub list_title: String,
 }
 
+pub async fn next_pending_reminder_due_on(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+) -> anyhow::Result<Option<String>> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            r#"
+            SELECT MIN(e.due_on) AS due_on
+            FROM entry e
+            JOIN card c ON c.id = e.card_id AND c.deleted_at IS NULL
+            JOIN board b ON b.id = c.board_id AND b.deleted_at IS NULL
+            LEFT JOIN project p ON p.id = b.project_id
+            WHERE e.deleted_at IS NULL
+              AND (p.id IS NULL OR p.deleted_at IS NULL)
+              AND e.reminder_enabled = 1
+              AND e.due_on IS NOT NULL
+              AND (e.reminder_notified_for IS NULL OR e.reminder_notified_for <> e.due_on)
+            "#,
+        ))
+        .await?;
+    row.map(|row| row.try_get("", "due_on"))
+        .transpose()
+        .map(Option::flatten)
+        .map_err(Into::into)
+}
+
 pub async fn load_due_reminders(
     db: &(
          impl sea_orm::ConnectionTrait
@@ -103,6 +132,62 @@ mod tests {
     use entity::{board, card, entry, project};
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+
+    #[tokio::test]
+    async fn next_deadline_tracks_only_pending_active_reminders() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        assert_eq!(next_pending_reminder_due_on(&db).await?, None);
+
+        let board = board::ActiveModel {
+            title: Set("Delivery".to_string()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let list = card::ActiveModel {
+            title: Set("Today".to_string()),
+            board_id: Set(board.id),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+
+        for (position, due_on, enabled, notified_for) in [
+            (0, "2026-07-28", false, None),
+            (1, "2026-07-29", true, Some("2026-07-29")),
+            (2, "2026-07-31", true, None),
+            (3, "2026-08-01", true, None),
+        ] {
+            entry::ActiveModel {
+                title: Set(format!("Entry {position}")),
+                description: Set(String::new()),
+                card_id: Set(list.id),
+                position: Set(position),
+                due_on: Set(Some(due_on.to_string())),
+                reminder_enabled: Set(enabled),
+                reminder_notified_for: Set(notified_for.map(str::to_string)),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+
+        assert_eq!(
+            next_pending_reminder_due_on(&db).await?.as_deref(),
+            Some("2026-07-31")
+        );
+
+        let due = load_due_reminders(&db, "2026-07-31").await?;
+        assert_eq!(due.len(), 1);
+        mark_reminder_notified(&db, due[0].entry_id, due[0].due_on.clone()).await?;
+        assert_eq!(
+            next_pending_reminder_due_on(&db).await?.as_deref(),
+            Some("2026-08-01")
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn due_reminders_are_loaded_once_after_notification() -> Result<()> {
