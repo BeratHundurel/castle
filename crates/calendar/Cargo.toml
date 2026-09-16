@@ -5,8 +5,12 @@ publish = false
 edition.workspace = true
 
 [dependencies]
+gpui-kit.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
 chrono.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true

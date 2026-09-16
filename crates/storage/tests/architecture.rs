@@ -58,14 +58,23 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
         ("castle-mcp", set(&["storage"])),
         (
             "document_editor",
-            set(&["runtime", "settings", "storage", "workspace"]),
+            set(&[
+                "mermaid_renderer",
+                "runtime",
+                "settings",
+                "storage",
+                "workspace",
+            ]),
         ),
         ("entity", set(&[])),
         ("migration", set(&[])),
+        ("mermaid_renderer", set(&[])),
         (
             "shell",
             set(&[
                 "board",
+                "calendar",
+                "workflow",
                 "command_palette",
                 "document_editor",
                 "runtime",
@@ -79,7 +88,7 @@ fn workspace_packages_follow_the_allowed_dependency_graph() {
             set(&["calendar", "entity", "migration", "workflow"]),
         ),
         ("calendar", set(&[])),
-        ("workflow", set(&[])),
+        ("workflow", set(&["mermaid_renderer"])),
         ("test_support", set(&[])),
         ("workspace", set(&["runtime", "settings", "storage"])),
     ]);

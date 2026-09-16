@@ -26,7 +26,11 @@ impl BoardView {
             && self.data.lists.is_empty()
             && !self.entry_editing.adding_list
         {
-            return self.render_empty_board(cx).into_any_element();
+            return v_flex()
+                .size_full()
+                .child(self.render_filter_toolbar(cx))
+                .child(self.render_empty_board(cx))
+                .into_any_element();
         }
 
         if let Some(board_id) = board_id_for_render {
@@ -115,13 +119,16 @@ impl BoardView {
             .child(self.render_view_picker(cx))
             .child(
                 Button::new("open-board-calendar")
+                    .debug_selector(|| "open-board-calendar".into())
                     .icon(IconName::Calendar)
                     .label("Calendar")
                     .ghost()
                     .small()
                     .tooltip("Open calendar and recurring tasks")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_calendar_panel(window, cx);
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(super::super::BoardViewEvent::Navigate(
+                            super::super::BoardDestination::Calendar,
+                        ));
                     })),
             )
             .child(
@@ -134,8 +141,10 @@ impl BoardView {
                             .ghost()
                             .small()
                             .tooltip("Configure conditional workflows")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_workflow_editor(window, cx);
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(super::super::BoardViewEvent::Navigate(
+                                    super::super::BoardDestination::Workflows,
+                                ));
                             })),
                     ),
             )

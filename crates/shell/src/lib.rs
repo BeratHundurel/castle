@@ -1,6 +1,8 @@
 mod action;
 mod action_handlers;
 mod board_integration;
+mod board_navigation;
+use board_navigation::BoardNavigation;
 mod home;
 mod render;
 mod tabs;
@@ -53,6 +55,8 @@ use storage::workspace::home::WorkspaceHomeState;
 use storage::workspace::trash::{TrashItem, TrashItemKind};
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
+// TabBar's scroll handle includes its indicator and leading layout child.
+const TAB_BAR_SCROLL_INDEX_OFFSET: usize = 2;
 
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
 type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
@@ -124,6 +128,7 @@ enum OpenTabKind {
         board_id: u32,
         project_id: Option<u32>,
         view: Entity<BoardView>,
+        navigation: Entity<BoardNavigation>,
     },
     Note {
         note_id: u32,
@@ -411,6 +416,7 @@ impl AppShell {
             view,
             window,
             |this, loaded_view, event: &BoardViewEvent, window, cx| match event {
+                BoardViewEvent::Navigate(_) => {}
                 BoardViewEvent::LoadFinished(board_id) => {
                     loaded_view.update(cx, |board, cx| {
                         board.apply_pending_reveal(window, cx);
@@ -588,12 +594,15 @@ impl AppShell {
                     let view = BoardView::view(window, cx);
                     Self::observe_board_view(&view, window, cx);
                     view.update(cx, |board, cx| board.load_board(board_id, cx));
+                    let navigation =
+                        cx.new(|cx| BoardNavigation::new(board_id, view.clone(), window, cx));
                     (
                         SharedString::from(title),
                         OpenTabKind::Board {
                             board_id,
                             project_id,
                             view,
+                            navigation,
                         },
                     )
                 }
@@ -633,7 +642,8 @@ impl AppShell {
         let active_tab_index = tab_session.active_tab_index.min(open_tabs.len() - 1);
         let active_title = open_tabs[active_tab_index].title.to_string();
         let tab_scroll_handle = ScrollHandle::new();
-        tab_scroll_handle.scroll_to_item(active_tab_index);
+        tab_scroll_handle
+            .scroll_to_item(active_tab_index.saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET));
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Home")

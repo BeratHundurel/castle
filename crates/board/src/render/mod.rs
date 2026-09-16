@@ -75,11 +75,5 @@ impl Render for BoardView {
                 self.entry_editing.open && self.entry_editing.dialog.open,
                 |this| this.child(self.render_entry_detail_overlay(cx)),
             )
-            .when(self.workflow_editor.open, |this| {
-                this.child(self.render_workflow_editor_overlay(cx))
-            })
-            .when(self.calendar_panel.open, |this| {
-                this.child(self.render_calendar_panel_overlay(cx))
-            })
     }
 }

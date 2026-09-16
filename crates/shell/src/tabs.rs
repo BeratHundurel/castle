@@ -3,12 +3,14 @@ use runtime::AppRuntime;
 use settings::{StoredTab, TabSession};
 
 impl AppShell {
-    fn active_board_view(&self) -> Option<Entity<BoardView>> {
+    fn active_board_view(&self, cx: &App) -> Option<Entity<BoardView>> {
         self.tabs
             .open_tabs
             .get(self.tabs.active_tab_index)
             .and_then(|tab| match &tab.kind {
-                OpenTabKind::Board { view, .. } => Some(view.clone()),
+                OpenTabKind::Board {
+                    view, navigation, ..
+                } if navigation.read(cx).is_board(cx) => Some(view.clone()),
                 _ => None,
             })
     }
@@ -18,7 +20,7 @@ impl AppShell {
         direction: isize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(view) = self.active_board_view() else {
+        let Some(view) = self.active_board_view(cx) else {
             return false;
         };
         if !view.read(cx).related_note_picker_open() {
@@ -35,7 +37,7 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(view) = self.active_board_view() else {
+        let Some(view) = self.active_board_view(cx) else {
             return false;
         };
         if !view.read(cx).related_note_picker_open() {
@@ -134,6 +136,18 @@ impl AppShell {
                     window,
                     cx,
                 );
+                if let Some(navigation) =
+                    self.tabs.open_tabs.iter().find_map(|tab| match &tab.kind {
+                        OpenTabKind::Board {
+                            board_id: id,
+                            navigation,
+                            ..
+                        } if *id == board_id => Some(navigation.clone()),
+                        _ => None,
+                    })
+                {
+                    navigation.update(cx, |navigation, cx| navigation.return_to_board(window, cx));
+                }
                 view.update(cx, |board, cx| {
                     board.queue_reveal_target(target, cx);
                     board.apply_pending_reveal(window, cx);
@@ -156,9 +170,11 @@ impl AppShell {
             if self.tabs.active_tab_index > index {
                 self.tabs.active_tab_index -= 1;
             }
-            self.tabs
-                .tab_scroll_handle
-                .scroll_to_item(self.tabs.active_tab_index);
+            self.tabs.tab_scroll_handle.scroll_to_item(
+                self.tabs
+                    .active_tab_index
+                    .saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET),
+            );
         }
     }
 
@@ -304,7 +320,9 @@ impl AppShell {
             self.exit_all_zen_modes(cx);
         }
         self.tabs.active_tab_index = index;
-        self.tabs.tab_scroll_handle.scroll_to_item(index);
+        self.tabs
+            .tab_scroll_handle
+            .scroll_to_item(index.saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET));
         let tab = &self.tabs.open_tabs[index];
 
         match &tab.kind {
@@ -342,10 +360,14 @@ impl AppShell {
             .get(self.tabs.active_tab_index)
             .map(|tab| &tab.kind)
         {
+            Some(OpenTabKind::Board { navigation, .. }) => {
+                navigation.update(cx, |navigation, cx| navigation.focus_current(window, cx));
+            }
             Some(OpenTabKind::Cheatsheet { view }) => view.focus_handle(cx).focus(window, cx),
             _ => self.focus_handle.focus(window, cx),
         }
     }
+
     pub(super) fn activate_project(
         &mut self,
         project_id: u32,
@@ -422,9 +444,11 @@ impl AppShell {
         } else if self.tabs.active_tab_index > index {
             self.tabs.active_tab_index -= 1;
         }
-        self.tabs
-            .tab_scroll_handle
-            .scroll_to_item(self.tabs.active_tab_index);
+        self.tabs.tab_scroll_handle.scroll_to_item(
+            self.tabs
+                .active_tab_index
+                .saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET),
+        );
 
         if was_active || self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
             self.sync_sidebar_active(cx);
@@ -492,7 +516,9 @@ impl AppShell {
             self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         }
         self.tabs.active_tab_index = 0;
-        self.tabs.tab_scroll_handle.scroll_to_item(0);
+        self.tabs
+            .tab_scroll_handle
+            .scroll_to_item(TAB_BAR_SCROLL_INDEX_OFFSET);
         self.exit_zen_modes_for_closed_notes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
@@ -512,7 +538,9 @@ impl AppShell {
         });
         self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         self.tabs.active_tab_index = 0;
-        self.tabs.tab_scroll_handle.scroll_to_item(0);
+        self.tabs
+            .tab_scroll_handle
+            .scroll_to_item(TAB_BAR_SCROLL_INDEX_OFFSET);
         self.exit_all_zen_modes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
@@ -757,6 +785,7 @@ impl AppShell {
 
         let view = BoardView::view(window, cx);
         Self::observe_board_view(&view, window, cx);
+        let navigation = cx.new(|cx| BoardNavigation::new(board_id, view.clone(), window, cx));
         let replaced_chooser_id = self
             .tabs
             .open_tabs
@@ -772,6 +801,7 @@ impl AppShell {
                 board_id,
                 project_id,
                 view: view.clone(),
+                navigation,
             },
         });
         self.workspace.pending_board_open = Some(PendingBoardOpen {

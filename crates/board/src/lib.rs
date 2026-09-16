@@ -1,6 +1,5 @@
 mod action;
 mod attachments;
-mod calendar_panel;
 mod color_contrast;
 mod drag;
 mod due_date;
@@ -16,32 +15,6 @@ mod render;
 mod state;
 mod template_picker;
 mod templates;
-mod workflow_editor;
-
-#[cfg(all(test, target_os = "windows"))]
-mod platform_regression_tests {
-    #[test]
-    fn calendar_and_workflow_clicks_fit_windows_stack() {
-        let executable = std::env::current_exe().expect("test executable should exist");
-        for test in [
-            "calendar_panel::tests::clicking_calendar_entry_opens_editable_details",
-            "workflow_editor::tests::opening_workflow_editor_does_not_panic",
-            "workflow_editor::tests::opening_workflow_editor_draws_persisted_graph_at_narrow_geometry",
-        ] {
-            let output = std::process::Command::new(&executable)
-                .args(["--exact", test, "--nocapture"])
-                .env("RUST_MIN_STACK", "1048576")
-                .output()
-                .expect("bounded-stack UI test should launch");
-            assert!(
-                output.status.success(),
-                "{test} failed on the Windows main-thread stack budget:\n{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-    }
-}
 
 use std::{
     collections::{HashMap, HashSet},
@@ -122,12 +95,17 @@ pub struct BoardView {
     filter_scroll_handle: ScrollHandle,
     pending_reveal_target: Option<workspace::WorkspaceNavigationTarget>,
     revealed_list_id: Option<u32>,
-    workflow_editor: workflow_editor::WorkflowEditorState,
-    calendar_panel: calendar_panel::CalendarPanelState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoardDestination {
+    Calendar,
+    Workflows,
 }
 
 #[derive(Clone, Debug)]
 pub enum BoardViewEvent {
+    Navigate(BoardDestination),
     LoadFinished(u32),
     OpenNote(u32),
     OpenWorkspaceTarget(workspace::WorkspaceNavigationTarget),
@@ -220,8 +198,6 @@ impl BoardView {
         let rename_view_input = cx.new(|cx| InputState::new(window, cx).placeholder("View name"));
         let filter_value_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter value"));
-        let workflow_editor = workflow_editor::WorkflowEditorState::new(window, cx);
-        let calendar_panel = calendar_panel::CalendarPanelState::new(window, cx);
         let related_note_picker = related_notes::RelatedNotePickerState::new(window, cx);
         let related_note_search_input = related_note_picker.search_input.clone();
 
@@ -624,8 +600,6 @@ impl BoardView {
             filter_scroll_handle: ScrollHandle::new(),
             pending_reveal_target: None,
             revealed_list_id: None,
-            workflow_editor,
-            calendar_panel,
         }
     }
 
