@@ -4,7 +4,6 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     scroll::ScrollableElement as _,
-    theme::Colorize as _,
     v_flex,
 };
 use gpui_kit::{
@@ -392,35 +391,6 @@ impl gpui_kit::component::text::MarkdownPlugin for MermaidPlugin {
             window,
             cx,
         )
-    }
-}
-
-fn theme_from_app(cx: &App) -> MermaidTheme {
-    let theme = cx.theme();
-    let chart_colors = [
-        theme.chart_1,
-        theme.chart_2,
-        theme.chart_3,
-        theme.chart_4,
-        theme.chart_5,
-    ];
-    MermaidTheme {
-        font_family: theme.font_family.to_string(),
-        background: theme.background.to_hex(),
-        surface: theme.primary.mix_oklab(theme.background, 0.08).to_hex(),
-        surface_alt: theme.primary.mix_oklab(theme.background, 0.04).to_hex(),
-        foreground: theme.foreground.to_hex(),
-        muted_foreground: theme.foreground.mix_oklab(theme.background, 0.62).to_hex(),
-        border: theme.border.to_hex(),
-        primary: theme.primary.to_hex(),
-        warning: theme.warning.to_hex(),
-        danger: theme.danger.to_hex(),
-        success: theme.success.to_hex(),
-        chart_palette: chart_colors.iter().map(|color| color.to_hex()).collect(),
-        accent_surfaces: chart_colors
-            .iter()
-            .map(|color| color.mix_oklab(theme.background, 0.16).to_hex())
-            .collect(),
     }
 }
 
@@ -877,7 +847,7 @@ fn next_horizontal_scroll_offset(current: f32, max: f32, delta: f32) -> Option<f
 
 impl DocumentEditorView {
     pub(super) fn activate_mermaids(&mut self, cx: &mut Context<Self>) {
-        let theme = theme_from_app(cx);
+        let theme = MermaidTheme::from_app(cx);
         let fingerprint = theme.fingerprint();
         let mut renderer = None;
         let descriptors = self.mermaid.analyzed.clone();
@@ -1340,7 +1310,7 @@ impl DocumentEditorView {
         self.mermaid.queue.push_back(RenderRequest::Layout {
             key,
             generation,
-            renderer: Arc::new(theme_from_app(cx).prepare()),
+            renderer: Arc::new(MermaidTheme::from_app(cx).prepare()),
         });
         self.pump_mermaid_queue(cx);
         cx.notify();

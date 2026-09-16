@@ -12,6 +12,7 @@ members = [
     "crates/storage",
     "crates/calendar",
     "crates/workflow",
+    "crates/mermaid_renderer",
     "crates/test_support",
     "crates/migration",
     "crates/entity",

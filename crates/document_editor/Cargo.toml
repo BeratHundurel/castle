@@ -10,14 +10,10 @@ anyhow.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 serde.workspace = true
 serde_json.workspace = true
-toml_edit.workspace = true
 image.workspace = true
-lsp-types.workspace = true
-chrono.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
-merman.workspace = true
-lol_html = "2.9"
+mermaid_renderer = { path = "../mermaid_renderer" }
 dprint-plugin-json = "0.22.1"
 dprint-plugin-markdown = "0.22.1"
 unicode-width = "0.2.2"
