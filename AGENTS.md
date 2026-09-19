@@ -4,52 +4,49 @@ Castle is a Rust note-taking and Kanban app built with GPUI Kit (`gpui-kit`).
 
 ## Working Agreement
 
-Before editing, an agent must read the nearest implementation, its tests, the
-re-export seam, and the relevant component documentation. It must search the
-current source for signatures instead of translating a React, CSS, or old GPUI
-example by analogy. For GPUI work, it must load the `gpui` skill and the
-references it routes to for the task. It must also load the `design` skill when
-the work changes visual hierarchy, control density, loading presentation, or
-interaction behavior.
+Before editing, read the nearest implementation, its tests, the re-export
+seam, and the component docs. Search current source for signatures; never
+translate a React, CSS, or old GPUI example by analogy. For GPUI work, load
+the `gpui` skill plus the references it routes to for the task.
 
 ## Common failure modes
 
 Avoid these patterns:
 
-- One entity containing the entire application's unrelated state. Split by behavior ownership and lifecycle rather than by arbitrary visual fragments.
-- Business logic, persistence, or network requests embedded in a long `render` method. Rendering should describe presentation from already-owned state.
-- Duplicated local state that can drift from a controlled model value. Keep one source of truth and derive presentation state unless the duplicate has an explicit synchronization and lifecycle contract.
-- `cx.notify()` loops caused by mutation during every render, prepaint, observer callback, or mutually observing entity cycle.
-- A new component variant for a one-off screen. Prefer composition or a local presentation exception unless the variant represents a reusable semantic contract.
-- Confirmation dialogs for reversible, low-risk actions. Apply the action immediately and provide undo or another clear recovery path.
+- One entity holding unrelated state. Split by behavior ownership and lifecycle, not visual fragments.
+- Logic, persistence, or network requests in `render`. Render presents already-owned state.
+- Duplicated state drifting from a controlled value. One source of truth unless the copy has a sync and lifecycle contract.
+- `cx.notify()` loops from mutating during render, prepaint, observer callbacks, or observer cycles.
+- A one-off component variant. Prefer composition or a local exception; add a variant only as a reusable semantic contract.
+- Confirming reversible, low-risk actions. Apply with undo or another recovery path instead.
 
 ## Code Style
 
-- Use precise domain names and established GPUI terminology. Name render helpers after meaningful regions and split a module when unrelated state ownership or lifecycle obscures it.
+- Precise domain names and GPUI terminology. Name render helpers after regions; split a module when unrelated ownership or lifecycle obscures it.
 - Don't use unwrap.
 - Don't comment obvious logic.
 
 ## Code Quality
 
-- Avoid workarounds or hacks. Instead, find a better solution or implement the feature properly.
+- No workarounds or hacks; implement the feature properly.
 
 ## Verification
 
-- Add a deterministic regression test before fixing a reproducible bug. Report automated checks and manual visual acceptance separately.
+- Add a deterministic regression test before fixing a reproducible bug. Report automated checks and visual acceptance separately.
 
 ## Agent bootstrap
 
-Recommended once for a new checkout or worktree, not before every task:
+Once per checkout or worktree, not before every task:
 
 ```sh
 make bootstrap
 ```
 
-Run `make bootstrap-full` after toolchain or dependency changes. Both targets build the MCP server and prepare ignored data under `target\agent-data`.
+After toolchain or dependency changes run `make bootstrap-full`. Both build the MCP server and prepare ignored data under `target\agent-data`.
 
 ## Canonical commands
 
-Use the narrowest relevant package test while iterating, then run the Fast lane before handoff:
+Iterate with the narrowest package test, then run the Fast lane before handoff:
 
 ```sh
 make check
@@ -62,7 +59,7 @@ make test-full
 
 ## Safe MCP
 
-The trusted project config uses a local stdio server, an explicit isolated database under `target\agent-data`, and approval for writes. Keep JSON-RPC on stdout, diagnostics on stderr, and never use personal or production data by default.
+The trusted project config uses a local stdio server, an isolated database under `target\agent-data`, and approval for writes. Keep JSON-RPC on stdout, diagnostics on stderr, and never use personal or production data by default.
 
 When MCP behavior is relevant, run:
 
