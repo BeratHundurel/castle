@@ -7,6 +7,7 @@
 Actions provide declarative keyboard-driven UI interactions in GPUI.
 
 **Key Concepts:**
+
 - Define actions with `actions!` macro or `#[derive(Action)]`
 - Bind keys with `cx.bind_keys()`
 - Handle with `.on_action()` on elements
@@ -170,4 +171,3 @@ impl MyComponent {
 
 div().on_action(cx.listener(Self::on_action_save))
 ```
-
