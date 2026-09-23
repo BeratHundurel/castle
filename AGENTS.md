@@ -46,16 +46,17 @@ After toolchain or dependency changes run `make bootstrap-full`. Both build the 
 
 ## Canonical commands
 
-Iterate with the narrowest package test, then run the Fast lane before handoff:
+Iterate with the package lane, then run the Fast lane before handoff:
 
 ```sh
+make check-package PACKAGE=board
 make check
 make test
 make test-mcp
 make test-full
 ```
 
-`make check` is the Fast lane. `make test` runs workspace tests without the `shell` package tests. `make test-mcp` isolates MCP verification. `make test-full` runs the complete workspace suite.
+Use `make check-package PACKAGE=<name>` while iterating and `make check` before handoff. `make test` excludes `shell`; `make test-full` covers all packages. Run `make test-mcp` for MCP changes or `make test-mcp-launcher` for launcher and config changes.
 
 ## Safe MCP
 

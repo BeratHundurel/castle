@@ -1,24 +1,19 @@
 # Keep development MCP access scoped to this trusted project.
 # The database lives under target/ and is intentionally separate from user data.
-mcp_optional_startup_grace_ms = 0
+mcp_optional_startup_grace_ms = 15000
 
 [mcp_servers.castle]
-command = "cargo"
+command = "pwsh"
 args = [
-    "run",
-    "--quiet",
-    "--locked",
-    "--package",
-    "castle-mcp",
-    "--bin",
-    "castle-mcp",
-    "--",
-    "--database",
+    "-NoProfile",
+    "-File",
+    "scripts/launch-mcp.ps1",
+    "-Database",
     "target/agent-data/castle.db",
 ]
 cwd = "."
 enabled = true
 required = false
-startup_timeout_sec = 120
+startup_timeout_sec = 600
 tool_timeout_sec = 120
 default_tools_approval_mode = "writes"

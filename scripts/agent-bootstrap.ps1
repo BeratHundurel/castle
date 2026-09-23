@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $targetDataDirectory = Join-Path $repoRoot "target\agent-data"
+$mcpTargetDirectory = Join-Path $targetDataDirectory "mcp-build"
 
 function Invoke-CheckedCommand {
     param(
@@ -28,19 +29,17 @@ function Invoke-CheckedCommand {
 
 Push-Location $repoRoot
 try {
-    foreach ($tool in @("cargo", "rustc")) {
+    foreach ($tool in @("cargo", "rustc", "pwsh")) {
         if ($null -eq (Get-Command $tool -ErrorAction SilentlyContinue)) {
             throw "Required tool '$tool' was not found on PATH."
         }
     }
 
-    Invoke-CheckedCommand -Executable "cargo" -Arguments @("fetch", "--locked")
-
     if (-not $SkipWorkspaceCheck) {
         Invoke-CheckedCommand -Executable "cargo" -Arguments @("check", "--workspace", "--locked")
     }
 
-    $buildArguments = @("build", "--locked", "--package", "castle-mcp", "--bin", "castle-mcp")
+    $buildArguments = @("build", "--locked", "--target-dir", $mcpTargetDirectory, "--package", "castle-mcp", "--bin", "castle-mcp")
     if ($Profile -eq "release") {
         $buildArguments += "--release"
     }
@@ -48,7 +47,7 @@ try {
 
     New-Item -ItemType Directory -Force -Path $targetDataDirectory | Out-Null
 
-    $binaryDirectory = Join-Path $repoRoot (Join-Path "target" $Profile)
+    $binaryDirectory = Join-Path $mcpTargetDirectory $Profile
     $binaryPath = Join-Path $binaryDirectory "castle-mcp.exe"
     if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
         throw "Castle MCP binary was not produced at '$binaryPath'."

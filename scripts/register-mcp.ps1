@@ -10,17 +10,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$binaryPath = Join-Path $repoRoot (Join-Path (Join-Path "target" $Profile) "castle-mcp.exe")
+$launcherPath = Join-Path $PSScriptRoot "launch-mcp.ps1"
 $dataDirectory = Join-Path $repoRoot "target\agent-data"
 $databasePath = Join-Path $dataDirectory "castle.db"
 
 if ($null -eq (Get-Command codex -ErrorAction SilentlyContinue)) {
     throw "The Codex CLI was not found on PATH."
 }
-if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
-    throw "Castle MCP binary was not found at '$binaryPath'. Run scripts\agent-bootstrap.ps1 first."
+if ($null -eq (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+    throw "PowerShell 7 was not found on PATH."
 }
-
 New-Item -ItemType Directory -Force -Path $dataDirectory | Out-Null
 
 & codex mcp get $Name 2>$null | Out-Null
@@ -40,9 +39,14 @@ $arguments = @(
     "add",
     $Name,
     "--",
-    $binaryPath,
-    "--database",
-    $databasePath
+    "pwsh",
+    "-NoProfile",
+    "-File",
+    $launcherPath,
+    "-Database",
+    $databasePath,
+    "-Profile",
+    $Profile
 )
 & codex @arguments
 if ($LASTEXITCODE -ne 0) {

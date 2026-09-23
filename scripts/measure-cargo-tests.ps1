@@ -12,9 +12,8 @@ compiler and test child processes, so this value is useful for comparing Cargo o
 but must not be presented as peak memory for the complete process tree.
 
 .PARAMETER Lane
-One or more lanes to measure: app, board, document_editor, app_settings,
-storage, or workspace. The feature lanes become available as their crates are
-added to the workspace.
+One or more lanes to measure: app, board, document_editor, settings,
+storage, or workspace.
 
 .PARAMETER Warmup
 Number of unrecorded warm-up runs per lane. Defaults to 1.
@@ -39,9 +38,11 @@ Directory that receives timestamped result directories. It must be inside target
 ./scripts/measure-cargo-tests.ps1 -Label after -BaselineResult target/performance-measurements/20260815-120000-before/result.json
 #>
 
+#requires -Version 7.0
+
 [CmdletBinding()]
 param(
-    [ValidateSet("app", "board", "document_editor", "app_settings", "storage", "workspace")]
+    [ValidateSet("app", "board", "document_editor", "settings", "storage", "workspace")]
     [string[]] $Lane = @("app", "storage", "workspace"),
 
     [ValidateRange(0, 100)]
@@ -229,7 +230,7 @@ $laneDefinitions = [ordered]@{
     app = @("test", "-p", "app", "--lib", "--message-format=json")
     board = @("test", "-p", "board", "--lib", "--message-format=json")
     document_editor = @("test", "-p", "document_editor", "--lib", "--message-format=json")
-    app_settings = @("test", "-p", "app_settings", "--lib", "--message-format=json")
+    settings = @("test", "-p", "settings", "--lib", "--message-format=json")
     storage = @("test", "-p", "storage", "--lib", "--message-format=json")
     workspace = @("test", "--workspace", "--all-targets", "--message-format=json")
 }

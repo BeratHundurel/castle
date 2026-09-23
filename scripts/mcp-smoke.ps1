@@ -1,20 +1,23 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Binary", "Cargo")]
+    [ValidateSet("Binary", "Configured")]
     [string]$Launcher = "Binary",
     [ValidateSet("debug", "release")]
     [string]$Profile = "debug",
     [ValidateRange(1000, 120000)]
-    [int]$TimeoutMilliseconds = 15000
+    [int]$TimeoutMilliseconds = 15000,
+    [ValidateRange(1000, 600000)]
+    [int]$StartupTimeoutMilliseconds = 15000
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$binaryPath = Join-Path $repoRoot (Join-Path (Join-Path "target" $Profile) "castle-mcp.exe")
+$binaryPath = Join-Path $repoRoot (Join-Path (Join-Path "target/agent-data/mcp-build" $Profile) "castle-mcp.exe")
 $started = $false
 $process = $null
+$stderrTask = $null
 
 function Send-JsonMessage {
     param(
@@ -49,8 +52,7 @@ function Receive-JsonResponse {
 
         $line = $readTask.Result
         if ($null -eq $line) {
-            $stderr = $Process.StandardError.ReadToEnd()
-            throw "MCP process closed stdout before response id $ExpectedId. $stderr"
+            throw "MCP process closed stdout before response id $ExpectedId."
         }
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
@@ -72,6 +74,19 @@ function Receive-JsonResponse {
     throw "Timed out waiting for MCP response id $ExpectedId."
 }
 
+function Stop-McpProcess {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($null -eq $Process -or $Process.HasExited) {
+        return
+    }
+    $Process.StandardInput.Close()
+    if (-not $Process.WaitForExit(3000)) {
+        $Process.Kill()
+        $Process.WaitForExit(3000) | Out-Null
+    }
+}
+
 try {
     if ($Launcher -eq "Binary") {
         if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
@@ -81,12 +96,8 @@ try {
         $arguments = "--database :memory:"
     }
     else {
-        $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
-        if ($null -eq $cargoCommand) {
-            throw "Cargo was not found on PATH."
-        }
-        $executable = $cargoCommand.Source
-        $arguments = "run --quiet --locked --package castle-mcp --bin castle-mcp -- --database :memory:"
+        $executable = "pwsh"
+        $arguments = "-NoProfile -File scripts/launch-mcp.ps1 -Database :memory: -Profile $Profile"
     }
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -105,6 +116,7 @@ try {
         throw "Could not start '$executable'."
     }
     $started = $true
+    $stderrTask = $process.StandardError.ReadToEndAsync()
 
     Send-JsonMessage -Process $process -Message @{
         jsonrpc = "2.0"
@@ -120,7 +132,8 @@ try {
         }
     }
 
-    $initializeResponse = Receive-JsonResponse -Process $process -ExpectedId 1 -TimeoutMilliseconds $TimeoutMilliseconds
+    $initializeTimeout = if ($Launcher -eq "Configured") { $StartupTimeoutMilliseconds } else { $TimeoutMilliseconds }
+    $initializeResponse = Receive-JsonResponse -Process $process -ExpectedId 1 -TimeoutMilliseconds $initializeTimeout
     $initializeError = $initializeResponse.PSObject.Properties["error"]
     if ($null -ne $initializeError) {
         throw "MCP initialize failed: $($initializeError.Value | ConvertTo-Json -Compress -Depth 10)"
@@ -163,14 +176,28 @@ try {
     Write-Host ("MCP stdio smoke passed via {0}: {1} tools discovered." -f $Launcher, $tools.Count)
 }
 catch {
-    Write-Error $_
+    $failure = $_
+    if ($started) {
+        Stop-McpProcess -Process $process
+    }
+    $stderr = if ($null -ne $stderrTask -and $stderrTask.IsCompleted) {
+        $stderrTask.GetAwaiter().GetResult().Trim()
+    }
+    else {
+        ""
+    }
+    if ($stderr) {
+        Write-Error "$failure`nMCP stderr:`n$stderr"
+    }
+    else {
+        Write-Error $failure
+    }
     exit 1
 }
 finally {
     if ($null -ne $process) {
-        if ($started -and -not $process.HasExited) {
-            $process.Kill()
-            $process.WaitForExit(3000) | Out-Null
+        if ($started) {
+            Stop-McpProcess -Process $process
         }
         $process.Dispose()
     }
