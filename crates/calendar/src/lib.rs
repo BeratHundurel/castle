@@ -9,6 +9,8 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::component::{
     ActiveTheme, Disableable as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
+    calendar::Date,
+    date_picker::{DatePickerEvent, DatePickerState},
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement as _,
@@ -196,14 +198,14 @@ pub(crate) struct CalendarPanelState {
     pub(crate) entries: Vec<CalendarEntryRecord>,
     pub(crate) recurring: Vec<RecurringTaskRecord>,
     recurrence_entry_select: Entity<CalendarEntrySelectState>,
-    pub(crate) recurrence_start_input: Entity<InputState>,
+    pub(crate) recurrence_start_picker: Entity<DatePickerState>,
     pub(crate) recurrence_rule_input: Entity<InputState>,
-    pub(crate) recurrence_until_input: Entity<InputState>,
+    pub(crate) recurrence_until_picker: Entity<DatePickerState>,
     pub(crate) recurrence_on_schedule: bool,
     pub(crate) recurrence_form_open: bool,
     pub(crate) selected_entry_id: Option<i64>,
     pub(crate) detail_title_input: Entity<InputState>,
-    pub(crate) detail_due_input: Entity<InputState>,
+    pub(crate) detail_due_picker: Entity<DatePickerState>,
 }
 
 #[derive(Clone)]
@@ -244,20 +246,19 @@ impl CalendarPanelState {
             recurrence_entry_select: cx.new(|cx| {
                 SelectState::new(SearchableVec::new(Vec::new()), None, window, cx).searchable(true)
             }),
-            recurrence_start_input: cx
-                .new(|cx| InputState::new(window, cx).placeholder("First occurrence (YYYY-MM-DD)")),
+            recurrence_start_picker: cx
+                .new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d")),
             recurrence_rule_input: cx.new(|cx| {
                 InputState::new(window, cx).placeholder("daily / every 2 weeks on mon, wed")
             }),
-            recurrence_until_input: cx
-                .new(|cx| InputState::new(window, cx).placeholder("Until (optional)")),
+            recurrence_until_picker: cx
+                .new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d")),
             recurrence_on_schedule: false,
             recurrence_form_open: false,
             selected_entry_id: None,
             detail_title_input: cx.new(|cx| InputState::new(window, cx).placeholder("Title")),
-            detail_due_input: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Due date (YYYY-MM-DD, optional)")
-            }),
+            detail_due_picker: cx
+                .new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d")),
         }
     }
 }
@@ -314,15 +315,15 @@ impl CalendarWorkspace {
         self.state
             .recurrence_entry_select
             .update(cx, |picker, cx| picker.set_selected_index(None, window, cx));
-        self.state
-            .recurrence_start_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.state.recurrence_start_picker.update(cx, |picker, cx| {
+            picker.set_date(Date::Single(None), window, cx)
+        });
         self.state
             .recurrence_rule_input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.state
-            .recurrence_until_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.state.recurrence_until_picker.update(cx, |picker, cx| {
+            picker.set_date(Date::Single(None), window, cx)
+        });
         self.state.recurrence_form_open = false;
         cx.notify();
     }
@@ -349,25 +350,49 @@ impl CalendarWorkspace {
         else {
             return;
         };
-        let draft = self.drafts.entry(entry_id).or_insert_with(|| {
+        if let std::collections::hash_map::Entry::Vacant(draft_entry) = self.drafts.entry(entry_id)
+        {
             let title = cx.new(|cx| InputState::new(window, cx).default_value(entry.title.clone()));
-            let due = cx.new(|cx| InputState::new(window, cx).default_value(entry.due_on.clone()));
+            let due_picker = cx.new(|cx| DatePickerState::new(window, cx).date_format("%Y-%m-%d"));
+            due_picker.update(cx, |picker, cx| {
+                picker.set_date(
+                    Date::Single(parse_calendar_date(Some(&entry.due_on))),
+                    window,
+                    cx,
+                );
+            });
             cx.observe(&title, |_, _, cx| cx.notify()).detach();
-            cx.observe(&due, |_, _, cx| cx.notify()).detach();
-            EntryDraft {
+            cx.subscribe_in(
+                &due_picker,
+                window,
+                move |this, _, event: &DatePickerEvent, _, cx| {
+                    if matches!(event, DatePickerEvent::Change(Date::Single(_))) {
+                        if let Some(draft) = this.drafts.get_mut(&entry_id) {
+                            draft.error = None;
+                        }
+                        cx.notify();
+                    }
+                },
+            )
+            .detach();
+            let status = calendar_entry_lifecycle(&entry);
+            draft_entry.insert(EntryDraft {
                 title,
-                due,
+                due_picker,
                 baseline: (entry.title.clone(), entry.due_on.clone()),
-                status: calendar_entry_lifecycle(&entry),
-                baseline_status: calendar_entry_lifecycle(&entry),
+                status,
+                baseline_status: status,
                 entry,
                 saving: false,
                 error: None,
-            }
-        });
+            });
+        }
+        let Some(draft) = self.drafts.get(&entry_id) else {
+            return;
+        };
         self.state.selected_entry_id = Some(entry_id);
         self.state.detail_title_input = draft.title.clone();
-        self.state.detail_due_input = draft.due.clone();
+        self.state.detail_due_picker = draft.due_picker.clone();
         if self.route_narrow(CalendarRoute::Month) {
             cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Item));
         }
@@ -402,9 +427,13 @@ impl CalendarWorkspace {
             picker.set_selected_value(&entry_id, window, cx);
         });
         let start_on = entry.due_on.unwrap_or_default();
-        self.state
-            .recurrence_start_input
-            .update(cx, |input, cx| input.set_value(start_on, window, cx));
+        self.state.recurrence_start_picker.update(cx, |picker, cx| {
+            picker.set_date(
+                Date::Single(parse_calendar_date(Some(&start_on))),
+                window,
+                cx,
+            );
+        });
         cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Recurring));
         cx.notify();
     }
@@ -426,7 +455,7 @@ impl CalendarWorkspace {
             return;
         }
         let title = draft.title.read(cx).value().trim().to_string();
-        let due = draft.due.read(cx).value().trim().to_string();
+        let due = date_picker_value(draft.due_picker.read(cx));
         if let Err(error) = validate_calendar_entry_draft(&title, &due) {
             draft.error = Some(error.into());
             cx.notify();
@@ -523,14 +552,19 @@ impl CalendarWorkspace {
                             if let Some(draft) = this.drafts.get_mut(&entry.entry_id) {
                                 let clean = !draft.saving
                                     && draft.title.read(cx).value().as_ref() == draft.baseline.0
-                                    && draft.due.read(cx).value().as_ref() == draft.baseline.1
+                                    && date_picker_value(draft.due_picker.read(cx))
+                                        == draft.baseline.1
                                     && draft.status == draft.baseline_status;
                                 if clean {
                                     draft.title.update(cx, |input, cx| {
                                         input.set_value(entry.title.clone(), window, cx)
                                     });
-                                    draft.due.update(cx, |input, cx| {
-                                        input.set_value(entry.due_on.clone(), window, cx)
+                                    draft.due_picker.update(cx, |picker, cx| {
+                                        picker.set_date(
+                                            Date::Single(parse_calendar_date(Some(&entry.due_on))),
+                                            window,
+                                            cx,
+                                        )
                                     });
                                     draft.baseline = (entry.title.clone(), entry.due_on.clone());
                                     draft.status = calendar_entry_lifecycle(entry);
@@ -610,21 +644,8 @@ impl CalendarWorkspace {
             .trim()
             .to_string();
 
-        let start_text = self
-            .state
-            .recurrence_start_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-
-        let until_text = self
-            .state
-            .recurrence_until_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
+        let start_date = date_picker_option(self.state.recurrence_start_picker.read(cx));
+        let until_date = date_picker_option(self.state.recurrence_until_picker.read(cx));
 
         let Some(entry) = self
             .lists
@@ -636,12 +657,7 @@ impl CalendarWorkspace {
             cx.notify();
             return;
         };
-        let start_on = if start_text.is_empty() {
-            entry.due_on.as_deref().map(str::to_string)
-        } else {
-            Some(start_text)
-        };
-        let Some(start_on) = start_on else {
+        let Some(start_on) = start_date.or_else(|| entry.due_on.clone()) else {
             self.state.recurrence_error =
                 Some("Set a first occurrence date for entries without a due date".into());
             cx.notify();
@@ -651,7 +667,7 @@ impl CalendarWorkspace {
             entry_id,
             start_on,
             rule,
-            until_on: (!until_text.is_empty()).then_some(until_text),
+            until_on: until_date,
             generation_mode: if self.state.recurrence_on_schedule {
                 GenerationMode::OnSchedule
             } else {
@@ -791,6 +807,23 @@ fn calendar_entry_lifecycle_label(state: EntryLifecycleState) -> &'static str {
     }
 }
 
+fn parse_calendar_date(value: Option<&str>) -> Option<NaiveDate> {
+    value
+        .filter(|value| !value.is_empty())
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+}
+
+fn date_picker_option(picker: &DatePickerState) -> Option<String> {
+    match picker.date() {
+        Date::Single(Some(date)) => Some(date.format("%Y-%m-%d").to_string()),
+        Date::Single(None) | Date::Range(_, _) => None,
+    }
+}
+
+fn date_picker_value(picker: &DatePickerState) -> String {
+    date_picker_option(picker).unwrap_or_default()
+}
+
 fn validate_calendar_entry_draft(title: &str, due_on: &str) -> Result<(), &'static str> {
     if title.trim().is_empty() {
         return Err("Title cannot be empty");
@@ -825,7 +858,7 @@ pub enum CalendarWorkspaceEvent {
 
 struct EntryDraft {
     title: Entity<InputState>,
-    due: Entity<InputState>,
+    due_picker: Entity<DatePickerState>,
     baseline: (String, String),
     status: EntryLifecycleState,
     baseline_status: EntryLifecycleState,
@@ -899,7 +932,7 @@ impl CalendarWorkspace {
             .is_some_and(|draft| {
                 (
                     draft.title.read(cx).value().to_string(),
-                    draft.due.read(cx).value().to_string(),
+                    date_picker_value(draft.due_picker.read(cx)),
                 ) != draft.baseline
                     || draft.status != draft.baseline_status
             })
@@ -916,8 +949,12 @@ impl CalendarWorkspace {
             draft.title.update(cx, |input, cx| {
                 input.set_value(draft.baseline.0.clone(), window, cx)
             });
-            draft.due.update(cx, |input, cx| {
-                input.set_value(draft.baseline.1.clone(), window, cx)
+            draft.due_picker.update(cx, |picker, cx| {
+                picker.set_date(
+                    Date::Single(parse_calendar_date(Some(&draft.baseline.1))),
+                    window,
+                    cx,
+                )
             });
             draft.status = draft.baseline_status;
             draft.error = None;

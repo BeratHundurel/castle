@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::date_picker::DatePicker;
 
 impl CalendarWorkspace {
     pub(super) fn render_calendar_grid(
@@ -260,7 +261,10 @@ impl CalendarWorkspace {
                                     .child("First occurrence"),
                             )
                             .child(
-                                Input::new(&self.state.recurrence_start_input)
+                                DatePicker::new(&self.state.recurrence_start_picker)
+                                    .placeholder("No date selected")
+                                    .cleanable(true)
+                                    .number_of_months(1)
                                     .disabled(self.state.creating)
                                     .w_full(),
                             ),
@@ -278,7 +282,10 @@ impl CalendarWorkspace {
                                     .child("Until (optional)"),
                             )
                             .child(
-                                Input::new(&self.state.recurrence_until_input)
+                                DatePicker::new(&self.state.recurrence_until_picker)
+                                    .placeholder("No end date")
+                                    .cleanable(true)
+                                    .number_of_months(1)
                                     .disabled(self.state.creating)
                                     .w_full(),
                             ),
@@ -550,12 +557,12 @@ impl CalendarWorkspace {
                     .text_color(theme.muted_foreground)
                     .child("Due date"),
             )
-            .child(Input::new(&self.state.detail_due_input).w_full())
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("Use YYYY-MM-DD. Leave blank to remove the due date."),
+                DatePicker::new(&self.state.detail_due_picker)
+                    .placeholder("No due date")
+                    .cleanable(true)
+                    .number_of_months(1)
+                    .w_full(),
             )
             .child(
                 h_flex()
