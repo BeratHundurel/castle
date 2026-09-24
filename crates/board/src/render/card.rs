@@ -52,6 +52,7 @@ impl BoardView {
         }
 
         let has_matching_cards = !entries.is_empty();
+        let entries_scroll_handle = self.list_scroll_handle(card_id);
 
         v_flex()
             .id(card.id as usize)
@@ -101,7 +102,11 @@ impl BoardView {
                 this.move_card(info, card_id, cx);
             }))
             .child(self.render_card_header(card, card_drag_info, cx))
-            .children(entries)
+            .child(list_entries_viewport(
+                card_id,
+                &entries_scroll_handle,
+                entries,
+            ))
             .when(cards_are_filterable && !has_matching_cards, |this| {
                 this.child(
                     div()
@@ -132,6 +137,7 @@ impl BoardView {
 
         h_flex()
             .id(format!("card-list-title-{}", card_id))
+            .flex_shrink_0()
             .p_1()
             .justify_between()
             .font_weight(FontWeight::MEDIUM)
@@ -430,6 +436,7 @@ impl BoardView {
     ) -> impl IntoElement {
         h_flex()
             .id(("add-item", card_id as usize))
+            .flex_shrink_0()
             .w_full()
             .rounded(cx.theme().radius)
             .gap_2()
@@ -544,6 +551,31 @@ impl BoardView {
                     ),
             )
     }
+}
+
+pub(super) fn list_entries_viewport(
+    card_id: u32,
+    scroll_handle: &ScrollHandle,
+    entries: Vec<AnyElement>,
+) -> AnyElement {
+    v_flex()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .overflow_hidden()
+        .child(
+            v_flex()
+                .id(("board-list-entries", card_id as usize))
+                .size_full()
+                .gap_2()
+                .overflow_y_scroll()
+                .lock_scroll_axis()
+                .track_scroll(scroll_handle)
+                .children(entries),
+        )
+        .vertical_scrollbar(scroll_handle)
+        .into_any_element()
 }
 
 #[cfg(test)]

@@ -93,6 +93,7 @@ pub struct BoardView {
     selection: Option<state::BoardSelection>,
     board_scroll_handle: ScrollHandle,
     filter_scroll_handle: ScrollHandle,
+    list_scroll_handles: HashMap<u32, ScrollHandle>,
     pending_reveal_target: Option<workspace::WorkspaceNavigationTarget>,
     revealed_list_id: Option<u32>,
 }
@@ -598,9 +599,25 @@ impl BoardView {
             selection: None,
             board_scroll_handle: ScrollHandle::new(),
             filter_scroll_handle: ScrollHandle::new(),
+            list_scroll_handles: HashMap::new(),
             pending_reveal_target: None,
             revealed_list_id: None,
         }
+    }
+
+    fn ensure_list_scroll_handles(&mut self) {
+        for list in &self.data.lists {
+            self.list_scroll_handles.entry(list.id).or_default();
+        }
+        self.list_scroll_handles
+            .retain(|list_id, _| self.data.lists.iter().any(|list| &list.id == list_id));
+    }
+
+    fn list_scroll_handle(&self, list_id: u32) -> ScrollHandle {
+        self.list_scroll_handles
+            .get(&list_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn queue_reveal_target(

@@ -517,6 +517,7 @@ fn horizontal_board_viewport(scroll_handle: &ScrollHandle, cards: Vec<AnyElement
                 .size_full()
                 .track_scroll(scroll_handle)
                 .overflow_x_scroll()
+                .lock_scroll_axis()
                 .gap_4()
                 .p_4()
                 .items_start()
@@ -528,10 +529,11 @@ fn horizontal_board_viewport(scroll_handle: &ScrollHandle, cards: Vec<AnyElement
 
 #[cfg(test)]
 mod tests {
+    use super::super::card::list_entries_viewport;
     use super::horizontal_board_viewport;
     use crate::{
         BoardView,
-        model::{BoardLabel, BoardListState},
+        model::{BoardCardState, BoardLabel, BoardListState},
     };
     use gpui_kit::component::v_flex;
     use gpui_kit::{
@@ -545,6 +547,28 @@ mod tests {
 
     struct HorizontalBoardViewportTest {
         scroll_handle: ScrollHandle,
+    }
+
+    struct ListEntriesViewportTest {
+        scroll_handle: ScrollHandle,
+    }
+
+    impl Render for ListEntriesViewportTest {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            v_flex().size_full().child(list_entries_viewport(
+                1,
+                &self.scroll_handle,
+                (0usize..30)
+                    .map(|index| {
+                        div()
+                            .id(("list-entry-test", index))
+                            .h_10()
+                            .flex_shrink_0()
+                            .into_any_element()
+                    })
+                    .collect(),
+            ))
+        }
     }
 
     impl Render for HorizontalBoardViewportTest {
@@ -681,7 +705,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn vertical_mouse_wheel_pans_horizontal_board(cx: &mut TestAppContext) {
+    fn vertical_wheel_does_not_pan_locked_horizontal_board(cx: &mut TestAppContext) {
         let (scroll_handle, cx) = open_board_viewport(cx);
         let viewport = scroll_handle.bounds();
 
@@ -692,9 +716,28 @@ mod tests {
         });
         draw(cx);
 
+        assert_eq!(
+            scroll_handle.offset().x,
+            px(0.),
+            "locked horizontal board should ignore vertical wheel input"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn horizontal_wheel_pans_locked_horizontal_board(cx: &mut TestAppContext) {
+        let (scroll_handle, cx) = open_board_viewport(cx);
+        let viewport = scroll_handle.bounds();
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            ..Default::default()
+        });
+        draw(cx);
+
         assert!(
             scroll_handle.offset().x < px(0.),
-            "vertical mouse-wheel input should pan the horizontal board"
+            "horizontal wheel input should still pan the horizontal board"
         );
     }
 
@@ -709,7 +752,7 @@ mod tests {
 
         cx.simulate_event(ScrollWheelEvent {
             position: viewport.center(),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+            delta: ScrollDelta::Pixels(point(px(-1000.), px(0.))),
             ..Default::default()
         });
         draw(cx);
@@ -717,7 +760,7 @@ mod tests {
 
         cx.simulate_event(ScrollWheelEvent {
             position: viewport.center(),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+            delta: ScrollDelta::Pixels(point(px(-1000.), px(0.))),
             ..Default::default()
         });
         draw(cx);
@@ -753,5 +796,179 @@ mod tests {
             "wheel input should scroll the filter options"
         );
         assert_eq!(scroll_handle.bounds(), viewport);
+    }
+
+    fn open_board_with_tall_lists(
+        cx: &mut TestAppContext,
+        list_count: u32,
+        width: f32,
+    ) -> (
+        tokio::runtime::Runtime,
+        Entity<BoardView>,
+        VisualTestContext,
+    ) {
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(error) => panic!("Tokio test runtime should start: {error}"),
+        };
+        let runtime_guard = runtime.enter();
+        let database = match runtime.block_on(Database::connect("sqlite::memory:")) {
+            Ok(database) => Arc::new(database),
+            Err(error) => panic!("board list test database should connect: {error}"),
+        };
+
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppRuntime::new(database, PathBuf::new()));
+            match cx.open_window(Default::default(), |window, cx| {
+                let view = BoardView::view(window, cx);
+                view.update(cx, |board, cx| {
+                    board.data.board_id = Some(1);
+                    board.data.lists = (1..=list_count)
+                        .map(|list_id| BoardListState {
+                            id: list_id,
+                            title: format!("List {list_id}").into(),
+                            board_id: 1,
+                            position: list_id as i32,
+                            workflow_role: storage::board::ListWorkflowRole::Neutral,
+                            entries: (0..30)
+                                .map(|index| BoardCardState {
+                                    id: list_id * 1000 + index,
+                                    title: format!("Card {index}").into(),
+                                    description: "".into(),
+                                    card_id: list_id,
+                                    position: index as i32,
+                                    start_on: None,
+                                    due_on: None,
+                                    completed_at: None,
+                                    cancelled_at: None,
+                                    archived: false,
+                                    reminder_enabled: false,
+                                    labels: vec![],
+                                    checklist_items: vec![],
+                                    attachments: vec![],
+                                    related_notes: vec![],
+                                })
+                                .collect(),
+                        })
+                        .collect();
+                    cx.notify();
+                });
+                view
+            }) {
+                Ok(window) => window,
+                Err(error) => panic!("board list test window should open: {error}"),
+            }
+        });
+        drop(runtime_guard);
+
+        let view = match window.root(cx) {
+            Ok(view) => view,
+            Err(error) => panic!("board list view should exist: {error}"),
+        };
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(size(px(width), px(700.)));
+        draw(&mut cx);
+        (runtime, view, cx)
+    }
+
+    #[gpui_kit::test]
+    fn list_entries_overflow_and_respond_to_wheel(cx: &mut TestAppContext) {
+        let (_runtime, view, mut cx) = open_board_with_tall_lists(cx, 1, 1200.);
+        let scroll_handle = view.read_with(&cx, |board, _| board.list_scroll_handle(1));
+        let viewport = scroll_handle.bounds();
+        assert!(
+            viewport.size.height > px(0.),
+            "list entries should have a measurable viewport"
+        );
+        assert!(
+            scroll_handle.max_offset().y > px(0.),
+            "list entries should overflow when thirty cards do not fit"
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-240.))),
+            ..Default::default()
+        });
+        draw(&mut cx);
+
+        assert!(
+            scroll_handle.offset().y < px(0.),
+            "wheel input should scroll the list entries"
+        );
+        assert_eq!(scroll_handle.bounds(), viewport);
+    }
+
+    #[gpui_kit::test]
+    fn list_scrollbar_stays_aligned_with_entries_viewport_at_bottom(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::component::init);
+        let scroll_handle = ScrollHandle::new();
+        let test_scroll_handle = scroll_handle.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| ListEntriesViewportTest { scroll_handle });
+        let cx: &mut VisualTestContext = cx;
+        cx.simulate_resize(size(px(320.), px(400.)));
+        draw(cx);
+        let scroll_handle = test_scroll_handle;
+        let viewport = scroll_handle.bounds();
+        let before = cx
+            .debug_bounds("scrollbar-overlay")
+            .expect("list scrollbar");
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-10_000.))),
+            ..Default::default()
+        });
+        draw(cx);
+
+        let after = cx
+            .debug_bounds("scrollbar-overlay")
+            .expect("list scrollbar after scrolling");
+        assert!(scroll_handle.offset().y < px(0.), "list should scroll");
+        assert_eq!(before, after, "list scrollbar must remain fixed");
+        assert_eq!(
+            after, viewport,
+            "list scrollbar must cover the entries viewport"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn vertical_wheel_over_entries_scrolls_list_without_panning_board(cx: &mut TestAppContext) {
+        let (_runtime, view, mut cx) = open_board_with_tall_lists(cx, 4, 800.);
+        let board_handle = view.read_with(&cx, |board, _| board.board_scroll_handle.clone());
+        assert!(
+            board_handle.max_offset().x > px(0.),
+            "four tall board columns should overflow an 800px viewport"
+        );
+        let list_handle = view.read_with(&cx, |board, _| board.list_scroll_handle(1));
+        let list_viewport = list_handle.bounds();
+        assert!(
+            list_viewport.size.height > px(0.),
+            "list entries should have a measurable viewport"
+        );
+        assert!(
+            list_handle.max_offset().y > px(0.),
+            "list entries should overflow when thirty cards do not fit"
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: list_viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-240.))),
+            ..Default::default()
+        });
+        draw(&mut cx);
+
+        assert!(
+            list_handle.offset().y < px(0.),
+            "vertical wheel over entries should scroll the list"
+        );
+        assert_eq!(
+            board_handle.offset().x,
+            px(0.),
+            "vertical wheel over entries should not pan the board"
+        );
+        assert_eq!(list_handle.bounds(), list_viewport);
     }
 }
