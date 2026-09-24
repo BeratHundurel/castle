@@ -1,4 +1,5 @@
 use super::*;
+use crate::workspace::links::WorkspaceItemKind;
 
 impl<C> Store<C>
 where
@@ -136,6 +137,75 @@ where
         )
         .await?;
         self.get_entry(i64::from(entry.id)).await
+    }
+
+    pub async fn create_inbox_task(&self, input: CreateInboxTaskInput) -> Result<EntryDetail> {
+        let title = required_text(input.title, "entry title")?;
+        validate_due_on(input.due_on.as_deref())?;
+
+        let list_id = if let Some(board_id) = input.board_id {
+            self.inbox_list_for_board(board_id, input.project_id)
+                .await?
+        } else {
+            let catalog = crate::workspace::links::load_workspace_link_catalog(self).await?;
+            let existing_inbox = catalog
+                .iter()
+                .filter(|entry| entry.item.kind == WorkspaceItemKind::List)
+                .filter(|entry| entry.project_id == input.project_id)
+                .filter(|entry| entry.title.trim().eq_ignore_ascii_case("Inbox"))
+                .min_by_key(|entry| (entry.board_id, entry.item.id))
+                .map(|entry| entry.item.id);
+
+            if let Some(list_id) = existing_inbox {
+                list_id
+            } else {
+                let boards = self.list_boards(input.project_id).await?;
+                let board_id = if let Some(inbox) = boards.into_iter().find(|board| {
+                    board.project_id == input.project_id
+                        && board.title.trim().eq_ignore_ascii_case("Inbox")
+                }) {
+                    inbox.id
+                } else {
+                    self.create_board(CreateBoardInput {
+                        title: "Inbox".to_string(),
+                        project_id: input.project_id,
+                    })
+                    .await?
+                    .id
+                };
+                self.inbox_list_for_board(board_id, input.project_id)
+                    .await?
+            }
+        };
+
+        self.create_entry(CreateEntryInput {
+            list_id,
+            title,
+            description: input.description,
+            due_on: input.due_on,
+        })
+        .await
+    }
+
+    async fn inbox_list_for_board(&self, board_id: i64, project_id: Option<i64>) -> Result<i64> {
+        let board = self.get_board(board_id).await?;
+        if project_id.is_some_and(|project_id| board.project_id != Some(project_id)) {
+            bail!("the selected board does not belong to the selected project");
+        }
+        if let Some(inbox) = board
+            .lists
+            .iter()
+            .find(|list| list.title.trim().eq_ignore_ascii_case("Inbox"))
+        {
+            return Ok(inbox.id);
+        }
+        Ok(self
+            .create_list(CreateListInput {
+                board_id,
+                title: "Inbox".to_string(),
+            })
+            .await?
+            .id)
     }
 
     pub async fn update_entry(&self, input: UpdateEntryInput) -> Result<EntryDetail> {

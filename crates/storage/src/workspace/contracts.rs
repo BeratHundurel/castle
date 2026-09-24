@@ -56,6 +56,15 @@ pub struct CreateEntryInput {
 }
 
 #[derive(Debug)]
+pub struct CreateInboxTaskInput {
+    pub title: String,
+    pub description: String,
+    pub project_id: Option<i64>,
+    pub board_id: Option<i64>,
+    pub due_on: Option<String>,
+}
+
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ProjectBoardsInput {

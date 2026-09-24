@@ -24,14 +24,14 @@ use sea_orm::{
 use crate::workspace::api::{
     AddChecklistItemInput, AttachmentDetail, BoardDetail, BoardPropertyDefinitionDetail,
     BoardPropertyOptionDetail, BoardPropertyValueDetail, BoardSummary, ChecklistItemDetail,
-    CreateBoardInput, CreateBoardLabelInput, CreateEntryInput, CreateListInput, CreateNoteInput,
-    CreateProjectInput, EntryDetail, EntryLifecycleState, LabelDetail, ListDetail, MoveEntryInput,
-    MoveNoteInput, NoteDetail, NoteLinkDetail, NoteLinksDetail, NoteSummary,
-    NoteWorkspaceRelationInput, ProjectSummary, RelatedItemDetail, RenameBoardInput,
-    RenameListInput, RenameProjectInput, SearchEntriesInput, SearchNotesInput, SetEntryLabelInput,
-    SetEntryLifecycleInput, SetEntryReminderInput, SetEntryScheduleInput, SetListWorkflowRoleInput,
-    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkspaceItemKindInput,
-    WorkspaceRelationsInput,
+    CreateBoardInput, CreateBoardLabelInput, CreateEntryInput, CreateInboxTaskInput,
+    CreateListInput, CreateNoteInput, CreateProjectInput, EntryDetail, EntryLifecycleState,
+    LabelDetail, ListDetail, MoveEntryInput, MoveNoteInput, NoteDetail, NoteLinkDetail,
+    NoteLinksDetail, NoteSummary, NoteWorkspaceRelationInput, ProjectSummary, RelatedItemDetail,
+    RenameBoardInput, RenameListInput, RenameProjectInput, SearchEntriesInput, SearchNotesInput,
+    SetEntryLabelInput, SetEntryLifecycleInput, SetEntryReminderInput, SetEntryScheduleInput,
+    SetListWorkflowRoleInput, UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput,
+    WorkspaceItemKindInput, WorkspaceRelationsInput,
 };
 
 use crate::store::Store;

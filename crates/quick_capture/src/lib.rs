@@ -1,3 +1,3 @@
 mod view;
 
-pub use view::{NoteCreatedHandler, QuickCaptureView, WindowVisibilityHandler, open_window};
+pub use view::{CaptureSavedHandler, QuickCaptureView, WindowVisibilityHandler, open_window};

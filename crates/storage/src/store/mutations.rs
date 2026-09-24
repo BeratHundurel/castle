@@ -3,14 +3,15 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use crate::workspace::api::{
     AddChecklistItemInput, BoardPropertyDefinitionDetail, BoardPropertyOptionDetail, BoardSummary,
     ChecklistItemDetail, ClearEntryPropertyInput, CreateBoardInput, CreateBoardLabelInput,
-    CreateBoardPropertyInput, CreateBoardPropertyOptionInput, CreateEntryInput, CreateListInput,
-    CreateNoteInput, CreateProjectInput, CreateRecurringTaskInput, EntryDetail,
-    EntryLifecycleState, EntryPropertyValueDetail, LabelDetail, ListDetail, MoveEntryInput,
-    MoveNoteInput, NoteDetail, NoteWorkspaceRelationInput, ProjectSummary, RecurringTaskInput,
-    RelatedItemDetail, RenameBoardInput, RenameListInput, RenameProjectInput, RunWorkflowInput,
-    SaveWorkflowInput, SetEntryLabelInput, SetEntryLifecycleInput, SetEntryPropertyInput,
-    SetEntryReminderInput, SetEntryScheduleInput, SetListWorkflowRoleInput,
-    UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput, WorkflowInput,
+    CreateBoardPropertyInput, CreateBoardPropertyOptionInput, CreateEntryInput,
+    CreateInboxTaskInput, CreateListInput, CreateNoteInput, CreateProjectInput,
+    CreateRecurringTaskInput, EntryDetail, EntryLifecycleState, EntryPropertyValueDetail,
+    LabelDetail, ListDetail, MoveEntryInput, MoveNoteInput, NoteDetail, NoteWorkspaceRelationInput,
+    ProjectSummary, RecurringTaskInput, RelatedItemDetail, RenameBoardInput, RenameListInput,
+    RenameProjectInput, RunWorkflowInput, SaveWorkflowInput, SetEntryLabelInput,
+    SetEntryLifecycleInput, SetEntryPropertyInput, SetEntryReminderInput, SetEntryScheduleInput,
+    SetListWorkflowRoleInput, UpdateChecklistItemInput, UpdateEntryInput, UpdateNoteInput,
+    WorkflowInput,
 };
 use anyhow::{Context as _, Result, bail};
 use calendar::{CalendarDate, GenerationMode, RecurrenceRule};
@@ -271,6 +272,20 @@ impl Mutations {
             crate::workflow::run_created_event(&self.store, detail.id, self.workflow_origin()).await
         {
             eprintln!("Failed to run board workflow after creating entry: {error}");
+        }
+        Ok(detail)
+    }
+
+    pub async fn create_inbox_task(&self, input: CreateInboxTaskInput) -> Result<EntryDetail> {
+        let detail = self
+            .execute(ChangeDomain::Link, move |store| {
+                Box::pin(store.create_inbox_task(input))
+            })
+            .await?;
+        if let Err(error) =
+            crate::workflow::run_created_event(&self.store, detail.id, self.workflow_origin()).await
+        {
+            eprintln!("Failed to run board workflow after creating Inbox task: {error}");
         }
         Ok(detail)
     }

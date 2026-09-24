@@ -9,7 +9,7 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem},
 };
 
-use quick_capture::{NoteCreatedHandler, QuickCaptureView, WindowVisibilityHandler};
+use quick_capture::{CaptureSavedHandler, QuickCaptureView, WindowVisibilityHandler};
 use settings::AppSettings;
 use shell::{AppShell, TrayReleaseState};
 
@@ -44,7 +44,7 @@ struct TrayController {
     hotkey: Option<HotKey>,
     quick_capture_window: Option<WindowHandle<QuickCaptureView>>,
     quick_capture_hotkey: Option<HotKey>,
-    note_created: NoteCreatedHandler,
+    capture_saved: CaptureSavedHandler,
     _tray_icon: TrayIcon,
     open_menu_id: MenuId,
     quit_menu_id: MenuId,
@@ -110,7 +110,7 @@ pub fn init(
         }
     };
 
-    let note_created: NoteCreatedHandler = Rc::new(|cx| {
+    let capture_saved: CaptureSavedHandler = Rc::new(|cx| {
         let shell = cx
             .global::<TrayController>()
             .main_window
@@ -124,7 +124,7 @@ pub fn init(
     let set_window_visible: WindowVisibilityHandler = Rc::new(set_window_visible);
 
     let quick_capture_window =
-        quick_capture::open_window(note_created.clone(), set_window_visible, cx)
+        quick_capture::open_window(capture_saved.clone(), set_window_visible, cx)
             .context("failed to prewarm quick capture window")?;
 
     if let Some(window) = &initial_window {
@@ -141,7 +141,7 @@ pub fn init(
         hotkey,
         quick_capture_window: Some(quick_capture_window),
         quick_capture_hotkey,
-        note_created,
+        capture_saved,
         _tray_icon: tray_icon,
         open_menu_id: open_item.id().clone(),
         quit_menu_id: quit_item.id().clone(),
@@ -260,14 +260,14 @@ fn handle_event(event: TrayEvent, cx: &mut App) {
     match command {
         Some(TrayCommand::ShowMainWindow) => show_main_window(cx),
         Some(TrayCommand::ShowQuickCapture) => {
-            let (window, note_created) = {
+            let (window, capture_saved) = {
                 let controller = cx.global::<TrayController>();
                 (
                     controller.quick_capture_window,
-                    controller.note_created.clone(),
+                    controller.capture_saved.clone(),
                 )
             };
-            show_quick_capture(window, note_created, cx);
+            show_quick_capture(window, capture_saved, cx);
         }
         Some(TrayCommand::Quit) => cx.quit(),
         None => {}
@@ -382,7 +382,7 @@ fn show_main_window(cx: &mut App) {
 
 fn show_quick_capture(
     window_handle: Option<WindowHandle<QuickCaptureView>>,
-    note_created: NoteCreatedHandler,
+    capture_saved: CaptureSavedHandler,
     cx: &mut App,
 ) {
     if let Some(window_handle) = window_handle {
@@ -397,7 +397,8 @@ fn show_quick_capture(
 
     let set_window_visible: WindowVisibilityHandler = Rc::new(set_window_visible);
     let visibility_for_window = set_window_visible.clone();
-    let Ok(window_handle) = quick_capture::open_window(note_created, set_window_visible, cx) else {
+    let Ok(window_handle) = quick_capture::open_window(capture_saved, set_window_visible, cx)
+    else {
         eprintln!("Failed to create quick capture window");
         return;
     };
