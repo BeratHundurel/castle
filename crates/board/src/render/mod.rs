@@ -13,7 +13,7 @@ use gpui_kit::component::{
     text::{TextView, TextViewStyle},
     v_flex,
 };
-use gpui_kit::{prelude::FluentBuilder, *};
+use gpui_kit::{base::InteractiveElementExt as _, prelude::FluentBuilder, *};
 
 mod card;
 mod checklist;
@@ -35,6 +35,7 @@ use workspace::WorkspaceDragInfo;
 
 impl Render for BoardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_list_scroll_handles();
         let board = div()
             .id("board-view")
             .track_focus(&self.focus_handle)
