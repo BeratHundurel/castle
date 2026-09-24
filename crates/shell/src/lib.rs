@@ -55,8 +55,6 @@ use storage::workspace::home::WorkspaceHomeState;
 use storage::workspace::trash::{TrashItem, TrashItemKind};
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
-// TabBar's scroll handle includes its indicator and leading layout child.
-const TAB_BAR_SCROLL_INDEX_OFFSET: usize = 2;
 
 type UpdateTrayShortcut = Rc<dyn Fn(&str, &mut App)>;
 type UpdateQuickCaptureShortcut = Rc<dyn Fn(&str, &mut App)>;
@@ -184,6 +182,7 @@ struct OpenTab {
 }
 
 enum OpenTabKind {
+    Restored(StoredTab),
     Chooser,
     Trash,
     Board {
@@ -341,6 +340,7 @@ pub struct AppShell {
     update_quick_capture_shortcut: UpdateQuickCaptureShortcut,
     update_start_at_login: UpdateStartAtLogin,
     workspace_archive_busy: bool,
+    automatic_backup_task: Option<Task<()>>,
     _app_quit_subscription: Option<Subscription>,
 }
 
@@ -519,7 +519,7 @@ impl AppShell {
                     this.open_workspace_target(
                         ::workspace::WorkspaceNavigationTarget::Note {
                             note_id: *note_id,
-                            source_offset: None,
+                            source_range: None,
                         },
                         window,
                         cx,
@@ -626,7 +626,7 @@ impl AppShell {
                         storage::workspace::search::SearchResultKind::Note => {
                             ::workspace::WorkspaceNavigationTarget::Note {
                                 note_id: result.open_id,
-                                source_offset: None,
+                                source_range: result.match_range,
                             }
                         }
                         storage::workspace::search::SearchResultKind::Board => {
@@ -657,60 +657,21 @@ impl AppShell {
         let tab_session = AppSettings::tab_session(cx);
         let sidebar = SidebarView::view(window, cx);
         let mut open_tabs = Vec::with_capacity(tab_session.tabs.len().max(1));
-        let mut note_views = HashMap::new();
+        let note_views = HashMap::new();
         let mut next_tab_id = 1_u64;
         for stored_tab in tab_session.tabs {
-            let (title, kind) = match stored_tab {
-                StoredTab::Chooser => (SharedString::from("Home"), OpenTabKind::Chooser),
-                StoredTab::Trash => (SharedString::from("Trash"), OpenTabKind::Trash),
-                StoredTab::Cheatsheet => (
-                    SharedString::from("Cheatsheet"),
-                    OpenTabKind::Cheatsheet {
-                        view: CheatsheetView::view((integration.shortcuts)(cx), window, cx),
-                    },
-                ),
-                StoredTab::Board {
-                    board_id,
-                    project_id,
-                    title,
-                } => {
-                    let view = BoardView::view(window, cx);
-                    Self::observe_board_view(&view, window, cx);
-                    view.update(cx, |board, cx| board.load_board(board_id, cx));
-                    let navigation =
-                        cx.new(|cx| BoardNavigation::new(board_id, view.clone(), window, cx));
-                    (
-                        SharedString::from(title),
-                        OpenTabKind::Board {
-                            board_id,
-                            project_id,
-                            view,
-                            navigation,
-                        },
-                    )
-                }
-                StoredTab::Note {
-                    note_id,
-                    project_id,
-                    title,
-                } => {
-                    let view = DocumentEditorView::view(note_id, window, cx);
-                    Self::observe_document_editor(&view, window, cx);
-                    note_views.insert(note_id, view.clone());
-                    (
-                        SharedString::from(title),
-                        OpenTabKind::Note {
-                            note_id,
-                            project_id,
-                            view,
-                        },
-                    )
+            let title = match &stored_tab {
+                StoredTab::Chooser => SharedString::from("Home"),
+                StoredTab::Trash => SharedString::from("Trash"),
+                StoredTab::Cheatsheet => SharedString::from("Cheatsheet"),
+                StoredTab::Board { title, .. } | StoredTab::Note { title, .. } => {
+                    SharedString::from(title.clone())
                 }
             };
             open_tabs.push(OpenTab {
                 id: next_tab_id,
                 title,
-                kind,
+                kind: OpenTabKind::Restored(stored_tab),
             });
             next_tab_id = next_tab_id.saturating_add(1);
         }
@@ -725,8 +686,7 @@ impl AppShell {
         let active_tab_index = tab_session.active_tab_index.min(open_tabs.len() - 1);
         let active_title = open_tabs[active_tab_index].title.to_string();
         let tab_scroll_handle = ScrollHandle::new();
-        tab_scroll_handle
-            .scroll_to_item(active_tab_index.saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET));
+        tab_scroll_handle.scroll_to_item(active_tab_index);
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Home")
@@ -795,18 +755,28 @@ impl AppShell {
                 SidebarEvent::BoardRenamed { board_id, title } => {
                     let mut renamed_active = false;
                     for (i, tab) in this.tabs.open_tabs.iter_mut().enumerate() {
-                        if let OpenTabKind::Board { board_id: id, .. } = &tab.kind
-                            && *id == *board_id
-                        {
-                            tab.title = title.clone();
-                            renamed_active = i == this.tabs.active_tab_index;
-                            break;
+                        match &mut tab.kind {
+                            OpenTabKind::Board { board_id: id, .. } if *id == *board_id => {}
+                            OpenTabKind::Restored(StoredTab::Board {
+                                board_id: id,
+                                title: stored_title,
+                                ..
+                            }) if *id == *board_id => *stored_title = title.to_string(),
+                            _ => continue,
                         }
+                        tab.title = title.clone();
+                        renamed_active = i == this.tabs.active_tab_index;
+                        break;
                     }
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
-                    if let Some(board) = this.workspace.boards.iter_mut().find(|board| board.id == *board_id) {
+                    if let Some(board) = this
+                        .workspace
+                        .boards
+                        .iter_mut()
+                        .find(|board| board.id == *board_id)
+                    {
                         board.title = title.clone();
                     }
                     this.command_palette.update(cx, |palette, cx| {
@@ -818,22 +788,33 @@ impl AppShell {
                 SidebarEvent::NoteRenamed { note_id, title } => {
                     let mut renamed_active = false;
                     for (i, tab) in this.tabs.open_tabs.iter_mut().enumerate() {
-                        if let OpenTabKind::Note { note_id: id, view, .. } = &tab.kind
-                            && *id == *note_id
-                        {
-                            tab.title = title.clone();
-                            renamed_active = i == this.tabs.active_tab_index;
-                            let view = view.clone();
-                            view.update(cx, |note, cx| {
-                                note.apply_title(title, cx);
-                            });
-                            break;
+                        match &mut tab.kind {
+                            OpenTabKind::Note {
+                                note_id: id, view, ..
+                            } if *id == *note_id => {
+                                let view = view.clone();
+                                view.update(cx, |note, cx| note.apply_title(title, cx));
+                            }
+                            OpenTabKind::Restored(StoredTab::Note {
+                                note_id: id,
+                                title: stored_title,
+                                ..
+                            }) if *id == *note_id => *stored_title = title.to_string(),
+                            _ => continue,
                         }
+                        tab.title = title.clone();
+                        renamed_active = i == this.tabs.active_tab_index;
+                        break;
                     }
                     if renamed_active {
                         this.sync_title_input(window, cx);
                     }
-                    if let Some(note) = this.workspace.notes.iter_mut().find(|note| note.id == *note_id) {
+                    if let Some(note) = this
+                        .workspace
+                        .notes
+                        .iter_mut()
+                        .find(|note| note.id == *note_id)
+                    {
                         note.title = title.clone();
                     }
                     this.command_palette.update(cx, |palette, cx| {
@@ -857,17 +838,27 @@ impl AppShell {
                     }
                 }
                 SidebarEvent::BoardDeleted { board_id } => {
-                    if let Some(index) = this.tabs.open_tabs.iter().position(
-                        |tab| matches!(&tab.kind, OpenTabKind::Board { board_id: id, .. } if *id == *board_id),
-                    ) {
+                    if let Some(index) =
+                        this.tabs.open_tabs.iter().position(|tab| match &tab.kind {
+                            OpenTabKind::Board { board_id: id, .. }
+                            | OpenTabKind::Restored(StoredTab::Board { board_id: id, .. }) => {
+                                *id == *board_id
+                            }
+                            _ => false,
+                        })
+                    {
                         this.close_tab(index, window, cx);
                     }
                 }
                 SidebarEvent::NoteDeleted { note_id } => {
-                    if let Some(index) = this
-                        .tabs.open_tabs
-                        .iter()
-                        .position(|tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == *note_id))
+                    if let Some(index) =
+                        this.tabs.open_tabs.iter().position(|tab| match &tab.kind {
+                            OpenTabKind::Note { note_id: id, .. }
+                            | OpenTabKind::Restored(StoredTab::Note { note_id: id, .. }) => {
+                                *id == *note_id
+                            }
+                            _ => false,
+                        })
                     {
                         this.close_tab(index, window, cx);
                     }
@@ -923,6 +914,8 @@ impl AppShell {
         let agent_access = integration._agent_access.clone();
         let settings_import_workspace = cx.entity().downgrade();
         let settings_export_workspace = cx.entity().downgrade();
+        let settings_backup_scheduler = cx.entity().downgrade();
+        let settings_restore_backup = cx.entity().downgrade();
         let settings_view = cx.new(|_| {
             SettingsView::new(
                 SettingsIntegration::new(
@@ -949,6 +942,22 @@ impl AppShell {
                             if let Some(shell) = settings_export_workspace.upgrade() {
                                 shell.update(cx, |shell, cx| {
                                     shell.export_workspace(window, cx);
+                                });
+                            }
+                        },
+                    )
+                    .with_automatic_backups(
+                        move |enabled, cx| {
+                            if let Some(shell) = settings_backup_scheduler.upgrade() {
+                                shell.update(cx, |shell, cx| {
+                                    shell.sync_automatic_backup_scheduler(enabled, cx);
+                                });
+                            }
+                        },
+                        move |window, cx| {
+                            if let Some(shell) = settings_restore_backup.upgrade() {
+                                shell.update(cx, |shell, cx| {
+                                    shell.open_automatic_backups(window, cx);
                                 });
                             }
                         },
@@ -1036,9 +1045,12 @@ impl AppShell {
             update_quick_capture_shortcut,
             update_start_at_login,
             workspace_archive_busy: false,
+            automatic_backup_task: None,
             _app_quit_subscription: None,
         };
 
+        this.sync_automatic_backup_scheduler(AppSettings::automatic_backups_enabled(cx), cx);
+        this.materialize_restored_tab(active_tab_index, window, cx);
         settings_view.update(cx, |settings, cx| settings.refresh_agent_access(cx));
         let show_sidebar = AppSettings::show_sidebar(cx);
         this.sidebar.update(cx, |sidebar, cx| {
@@ -1055,8 +1067,16 @@ impl AppShell {
         this.start_note_link_reindex(cx);
         this.refresh_workspace(cx);
         this.sync_sidebar_active(cx);
-        this.load_home(cx);
-        this.load_trash(cx);
+        match this
+            .tabs
+            .open_tabs
+            .get(active_tab_index)
+            .map(|tab| &tab.kind)
+        {
+            Some(OpenTabKind::Chooser) => this.load_home(cx),
+            Some(OpenTabKind::Trash) => this.load_trash(cx),
+            _ => {}
+        }
         this
     }
 }

@@ -381,7 +381,7 @@ impl MarkdownPlugin for WikiLinkPreviewPlugin {
                     open_target(
                         WorkspaceNavigationTarget::Note {
                             note_id: *note_id,
-                            source_offset: None,
+                            source_range: None,
                         },
                         cx,
                     );
@@ -579,7 +579,7 @@ pub fn workspace_navigation_target(
         storage::workspace::links::WorkspaceItemKind::Note => {
             Some(WorkspaceNavigationTarget::Note {
                 note_id: item_id,
-                source_offset: None,
+                source_range: None,
             })
         }
         storage::workspace::links::WorkspaceItemKind::Board => {

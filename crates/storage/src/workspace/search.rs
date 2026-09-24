@@ -32,6 +32,7 @@ pub struct SearchResult {
     pub item_id: u32,
     pub open_id: u32,
     pub project_id: Option<u32>,
+    pub match_range: Option<(usize, usize)>,
     pub title: String,
     pub parent_title: Option<String>,
     pub highlighted_title: String,
@@ -269,35 +270,16 @@ pub async fn search_workspace(
     query: &str,
     limit: u32,
 ) -> Result<Vec<SearchResult>, DbErr> {
-    let rows = if let Some(match_query) = fts_query(query) {
-        db.query_all_raw(Statement::from_sql_and_values(
+    let Some(match_query) = fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             search_match_sql(&preview_anchor_terms(&match_query)),
             [match_query.into(), (limit as i64).into()],
         ))
-        .await?
-    } else {
-        db.query_all_raw(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT
-                item_type,
-                item_id,
-                COALESCE(parent_id, item_id) AS open_id,
-                project_id,
-                title,
-                title AS highlighted_title,
-                CASE
-                    WHEN body = '' THEN title
-                    ELSE substr(body, 1, 160)
-                END AS snippet,
-                substr(body, 1, 8000) AS preview
-             FROM search_index
-             ORDER BY rowid DESC
-             LIMIT ?",
-            [(limit as i64).into()],
-        ))
-        .await?
-    };
+        .await?;
 
     if rows.is_empty() {
         return Ok(Vec::new());
@@ -317,6 +299,16 @@ pub async fn search_workspace(
             highlighted_title: row.try_get("", "highlighted_title")?,
             snippet: row.try_get("", "snippet")?,
             preview: row.try_get("", "preview")?,
+            match_range: match (
+                row.try_get::<Option<i64>>("", "match_start")?,
+                row.try_get::<Option<i64>>("", "match_end")?,
+            ) {
+                (Some(start), Some(end)) => usize::try_from(start)
+                    .ok()
+                    .zip(usize::try_from(end).ok())
+                    .filter(|(start, end)| start < end),
+                _ => None,
+            },
         });
     }
 
@@ -362,6 +354,7 @@ pub async fn search_workspace(
             item_id: row.item_id as u32,
             open_id: row.open_id as u32,
             project_id: row.project_id.map(|id| id as u32),
+            match_range: row.match_range,
             parent_title,
             title: row.title,
             highlighted_title: row.highlighted_title,
@@ -402,7 +395,7 @@ fn window_term_score(body: &str, candidate: &str, terms: &[String]) -> String {
     )
 }
 
-fn first_occurrence_anchor(terms: &[String], candidates: &[String]) -> String {
+fn first_occurrence_position(terms: &[String], candidates: &[String]) -> String {
     let mut scores = Vec::with_capacity(candidates.len());
     for candidate in candidates.iter() {
         scores.push(window_term_score("highlighted_body", candidate, terms));
@@ -415,27 +408,26 @@ fn first_occurrence_anchor(terms: &[String], candidates: &[String]) -> String {
     let mut branches = String::new();
     for (candidate, key) in candidates.iter().zip(keys.iter()) {
         branches.push_str(&format!(
-            "WHEN ({candidate}) > 0 AND ({key}) = max({max_key}) THEN max(({candidate}) - {lookback}, 1) ",
-            lookback = SEARCH_PREVIEW_LOOKBACK,
+            "WHEN ({candidate}) > 0 AND ({key}) = max({max_key}) THEN ({candidate}) ",
         ));
     }
     format!("CASE {branches}ELSE NULL END")
 }
 
-fn best_occurrence_anchor(terms: &[String], longest: &str) -> String {
-    let score = window_term_score("matched.highlighted_body", "occ.pos", terms);
+fn best_occurrence_position(terms: &[String], longest: &str) -> String {
+    let score = window_term_score("highlighted_body", "occ.pos", terms);
     format!(
-        "CASE WHEN length(matched.highlighted_body) <= {body_limit} THEN (
+        "CASE WHEN length(highlighted_body) <= {body_limit} THEN (
             WITH RECURSIVE occ(pos, depth) AS (
-                SELECT instr(matched.highlighted_body, char(1) || '{longest}'), 1
+                SELECT instr(highlighted_body, char(1) || '{longest}'), 1
                 UNION ALL
-                SELECT occ.pos + instr(substr(matched.highlighted_body, occ.pos + 1), char(1) || '{longest}'), occ.depth + 1
+                SELECT occ.pos + instr(substr(highlighted_body, occ.pos + 1), char(1) || '{longest}'), occ.depth + 1
                 FROM occ
                 WHERE occ.pos > 0
                   AND occ.depth < {depth_limit}
-                  AND instr(substr(matched.highlighted_body, occ.pos + 1), char(1) || '{longest}') > 0
+                  AND instr(substr(highlighted_body, occ.pos + 1), char(1) || '{longest}') > 0
             )
-            SELECT max(scored.pos - {lookback}, 1) FROM (
+            SELECT scored.pos FROM (
                 SELECT occ.pos AS pos, ({score}) AS s FROM occ WHERE occ.pos > 0
             ) AS scored
             ORDER BY scored.s DESC, scored.pos DESC
@@ -443,61 +435,101 @@ fn best_occurrence_anchor(terms: &[String], longest: &str) -> String {
         ) ELSE NULL END",
         body_limit = SEARCH_ANCHOR_BODY_LIMIT,
         depth_limit = SEARCH_ANCHOR_DEPTH_LIMIT,
-        lookback = SEARCH_PREVIEW_LOOKBACK,
     )
 }
 
 fn search_match_sql(terms: &[String]) -> String {
-    // Anchor candidates are the first marked occurrence of each term. For
-    // multi-term queries the occurrences of the longest (most selective) term
-    // join them through bounded enumeration, so a late tight cluster of
-    // matches beats early scattered single-term matches.
+    // For multi-term queries the occurrences of the longest (most selective)
+    // term join the other terms through bounded enumeration, so a late tight
+    // cluster of matches beats early scattered single-term matches.
     let mut candidates = Vec::with_capacity(terms.len());
     for term in terms {
         candidates.push(format!("instr(highlighted_body, char(1) || '{term}')"));
     }
-    // Note: max() with a single argument aggregates over rows and would
-    // collapse the result to one row, so the single-term branch below and the
-    // composite keys here always use multi-argument scalar max().
     let longest = terms.iter().max_by_key(|term| term.chars().count());
-    let anchor = match (candidates.len(), longest) {
-        (1, _) => format!(
-            "CASE WHEN ({candidate}) > 0 THEN max(({candidate}) - {lookback}, 1) ELSE 1 END",
-            candidate = candidates[0],
-            lookback = SEARCH_PREVIEW_LOOKBACK,
-        ),
+    let match_position = match (candidates.len(), longest) {
+        (1, _) => format!("NULLIF(({candidate}), 0)", candidate = candidates[0]),
         (_, Some(longest)) => {
-            let enumerated = best_occurrence_anchor(terms, longest);
-            let fallback = first_occurrence_anchor(terms, &candidates);
-            format!("COALESCE(({enumerated}), ({fallback}), 1)")
+            let enumerated = best_occurrence_position(terms, longest);
+            let fallback = first_occurrence_position(terms, &candidates);
+            format!("COALESCE(({enumerated}), ({fallback}))")
         }
-        _ => "1".to_string(),
+        _ => "NULL".to_string(),
     };
     format!(
-        "SELECT
-            item_type,
-            item_id,
-            open_id,
-            project_id,
-            title,
-            highlighted_title,
-            snippet,
-            substr(highlighted_body, {anchor}, {preview}) AS preview
-         FROM (
+        "WITH matched AS (
             SELECT
                 item_type,
                 item_id,
-                COALESCE(parent_id, item_id) AS open_id,
+                parent_id,
                 project_id,
                 title,
+                body,
+                bm25(search_index) AS relevance,
                 highlight(search_index, 4, char(1), char(2)) AS highlighted_title,
                 snippet(search_index, 5, char(1), char(2), '...', 18) AS snippet,
                 lower(highlight(search_index, 5, char(1), char(2))) AS highlighted_body
             FROM search_index
             WHERE search_index MATCH ?
-            ORDER BY bm25(search_index)
-            LIMIT ?
-        ) AS matched",
+        ), deduplicated AS (
+            SELECT candidate.*
+            FROM matched AS candidate
+            WHERE NOT (
+                (candidate.item_type = 'card'
+                    AND instr(candidate.highlighted_title, char(1)) = 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM matched AS descendant
+                        JOIN entry AS nested_entry
+                            ON nested_entry.id = descendant.item_id
+                        WHERE descendant.item_type = 'entry'
+                            AND nested_entry.card_id = candidate.item_id
+                    ))
+                OR (candidate.item_type = 'board'
+                    AND instr(candidate.highlighted_title, char(1)) = 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM matched AS descendant
+                        WHERE descendant.item_type IN ('card', 'entry')
+                            AND descendant.parent_id = candidate.item_id
+                    ))
+            )
+        ), limited AS (
+            SELECT * FROM deduplicated ORDER BY relevance LIMIT ?
+        ), positioned AS (
+            SELECT limited.*, ({match_position}) AS match_position
+            FROM limited
+        )
+        SELECT
+            item_type,
+            item_id,
+            COALESCE(parent_id, item_id) AS open_id,
+            project_id,
+            title,
+            highlighted_title,
+            snippet,
+            substr(
+                highlighted_body,
+                CASE WHEN match_position > 0 THEN max(match_position - {lookback}, 1) ELSE 1 END,
+                {preview}
+            ) AS preview,
+            CASE WHEN item_type = 'note' AND match_position > 0 THEN
+                length(CAST(substr(body, 1, length(replace(replace(
+                    substr(highlighted_body, 1, match_position - 1),
+                    char(1), ''), char(2), ''))) AS BLOB))
+            END AS match_start,
+            CASE WHEN item_type = 'note' AND match_position > 0 THEN
+                length(CAST(substr(body, 1, length(replace(replace(
+                    substr(
+                        highlighted_body,
+                        1,
+                        match_position + instr(substr(highlighted_body, match_position + 1), char(2)) - 1
+                    ),
+                    char(1), ''), char(2), ''))) AS BLOB))
+            END AS match_end
+        FROM positioned
+        ORDER BY relevance",
+        lookback = SEARCH_PREVIEW_LOOKBACK,
         preview = SEARCH_PREVIEW_CHARS,
     )
 }
@@ -592,9 +624,11 @@ fn fts_query(query: &str) -> Option<String> {
         .collect::<Vec<_>>();
 
     let multi_term = raw_terms.len() > 1;
+    let last_term_index = raw_terms.len().saturating_sub(1);
     let mut terms = raw_terms
         .iter()
-        .filter_map(|term| fts_query_term(term, multi_term))
+        .enumerate()
+        .filter_map(|(index, term)| fts_query_term(term, multi_term, index == last_term_index))
         .collect::<Vec<_>>();
 
     if terms.is_empty() {
@@ -608,14 +642,14 @@ fn fts_query(query: &str) -> Option<String> {
     }
 }
 
-fn fts_query_term(term: &str, multi_term: bool) -> Option<String> {
+fn fts_query_term(term: &str, multi_term: bool, is_last_term: bool) -> Option<String> {
     let char_count = term.chars().count();
 
     if multi_term && char_count == 1 {
         return None;
     }
 
-    if multi_term && char_count <= 2 {
+    if multi_term && char_count <= 2 && !is_last_term {
         Some(term.to_string())
     } else {
         Some(format!("{term}*"))
@@ -640,6 +674,7 @@ struct SearchRow {
     highlighted_title: String,
     snippet: String,
     preview: String,
+    match_range: Option<(usize, usize)>,
 }
 
 struct EntrySearchSource {
@@ -1592,11 +1627,199 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_prefers_matching_board_entries_over_aggregate_ancestors() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        board::ActiveModel {
+            id: Set(1),
+            title: Set("Product roadmap".to_string()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        card::ActiveModel {
+            id: Set(1),
+            title: Set("In progress".to_string()),
+            board_id: Set(1),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        entry::ActiveModel {
+            id: Set(1),
+            title: Set("Design keyboard flow".to_string()),
+            description: Set("Validate fuzzy search behavior for the product roadmap".to_string()),
+            card_id: Set(1),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        let results = search_workspace(&db, "fuzzy search", 20).await?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, SearchResultKind::Entry);
+        assert_eq!(results[0].title, "Design keyboard flow");
+        assert_eq!(
+            results[0].parent_title.as_deref(),
+            Some("Product roadmap / In progress")
+        );
+        assert_eq!(results[0].open_id, 1);
+
+        let limited_results = search_workspace(&db, "fuzzy search", 1).await?;
+        assert_eq!(limited_results.len(), 1);
+        assert_eq!(limited_results[0].kind, SearchResultKind::Entry);
+
+        let entry_title_results = search_workspace(&db, "keyboard", 20).await?;
+        assert_eq!(entry_title_results.len(), 1);
+        assert_eq!(entry_title_results[0].kind, SearchResultKind::Entry);
+
+        let list_title_results = search_workspace(&db, "progress", 20).await?;
+        assert_eq!(list_title_results.len(), 1);
+        assert_eq!(list_title_results[0].kind, SearchResultKind::Card);
+
+        let independent_title_results = search_workspace(&db, "roadmap", 20).await?;
+        assert_eq!(independent_title_results.len(), 2);
+        assert!(
+            independent_title_results
+                .iter()
+                .any(|result| result.kind == SearchResultKind::Board)
+        );
+        assert!(
+            independent_title_results
+                .iter()
+                .any(|result| result.kind == SearchResultKind::Entry)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn search_workspace_preserves_empty_results_without_catalog_items() -> Result<()> {
         let db = Database::connect("sqlite::memory:").await?;
         Migrator::up(&db, None).await?;
 
         assert!(search_workspace(&db, "missing", 20).await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_workspace_matches_short_partial_terms_in_a_phrase() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        note::ActiveModel {
+            title: Set("What the checklist should cover".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("Review the checklist before release".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        let partial = search_workspace(&db, "what th", 20).await?;
+        let complete = search_workspace(&db, "what the", 20).await?;
+
+        assert_eq!(partial.len(), 1);
+        assert_eq!(partial[0].title, "What the checklist should cover");
+        assert_eq!(partial, complete);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn note_search_results_include_utf8_match_ranges_for_body_hits() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+
+        let body = "Başlangıç 東京 🧭\n\nWhat the user asked for";
+        note::ActiveModel {
+            title: Set("Search range note".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(body.to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        note::ActiveModel {
+            title: Set("A title containing Needle".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("This body does not contain that word".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        let result = search_workspace(&db, "what th", 10).await?.remove(0);
+        let match_start = body
+            .find("What")
+            .expect("matched word should be in note body");
+        assert_eq!(
+            result.match_range,
+            Some((match_start, match_start + "What".len()))
+        );
+
+        let prefix_result = search_workspace(&db, "th", 10)
+            .await?
+            .into_iter()
+            .find(|result| result.title == "Search range note")
+            .expect("partial word should match the note body");
+        let prefix_start = body
+            .find("the")
+            .expect("prefix match should be in note body");
+        assert_eq!(
+            prefix_result.match_range,
+            Some((prefix_start, prefix_start + "the".len()))
+        );
+
+        let title_match = search_workspace(&db, "needle", 10).await?.remove(0);
+        assert_eq!(title_match.match_range, None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn punctuation_only_search_does_not_return_unrelated_items() -> Result<()> {
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        note::ActiveModel {
+            title: Set("A note that does not match punctuation".to_string()),
+            project_id: Set(None),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set("Ordinary searchable note content".to_string()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        rebuild_search_index(&db).await?;
+
+        assert!(search_workspace(&db, "---", 20).await?.is_empty());
 
         Ok(())
     }
@@ -1904,8 +2127,9 @@ mod tests {
     }
 
     #[test]
-    fn fts_query_keeps_two_letter_terms_exact_in_phrases() {
+    fn fts_query_prefixes_a_partial_short_final_term() {
         assert_eq!(fts_query("ui state"), Some("ui state*".to_string()));
+        assert_eq!(fts_query("what th"), Some("what* th*".to_string()));
     }
 
     #[test]
@@ -1915,7 +2139,7 @@ mod tests {
 
     #[test]
     fn fts_query_preserves_unicode_term_boundaries() {
-        assert_eq!(fts_query("café 東京"), Some("café* 東京".to_string()));
+        assert_eq!(fts_query("café 東京"), Some("café* 東京*".to_string()));
     }
 
     #[test]

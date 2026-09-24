@@ -23,6 +23,7 @@ impl AppShell {
 
         v_flex()
             .id("trash-view")
+            .debug_selector(|| "trash-view".into())
             .size_full()
             .bg(cx.theme().background)
             .child(
@@ -107,13 +108,27 @@ impl AppShell {
                 .into_any_element();
         }
         if items.is_empty() {
-            return empty_state(
-                IconName::Delete,
-                "Trash is empty",
-                "Removed items will appear here.",
-                cx,
-            )
-            .into_any_element();
+            let (selector, icon, title, body) = if self.trash.items.is_empty() {
+                (
+                    "trash-empty-state",
+                    IconName::Delete,
+                    "Trash is empty",
+                    "Removed items will appear here.",
+                )
+            } else {
+                (
+                    "trash-no-matches",
+                    IconName::Search,
+                    "No matching items",
+                    "Try a different search or filter.",
+                )
+            };
+            return div()
+                .id(selector)
+                .debug_selector(move || selector.to_string())
+                .w_full()
+                .child(empty_state(icon, title, body, cx))
+                .into_any_element();
         }
 
         v_flex()
@@ -130,6 +145,10 @@ impl AppShell {
                     .unwrap_or_else(|| "Recently".to_string());
                 h_flex()
                     .id(format!("trash-item-{item_key}"))
+                    .debug_selector({
+                        let selector = format!("trash-item-{item_key}");
+                        move || selector.clone()
+                    })
                     .w_full()
                     .gap_3()
                     .items_center()
@@ -404,5 +423,86 @@ impl AppShell {
             .ok();
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{AppContext as _, TestAppContext, VisualTestContext};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
+    use settings::AppSettings;
+    use storage::workspace::trash::{TrashItem, TrashItemKind};
+
+    use super::*;
+
+    #[gpui_kit::test]
+    fn a_search_with_no_matches_does_not_present_trash_as_empty(cx: &mut TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                Ok::<_, sea_orm::DbErr>(db)
+            })
+            .expect("search test database should initialize");
+        let settings_dir = tempfile::tempdir().expect("settings directory should be created");
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(settings_dir.path()));
+            cx.set_global(AppRuntime::new(db, std::path::PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, crate::test_shell_integration(), cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("trash test window should open")
+        });
+        let shell = shell.expect("shell should exist");
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        shell.update(&mut cx, |shell, cx| {
+            shell.tabs.open_tabs[0].kind = OpenTabKind::Trash;
+            shell.tabs.open_tabs[0].title = "Trash".into();
+            shell.trash.items = vec![TrashItem {
+                kind: TrashItemKind::Note,
+                id: 7,
+                title: "Roadmap draft".to_string(),
+                location: None,
+                deleted_at: 1,
+            }];
+            shell.trash.phase = LoadPhase::Ready;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        let search_input = shell.read_with(&cx, |shell, _| shell.trash.search_input.clone());
+        cx.update(|window, cx| {
+            search_input.update(cx, |input, cx| input.focus(window, cx));
+        });
+        cx.simulate_input("missing");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        assert!(cx.debug_bounds("trash-view").is_some());
+        assert_eq!(shell.read_with(&cx, |shell, _| shell.trash.items.len()), 1);
+        assert!(cx.debug_bounds("trash-item-note-7").is_none());
+        assert!(cx.debug_bounds("trash-no-matches").is_some());
+
+        shell.update(&mut cx, |shell, cx| {
+            shell.trash.items.clear();
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(cx.debug_bounds("trash-empty-state").is_some());
+        assert!(cx.debug_bounds("trash-no-matches").is_none());
     }
 }

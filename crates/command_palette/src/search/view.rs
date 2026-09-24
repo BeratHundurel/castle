@@ -108,7 +108,11 @@ impl CommandPaletteView {
                                     .child(search_footer_hint(IconName::ArrowRight, "open"))
                                     .child(search_footer_hint(IconName::Close, "close")),
                             )
-                            .child(format!("{result_count} results")),
+                            .child(
+                                div()
+                                    .debug_selector(|| "search-result-count".into())
+                                    .child(format!("{result_count} results")),
+                            ),
                     ),
             )
             .into_any_element()
@@ -151,6 +155,7 @@ impl CommandPaletteView {
                 .overflow_hidden()
                 .child(
                     div()
+                        .debug_selector(|| "search-empty-query".into())
                         .w(relative(0.38))
                         .h_full()
                         .min_w_0()
@@ -186,6 +191,7 @@ impl CommandPaletteView {
             return container
                 .child(
                     div()
+                        .debug_selector(|| "search-no-results".into())
                         .px_3()
                         .py_6()
                         .text_sm()
@@ -287,6 +293,7 @@ impl CommandPaletteView {
             .child(
                 v_flex()
                     .id("search-result-preview-content")
+                    .debug_selector(|| "search-result-preview-content".into())
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -385,10 +392,12 @@ impl CommandPaletteView {
             } else {
                 theme.popover.opacity(0.)
             })
-            .hover(|this| this.bg(theme.accent.opacity(0.5)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_search_result(result.clone(), window, cx);
-            }))
+            .when(!self.search_loading, |this| {
+                this.hover(|this| this.bg(theme.accent.opacity(0.5)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_search_result(result.clone(), window, cx);
+                    }))
+            })
             .child(
                 v_flex()
                     .flex_1()

@@ -175,12 +175,13 @@ impl AppShell {
 
     pub(crate) fn open_cheatsheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_close_command_palette_action(window, cx);
-        if let Some(index) = self
-            .tabs
-            .open_tabs
-            .iter()
-            .position(|tab| matches!(&tab.kind, super::OpenTabKind::Cheatsheet { .. }))
-        {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| {
+            matches!(
+                &tab.kind,
+                super::OpenTabKind::Cheatsheet { .. }
+                    | super::OpenTabKind::Restored(settings::StoredTab::Cheatsheet)
+            )
+        }) {
             self.activate_tab(index, window, cx);
             return;
         }

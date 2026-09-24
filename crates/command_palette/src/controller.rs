@@ -10,7 +10,7 @@ use crate::{
     CommandPaletteEvent, CommandPaletteMode, CommandPaletteView, PaletteCommand, PaletteCommandKind,
 };
 
-const WORKSPACE_SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
+const WORKSPACE_SEARCH_DEBOUNCE: Duration = Duration::from_millis(80);
 
 impl CommandPaletteView {
     pub fn open_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -97,6 +97,10 @@ impl CommandPaletteView {
                 }
             }
             CommandPaletteMode::Search => {
+                if self.search_loading {
+                    return;
+                }
+
                 if let Some(result) = self
                     .search_results
                     .get(
@@ -181,6 +185,14 @@ impl CommandPaletteView {
         self.search_generation = self.search_generation.saturating_add(1);
         let generation = self.search_generation;
         self.search_debounce_task = None;
+        if query.is_empty() {
+            self.search_loading = false;
+            self.search_error = None;
+            self.search_results.clear();
+            self.search_preview_scroll_pending.set(true);
+            return;
+        }
+
         self.search_loading = true;
         self.search_error = None;
 
@@ -271,6 +283,9 @@ impl CommandPaletteView {
         if !self.open {
             return;
         }
+        if self.mode == CommandPaletteMode::Search && self.search_loading {
+            return;
+        }
 
         let len = match self.mode {
             CommandPaletteMode::Commands => self.command_palette_commands().len(),
@@ -311,6 +326,10 @@ impl CommandPaletteView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.search_loading {
+            return;
+        }
+
         self.close(window, cx);
         cx.emit(CommandPaletteEvent::OpenSearchResult(result));
     }
@@ -347,7 +366,7 @@ impl CommandPaletteView {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
     use entity::note;
     use gpui_kit::AppContext as _;
@@ -356,8 +375,32 @@ mod tests {
 
     use super::*;
 
+    fn finish_search(
+        palette: &gpui_kit::Entity<CommandPaletteView>,
+        cx: &mut gpui_kit::VisualTestContext,
+    ) {
+        for _ in 0..50 {
+            cx.executor().advance_clock(WORKSPACE_SEARCH_DEBOUNCE);
+            cx.run_until_parked();
+            if !palette.read_with(cx, |palette, _| palette.search_loading) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("workspace search should finish");
+    }
+
+    fn draw(cx: &mut gpui_kit::VisualTestContext) {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
     #[gpui_kit::test]
-    fn workspace_search_applies_results_after_input_changes(cx: &mut gpui_kit::TestAppContext) {
+    fn workspace_search_follows_typing_and_only_opens_current_results(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
         let _runtime_guard = runtime.enter();
         cx.executor().allow_parking();
@@ -367,11 +410,11 @@ mod tests {
                 let db = Database::connect("sqlite::memory:").await?;
                 Migrator::up(&db, None).await?;
                 note::ActiveModel {
-                    title: Set("Search regression needle".to_string()),
+                    title: Set("Search regression note".to_string()),
                     project_id: Set(None),
                     file_path: Set(None),
                     file_managed_by_app: Set(false),
-                    cached_content: Set("A searchable note body".to_string()),
+                    cached_content: Set("A searchable needle in the note body".to_string()),
                     file_missing_since: Set(None),
                     created_at: Set(1),
                     updated_at: Set(1),
@@ -383,16 +426,13 @@ mod tests {
             })
             .expect("search test database should initialize");
         let app_runtime = AppRuntime::new(Arc::new(db), PathBuf::new());
-        let settings_dir = std::env::temp_dir().join(format!(
-            "castle-workspace-search-test-{}",
-            std::process::id()
-        ));
+        let settings_dir = tempfile::tempdir().expect("settings directory should be created");
 
         let mut palette = None;
         let window = cx.update(|cx| {
             cx.set_global(gpui_kit::component::Theme::default());
             gpui_kit::init(cx);
-            cx.set_global(AppSettings::load(settings_dir));
+            cx.set_global(AppSettings::load(settings_dir.path()));
             cx.set_global(app_runtime);
             cx.open_window(Default::default(), |window, cx| {
                 let view = CommandPaletteView::view(window, cx);
@@ -403,40 +443,93 @@ mod tests {
         });
         let palette = palette.expect("command palette should exist");
         let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(800.)));
+
+        let opened_results = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            let opened_results = opened_results.clone();
+            cx.subscribe(&palette, move |_, event: &CommandPaletteEvent, _| {
+                if let CommandPaletteEvent::OpenSearchResult(result) = event {
+                    opened_results.borrow_mut().push(result.clone());
+                }
+            })
+            .detach();
+        });
 
         cx.update(|window, cx| {
             palette.update(cx, |palette, cx| {
                 palette.open_workspace_search(window, cx);
             });
         });
-        for _ in 0..50 {
-            cx.run_until_parked();
-            if !palette.read_with(&cx, |palette, _| palette.search_loading) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        finish_search(&palette, &mut cx);
 
-        let input = palette.read_with(&cx, |palette, _| palette.input.clone());
-        cx.update(|window, cx| {
-            input.update(cx, |input, cx| input.insert("needle", window, cx));
-        });
-        cx.run_until_parked();
-        cx.executor().advance_clock(WORKSPACE_SEARCH_DEBOUNCE);
-
-        for _ in 0..50 {
-            cx.run_until_parked();
-            if !palette.read_with(&cx, |palette, _| palette.search_loading) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
+        cx.simulate_input("needle");
+        finish_search(&palette, &mut cx);
+        draw(&mut cx);
+        assert!(cx.debug_bounds("search-result-preview-content").is_some());
+        assert!(cx.debug_bounds("search-result-count").is_some());
         palette.read_with(&cx, |palette, _| {
             assert_eq!(palette.query, "needle");
             assert_eq!(palette.search_results.len(), 1);
-            assert_eq!(palette.search_results[0].title, "Search regression needle");
+            assert_eq!(palette.search_results[0].title, "Search regression note");
             assert!(palette.search_error.is_none());
         });
+
+        cx.simulate_keystrokes("ctrl-a");
+        cx.simulate_input("no-match");
+        draw(&mut cx);
+        palette.read_with(&cx, |palette, _| {
+            assert!(palette.search_loading);
+            assert_eq!(palette.search_results.len(), 1);
+            assert_eq!(palette.search_results[0].title, "Search regression note");
+        });
+        assert!(cx.debug_bounds("search-loading").is_none());
+        assert!(cx.debug_bounds("search-result-preview-content").is_some());
+        assert!(cx.debug_bounds("search-result-count").is_some());
+
+        let stale_result = palette.read_with(&cx, |palette, _| palette.search_results[0].clone());
+        cx.update(|window, cx| {
+            palette.update(cx, |palette, cx| {
+                palette.open_search_result(stale_result, window, cx);
+            });
+        });
+        assert!(palette.read_with(&cx, |palette, _| palette.is_open()));
+        assert!(opened_results.borrow().is_empty());
+
+        cx.simulate_keystrokes("enter");
+        assert!(palette.read_with(&cx, |palette, _| palette.is_open()));
+        assert!(opened_results.borrow().is_empty());
+        finish_search(&palette, &mut cx);
+        draw(&mut cx);
+        assert!(cx.debug_bounds("search-no-results").is_some());
+        assert!(cx.debug_bounds("search-result-count").is_some());
+
+        cx.simulate_keystrokes("ctrl-a");
+        cx.simulate_input("---");
+        finish_search(&palette, &mut cx);
+        draw(&mut cx);
+        assert!(cx.debug_bounds("search-no-results").is_some());
+        assert!(palette.read_with(&cx, |palette, _| palette.search_results.is_empty()));
+
+        cx.simulate_keystrokes("ctrl-a");
+        cx.simulate_keystrokes("backspace");
+        draw(&mut cx);
+        assert!(cx.debug_bounds("search-empty-query").is_some());
+        cx.simulate_keystrokes("enter");
+        assert!(palette.read_with(&cx, |palette, _| palette.is_open()));
+        assert!(opened_results.borrow().is_empty());
+
+        cx.simulate_input("needle");
+        finish_search(&palette, &mut cx);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        palette.read_with(&cx, |palette, _| {
+            assert!(!palette.is_open());
+        });
+        let opened_results = opened_results.borrow();
+        assert_eq!(opened_results.len(), 1);
+        assert_eq!(opened_results[0].title, "Search regression note");
+        assert_eq!(opened_results[0].kind, search::SearchResultKind::Note);
     }
 }

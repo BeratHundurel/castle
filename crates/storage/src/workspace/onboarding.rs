@@ -55,7 +55,7 @@ Castle is a local-first workspace where notes, files, and boards stay connected.
 
 ## Start anywhere
 
-Use **Quick Capture** with `Ctrl+Alt+N` to open a small note window from anywhere. Press **Enter** to save a note, **Shift+Enter** for a new line, or **Esc** to close it. You can change this global shortcut in **Settings → General → Tray**.
+Use **Quick Capture** with `Ctrl+Alt+N` to capture a note or task from anywhere. Choose **Task** to save an action to the Inbox, with an optional project, board, and due date. Press **Enter** to save, **Shift+Enter** for a new line, or **Esc** to close it. You can change this global shortcut in **Settings → General → Tray**.
 
 Press `Ctrl+P` for the command palette. It can create notes and boards, open files, switch themes, search the workspace, open settings, and insert board views. Type `new: Launch`, `new note: Brief`, or `new board: Roadmap` to start with a title.
 

@@ -4,9 +4,11 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
+    time::Duration,
 };
 
 use super::*;
+use chrono::{Local, TimeZone as _};
 use gpui_kit::component::{
     WindowExt as _,
     dialog::{
@@ -21,8 +23,353 @@ use storage::workspace::ChangeRevision;
 use storage::workspace::load_workspace_rows;
 
 const EXTERNAL_CHANGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(750);
+const AUTOMATIC_BACKUP_CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 impl AppShell {
+    pub(crate) fn sync_automatic_backup_scheduler(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !enabled {
+            self.automatic_backup_task = None;
+            return;
+        }
+        if self.automatic_backup_task.is_some() {
+            return;
+        }
+
+        self.automatic_backup_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(enabled) = this.update(cx, |this, cx| {
+                    if AppSettings::automatic_backups_enabled(cx) {
+                        this.create_automatic_backup_if_due(cx);
+                        true
+                    } else {
+                        false
+                    }
+                }) else {
+                    break;
+                };
+                if !enabled {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(AUTOMATIC_BACKUP_CHECK_INTERVAL)
+                    .await;
+            }
+        }));
+    }
+
+    fn create_automatic_backup_if_due(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_archive_busy {
+            return;
+        }
+        let settings_json = match AppSettings::export_json(cx) {
+            Ok(settings_json) => settings_json,
+            Err(error) => {
+                eprintln!("Could not prepare an automatic workspace backup: {error}");
+                return;
+            }
+        };
+        let interval_days = AppSettings::automatic_backup_interval_days(cx);
+        let retention_count = AppSettings::automatic_backup_retention(cx);
+
+        let data_dir = cx.global::<AppRuntime>().data_dir_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        self.workspace_archive_busy = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = app_runtime
+                .spawn_store(cx.background_executor(), move |store| async move {
+                    storage::workspace::archive::create_automatic_workspace_backup_if_due(
+                        &store,
+                        data_dir.as_path(),
+                        &settings_json,
+                        interval_days,
+                        retention_count,
+                    )
+                    .await
+                })
+                .await;
+
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    eprintln!("Could not create an automatic workspace backup: {error}");
+                }
+                Err(error) => {
+                    eprintln!("Could not finish an automatic workspace backup: {error}");
+                }
+            }
+
+            let _ = this.update(cx, |this, cx| {
+                this.workspace_archive_busy = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn open_automatic_backups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace_archive_busy || window.has_active_dialog(cx) {
+            return;
+        }
+        let data_dir = cx.global::<AppRuntime>().data_dir_handle();
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let view = cx.entity().downgrade();
+
+        cx.spawn_in(window, async move |_, window| {
+            let result = app_runtime
+                .spawn_tokio(window.background_executor(), async move {
+                    storage::workspace::archive::list_automatic_workspace_backups(
+                        data_dir.as_path(),
+                    )
+                })
+                .await;
+
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| match result {
+                        Ok(Ok(backups)) => {
+                            this.open_automatic_backups_dialog(backups, window, cx);
+                        }
+                        Ok(Err(error)) => window.push_notification(
+                            Notification::error(format!(
+                                "Could not read local workspace backups: {error}"
+                            )),
+                            cx,
+                        ),
+                        Err(error) => window.push_notification(
+                            Notification::error(format!(
+                                "Could not finish reading local workspace backups: {error}"
+                            )),
+                            cx,
+                        ),
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn open_automatic_backups_dialog(
+        &mut self,
+        backups: Vec<storage::workspace::archive::AutomaticWorkspaceBackup>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let app = cx.entity();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let contents = if backups.is_empty() {
+                v_flex()
+                    .gap_2()
+                    .py_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("No local snapshots yet. Enable automatic local backups to save one now and then every 24 hours."),
+                    )
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .gap_1()
+                    .py_3()
+                    .children(backups.iter().cloned().map(|backup| {
+                        let timestamp = backup.created_at;
+                        let display_time = Local
+                            .timestamp_opt(timestamp, 0)
+                            .single()
+                            .map(|value| value.format("%b %-d, %Y at %H:%M").to_string())
+                            .unwrap_or_else(|| "Unknown date".to_string());
+                        let path = backup.path;
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .py_1()
+                            .child(div().text_sm().child(display_time))
+                            .child(
+                                Button::new(format!("preview-workspace-backup-{timestamp}"))
+                                    .label("Preview")
+                                    .outline()
+                                    .on_click({
+                                        let app = app.clone();
+                                        move |_, window, cx| {
+                                            window.close_dialog(cx);
+                                            app.update(cx, |this, cx| {
+                                                this.preview_automatic_backup(
+                                                    path.clone(), window, cx,
+                                                );
+                                            });
+                                        }
+                                    }),
+                            )
+                    }))
+                    .into_any_element()
+            };
+
+            dialog
+                .w(px(560.))
+                .child(
+                    DialogHeader::new()
+                        .child(DialogTitle::new().child("Local workspace backups"))
+                        .child(DialogDescription::new().child(
+                            "Choose a snapshot to inspect its contents before restoring it.",
+                        )),
+                )
+                .child(contents)
+                .child(DialogFooter::new().child(DialogClose::new().child(
+                    Button::new("close-workspace-backups")
+                        .child(footer_action_label("Close"))
+                        .outline(),
+                )))
+        });
+    }
+
+    fn preview_automatic_backup(
+        &mut self,
+        archive_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_archive_busy || window.has_active_dialog(cx) {
+            return;
+        }
+        let app_runtime = cx.global::<AppRuntime>().clone();
+        let view = cx.entity().downgrade();
+
+        cx.spawn_in(window, async move |_, window| {
+            let preview_path = archive_path.clone();
+            let preview = app_runtime
+                .spawn_tokio(window.background_executor(), async move {
+                    storage::workspace::archive::preview_workspace_archive(&preview_path)
+                })
+                .await;
+            let display_path = archive_path;
+
+            window
+                .update(|window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    view.update(cx, |this, cx| match preview {
+                        Ok(Ok(preview)) => this.open_automatic_backup_preview_dialog(
+                            display_path,
+                            preview,
+                            window,
+                            cx,
+                        ),
+                        Ok(Err(error)) => window.push_notification(
+                            Notification::error(format!(
+                                "Could not preview the workspace backup: {error}"
+                            )),
+                            cx,
+                        ),
+                        Err(error) => window.push_notification(
+                            Notification::error(format!(
+                                "Could not finish previewing the workspace backup: {error}"
+                            )),
+                            cx,
+                        ),
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn open_automatic_backup_preview_dialog(
+        &mut self,
+        archive_path: PathBuf,
+        preview: storage::workspace::archive::WorkspaceArchivePreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let created_at = Local
+            .timestamp_opt(preview.created_at, 0)
+            .single()
+            .map(|value| value.format("%b %-d, %Y at %H:%M").to_string())
+            .unwrap_or_else(|| "Unknown date".to_string());
+        let size_mb = preview.size_bytes as f64 / (1024.0 * 1024.0);
+        let attachment_count = preview.counts.note_attachments + preview.counts.entry_attachments;
+        let description = format!(
+            "Snapshot from {created_at} ({size_mb:.1} MB). Restoring replaces the current workspace."
+        );
+        let counts = preview.counts;
+        let archive_path = Rc::new(archive_path);
+        let restore_app = cx.entity();
+        let submitted = Rc::new(Cell::new(false));
+
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .w(px(560.))
+                .child(
+                    DialogHeader::new()
+                        .child(DialogTitle::new().child("Restore workspace snapshot?"))
+                        .child(DialogDescription::new().child(description.clone())),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .py_3()
+                        .child(div().text_sm().child(format!(
+                            "{} notes · {} boards · {} projects",
+                            counts.notes, counts.boards, counts.projects
+                        )))
+                        .child(div().text_sm().child(format!(
+                            "{} lists · {} cards · {} attachments",
+                            counts.lists, counts.entries, attachment_count
+                        )))
+                        .child(div().text_xs().child(format!(
+                            "{} workflows · {} saved views · {} templates",
+                            counts.workflows, counts.saved_views, counts.templates
+                        ))),
+                )
+                .child(
+                    DialogFooter::new()
+                        .justify_between()
+                        .child(
+                            DialogClose::new().child(
+                                Button::new("cancel-restore-workspace-backup")
+                                    .child(footer_action_label("Cancel"))
+                                    .outline(),
+                            ),
+                        )
+                        .child(
+                            Button::new("restore-workspace-backup")
+                                .child(footer_action_label("Restore workspace"))
+                                .danger()
+                                .on_click({
+                                    let restore_app = restore_app.clone();
+                                    let archive_path = archive_path.clone();
+                                    let submitted = submitted.clone();
+                                    move |_, window, cx| {
+                                        if !claim_workspace_import_submission(&submitted) {
+                                            return;
+                                        }
+                                        window.close_dialog(cx);
+                                        restore_app.update(cx, |this, cx| {
+                                            this.start_workspace_import(
+                                                archive_path.as_ref().clone(),
+                                                storage::workspace::archive::ImportMode::Replace,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        ),
+                )
+        });
+    }
+
     pub(crate) fn start_note_link_reindex(&mut self, cx: &mut Context<Self>) {
         let app_runtime = cx.global::<AppRuntime>().clone();
         let db = app_runtime.store();

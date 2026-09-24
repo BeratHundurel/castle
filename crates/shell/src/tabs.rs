@@ -98,7 +98,7 @@ impl AppShell {
         match target {
             ::workspace::WorkspaceNavigationTarget::Note {
                 note_id,
-                source_offset,
+                source_range,
             } => {
                 let Some(note) = self.workspace.notes.iter().find(|note| note.id == note_id) else {
                     window.push_notification(
@@ -108,11 +108,11 @@ impl AppShell {
                     return;
                 };
                 self.open_note_tab(note_id, note.project_id, note.title.clone(), window, cx);
-                if let Some(offset) = source_offset
+                if let Some(range) = source_range
                     && let Some(view) = self.tabs.note_views.get(&note_id)
                 {
                     view.update(cx, |editor, cx| {
-                        editor.navigate_to_offset(offset, window, cx)
+                        editor.navigate_to_range(range.0..range.1, window, cx)
                     });
                 }
             }
@@ -170,11 +170,9 @@ impl AppShell {
             if self.tabs.active_tab_index > index {
                 self.tabs.active_tab_index -= 1;
             }
-            self.tabs.tab_scroll_handle.scroll_to_item(
-                self.tabs
-                    .active_tab_index
-                    .saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET),
-            );
+            self.tabs
+                .tab_scroll_handle
+                .scroll_to_item(self.tabs.active_tab_index);
         }
     }
 
@@ -184,6 +182,7 @@ impl AppShell {
             .open_tabs
             .iter()
             .filter_map(|tab| match &tab.kind {
+                OpenTabKind::Restored(stored_tab) => Some(stored_tab.clone()),
                 OpenTabKind::Chooser => Some(StoredTab::Chooser),
                 OpenTabKind::Trash => Some(StoredTab::Trash),
                 OpenTabKind::Cheatsheet { .. } => Some(StoredTab::Cheatsheet),
@@ -272,7 +271,8 @@ impl AppShell {
                         cx.notify();
                     });
                 }
-                OpenTabKind::Trash
+                OpenTabKind::Restored(_)
+                | OpenTabKind::Trash
                 | OpenTabKind::Settings { .. }
                 | OpenTabKind::Cheatsheet { .. } => {
                     self.sidebar.update(cx, |sidebar, cx| {
@@ -282,6 +282,63 @@ impl AppShell {
                 }
             }
         }
+    }
+
+    pub(super) fn materialize_restored_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(OpenTabKind::Restored(stored_tab)) =
+            self.tabs.open_tabs.get(index).map(|tab| &tab.kind)
+        else {
+            return;
+        };
+        let kind = match stored_tab.clone() {
+            StoredTab::Chooser => OpenTabKind::Chooser,
+            StoredTab::Trash => OpenTabKind::Trash,
+            StoredTab::Cheatsheet => OpenTabKind::Cheatsheet {
+                view: CheatsheetView::view((self.shortcuts)(cx), window, cx),
+            },
+            StoredTab::Board {
+                board_id,
+                project_id,
+                ..
+            } => {
+                let view = BoardView::view(window, cx);
+                Self::observe_board_view(&view, window, cx);
+                view.update(cx, |board, cx| board.load_board(board_id, cx));
+                let navigation =
+                    cx.new(|cx| BoardNavigation::new(board_id, view.clone(), window, cx));
+                OpenTabKind::Board {
+                    board_id,
+                    project_id,
+                    view,
+                    navigation,
+                }
+            }
+            StoredTab::Note {
+                note_id,
+                project_id,
+                ..
+            } => {
+                let view = if let Some(view) = self.tabs.note_views.get(&note_id) {
+                    view.clone()
+                } else {
+                    let view = DocumentEditorView::view(note_id, window, cx);
+                    Self::observe_document_editor(&view, window, cx);
+                    self.tabs.note_views.insert(note_id, view.clone());
+                    view
+                };
+                OpenTabKind::Note {
+                    note_id,
+                    project_id,
+                    view,
+                }
+            }
+        };
+        self.tabs.open_tabs[index].kind = kind;
     }
 
     pub(super) fn activate_tab(
@@ -316,13 +373,13 @@ impl AppShell {
             index = updated_index;
         }
 
-        if self.tabs.active_tab_index != index {
+        let tab_changed = self.tabs.active_tab_index != index;
+        if tab_changed {
             self.exit_all_zen_modes(cx);
         }
+        self.materialize_restored_tab(index, window, cx);
         self.tabs.active_tab_index = index;
-        self.tabs
-            .tab_scroll_handle
-            .scroll_to_item(index.saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET));
+        self.tabs.tab_scroll_handle.scroll_to_item(index);
         let tab = &self.tabs.open_tabs[index];
 
         match &tab.kind {
@@ -340,7 +397,8 @@ impl AppShell {
             } => {
                 self.workspace.active_project_id = *project_id;
             }
-            OpenTabKind::Chooser
+            OpenTabKind::Restored(_)
+            | OpenTabKind::Chooser
             | OpenTabKind::Trash
             | OpenTabKind::Settings { .. }
             | OpenTabKind::Cheatsheet { .. } => {}
@@ -350,6 +408,9 @@ impl AppShell {
         self.sync_title_input(window, cx);
         self.focus_active_tab(window, cx);
         self.persist_tab_session(cx);
+        if tab_changed {
+            self.load_home_if_active(cx);
+        }
         cx.notify();
     }
 
@@ -390,12 +451,12 @@ impl AppShell {
             return;
         }
 
-        if let Some(index) = self
-            .tabs
-            .open_tabs
-            .iter()
-            .position(|tab| matches!(tab.kind, OpenTabKind::Chooser))
-        {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| {
+            matches!(
+                tab.kind,
+                OpenTabKind::Chooser | OpenTabKind::Restored(StoredTab::Chooser)
+            )
+        }) {
             self.activate_tab(index, window, cx);
             return;
         }
@@ -444,11 +505,10 @@ impl AppShell {
         } else if self.tabs.active_tab_index > index {
             self.tabs.active_tab_index -= 1;
         }
-        self.tabs.tab_scroll_handle.scroll_to_item(
-            self.tabs
-                .active_tab_index
-                .saturating_add(TAB_BAR_SCROLL_INDEX_OFFSET),
-        );
+        self.materialize_restored_tab(self.tabs.active_tab_index, window, cx);
+        self.tabs
+            .tab_scroll_handle
+            .scroll_to_item(self.tabs.active_tab_index);
 
         if was_active || self.tabs.active_tab_index >= self.tabs.open_tabs.len() {
             self.sync_sidebar_active(cx);
@@ -462,6 +522,9 @@ impl AppShell {
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
         self.persist_tab_session(cx);
+        if was_active {
+            self.load_home_if_active(cx);
+        }
         cx.notify();
     }
 
@@ -491,6 +554,16 @@ impl AppShell {
                     project_id: Some(tab_project_id),
                     ..
                 } if *tab_project_id == project_id => Some(index),
+                OpenTabKind::Restored(
+                    StoredTab::Board {
+                        project_id: Some(tab_project_id),
+                        ..
+                    }
+                    | StoredTab::Note {
+                        project_id: Some(tab_project_id),
+                        ..
+                    },
+                ) if *tab_project_id == project_id => Some(index),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -516,15 +589,15 @@ impl AppShell {
             self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         }
         self.tabs.active_tab_index = 0;
-        self.tabs
-            .tab_scroll_handle
-            .scroll_to_item(TAB_BAR_SCROLL_INDEX_OFFSET);
+        self.materialize_restored_tab(0, window, cx);
+        self.tabs.tab_scroll_handle.scroll_to_item(0);
         self.exit_zen_modes_for_closed_notes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
         self.persist_tab_session(cx);
+        self.load_home_if_active(cx);
         cx.notify();
     }
 
@@ -538,9 +611,7 @@ impl AppShell {
         });
         self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         self.tabs.active_tab_index = 0;
-        self.tabs
-            .tab_scroll_handle
-            .scroll_to_item(TAB_BAR_SCROLL_INDEX_OFFSET);
+        self.tabs.tab_scroll_handle.scroll_to_item(0);
         self.exit_all_zen_modes(cx);
         self.prune_closed_saved_note_views(cx);
         self.sync_sidebar_active(cx);
@@ -602,7 +673,8 @@ impl AppShell {
                 Some(WorkspaceTitleTarget::Note(*note_id))
             }
             OpenTabKind::Board { board_id, .. } => Some(WorkspaceTitleTarget::Board(*board_id)),
-            OpenTabKind::Chooser
+            OpenTabKind::Restored(_)
+            | OpenTabKind::Chooser
             | OpenTabKind::Trash
             | OpenTabKind::Settings { .. }
             | OpenTabKind::Cheatsheet { .. } => None,
@@ -765,20 +837,15 @@ impl AppShell {
             return pending.view.clone();
         }
 
-        if let Some((index, view)) =
-            self.tabs
-                .open_tabs
-                .iter()
-                .enumerate()
-                .find_map(|(index, tab)| match &tab.kind {
-                    OpenTabKind::Board {
-                        board_id: id, view, ..
-                    } if *id == board_id => Some((index, view.clone())),
-                    _ => None,
-                })
-        {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| match &tab.kind {
+            OpenTabKind::Board { board_id: id, .. }
+            | OpenTabKind::Restored(StoredTab::Board { board_id: id, .. }) => *id == board_id,
+            _ => false,
+        }) {
             self.activate_tab(index, window, cx);
-            return view;
+            if let OpenTabKind::Board { view, .. } = &self.tabs.open_tabs[index].kind {
+                return view.clone();
+            }
         }
 
         self.cancel_pending_board_open();
@@ -859,9 +926,11 @@ impl AppShell {
             note_id,
             cx,
         );
-        if let Some(index) = self.tabs.open_tabs.iter().position(
-            |tab| matches!(&tab.kind, OpenTabKind::Note { note_id: id, .. } if *id == note_id),
-        ) {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| match &tab.kind {
+            OpenTabKind::Note { note_id: id, .. }
+            | OpenTabKind::Restored(StoredTab::Note { note_id: id, .. }) => *id == note_id,
+            _ => false,
+        }) {
             self.activate_tab(index, window, cx);
             return;
         }
@@ -925,5 +994,319 @@ impl AppShell {
         self.tabs.next_tab_id = self.tabs.next_tab_id.saturating_add(1);
         self.tabs.open_tabs.push(OpenTab { id, title, kind });
         self.activate_tab(index, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use std::{collections::HashSet, path::PathBuf};
+
+    use chrono::{Duration, Local};
+    use entity::{board, card, entry, note};
+    use gpui_kit::TestAppContext;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectOptions, Database};
+    use settings::{AppSettings, StoredTab, TabSession};
+
+    use super::*;
+
+    #[gpui_kit::test]
+    fn activating_home_loads_workspace_data_and_refreshes_recent_after_open(
+        cx: &mut TestAppContext,
+    ) {
+        let tokio = tokio::runtime::Runtime::new().expect("Tokio runtime");
+        let _runtime_guard = tokio.enter();
+        cx.executor().allow_parking();
+        let (db, pinned_note_id, opened_note_id, board_id) = tokio.block_on(async {
+            let mut options = ConnectOptions::new("sqlite::memory:");
+            options.max_connections(1).min_connections(1);
+            let db = Database::connect(options).await.expect("test database");
+            Migrator::up(&db, None).await.expect("database migrations");
+            let pinned_note = note::ActiveModel {
+                title: Set("Pinned note".to_string()),
+                project_id: Set(None),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(String::new()),
+                file_missing_since: Set(None),
+                created_at: Set(1),
+                updated_at: Set(1),
+                is_pinned: Set(true),
+                last_opened_at: Set(Some(1)),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("pinned note");
+            let opened_note = note::ActiveModel {
+                title: Set("Opened note".to_string()),
+                project_id: Set(None),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(String::new()),
+                file_missing_since: Set(None),
+                created_at: Set(2),
+                updated_at: Set(2),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("opened note");
+            let board = board::ActiveModel {
+                title: Set("Due board".to_string()),
+                project_id: Set(None),
+                last_opened_at: Set(Some(2)),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("board");
+            let list = card::ActiveModel {
+                title: Set("Backlog".to_string()),
+                board_id: Set(board.id),
+                position: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("board list");
+            entry::ActiveModel {
+                title: Set("Overdue task".to_string()),
+                description: Set(String::new()),
+                card_id: Set(list.id),
+                position: Set(0),
+                due_on: Set(Some(
+                    (Local::now().date_naive() - Duration::days(1)).to_string(),
+                )),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .expect("overdue task");
+
+            (
+                db,
+                pinned_note.id as u32,
+                opened_note.id as u32,
+                board.id as u32,
+            )
+        });
+
+        let settings_dir = tempfile::tempdir().expect("settings directory");
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(settings_dir.path()));
+            AppSettings::set_tab_session(
+                TabSession {
+                    tabs: vec![StoredTab::Chooser, StoredTab::Trash],
+                    active_tab_index: 1,
+                    active_project_id: None,
+                },
+                cx,
+            );
+            cx.set_global(AppRuntime::new(db, PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, test_shell_integration(), cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("shell window")
+        });
+        let shell = shell.expect("shell");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        shell.read_with(&cx, |shell, _| {
+            assert!(matches!(shell.home.phase, LoadPhase::Initial));
+        });
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.activate_tab(0, window, cx));
+        });
+        for _ in 0..10_000 {
+            cx.run_until_parked();
+            if shell.read_with(&cx, |shell, _| matches!(shell.home.phase, LoadPhase::Ready)) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        shell.read_with(&cx, |shell, _| {
+            assert!(matches!(shell.home.phase, LoadPhase::Ready));
+            assert_eq!(shell.home.data.pinned.len(), 1);
+            assert_eq!(shell.home.data.pinned[0].id, pinned_note_id);
+            assert_eq!(shell.home.data.today.len(), 1);
+            assert_eq!(shell.home.data.today[0].title, "Overdue task");
+            assert_eq!(shell.home.data.recent.len(), 1);
+            assert_eq!(shell.home.data.recent[0].id, board_id);
+        });
+
+        cx.update(|_, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.record_item_opened(
+                    storage::workspace::home::WorkspaceItemKind::Note,
+                    opened_note_id,
+                    cx,
+                );
+            });
+        });
+        for _ in 0..10_000 {
+            cx.run_until_parked();
+            if shell.read_with(&cx, |shell, _| {
+                shell.home.data.recent.len() == 2
+                    && shell
+                        .home
+                        .data
+                        .recent
+                        .iter()
+                        .any(|item| item.id == opened_note_id)
+            }) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        shell.read_with(&cx, |shell, _| {
+            let recent_ids = shell
+                .home
+                .data
+                .recent
+                .iter()
+                .map(|item| item.id)
+                .collect::<HashSet<_>>();
+            assert_eq!(recent_ids, HashSet::from([opened_note_id, board_id]));
+            assert_eq!(shell.home.data.pinned[0].id, pinned_note_id);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn restores_saved_tabs_only_when_selected_or_needed(cx: &mut TestAppContext) {
+        let tokio = tokio::runtime::Runtime::new().expect("Tokio runtime");
+        let _runtime_guard = tokio.enter();
+        cx.executor().allow_parking();
+        let db = tokio.block_on(async {
+            let db = Database::connect("sqlite::memory:")
+                .await
+                .expect("test database");
+            Migrator::up(&db, None).await.expect("database migrations");
+            db
+        });
+        let settings_dir = tempfile::tempdir().expect("settings directory");
+        let mut shell = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(settings_dir.path()));
+            AppSettings::set_tab_session(
+                TabSession {
+                    tabs: (1..=3)
+                        .map(|note_id| StoredTab::Note {
+                            note_id,
+                            project_id: (note_id == 2).then_some(7),
+                            title: format!("Note {note_id}"),
+                        })
+                        .chain(std::iter::once(StoredTab::Board {
+                            board_id: 4,
+                            project_id: Some(7),
+                            title: "Board 4".into(),
+                        }))
+                        .chain(std::iter::once(StoredTab::Board {
+                            board_id: 5,
+                            project_id: Some(8),
+                            title: "Board 5".into(),
+                        }))
+                        .chain([StoredTab::Chooser, StoredTab::Trash])
+                        .collect(),
+                    active_tab_index: 2,
+                    active_project_id: None,
+                },
+                cx,
+            );
+            cx.set_global(AppRuntime::new(db, PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = AppShell::view(window, test_shell_integration(), cx);
+                shell = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("shell window")
+        });
+        let shell = shell.expect("shell");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+
+        shell.read_with(&cx, |shell, _| {
+            assert_eq!(shell.tabs.open_tabs.len(), 7);
+            assert_eq!(shell.tabs.note_views.len(), 1);
+            assert_eq!(shell.tabs.active_tab_index, 2);
+            assert!(shell.tabs.note_views.contains_key(&3));
+            assert!(matches!(shell.home.phase, LoadPhase::Initial));
+            assert!(matches!(shell.trash.phase, LoadPhase::Initial));
+            assert!(matches!(
+                shell.tabs.open_tabs[3].kind,
+                OpenTabKind::Restored(StoredTab::Board { board_id: 4, .. })
+            ));
+        });
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.activate_tab(0, window, cx));
+        });
+        shell.read_with(&cx, |shell, cx| {
+            assert_eq!(shell.tabs.active_tab_index, 0);
+            assert_eq!(shell.tabs.note_views.len(), 2);
+            assert!(shell.tabs.note_views.contains_key(&1));
+            let session = AppSettings::tab_session(cx);
+            assert_eq!(session.active_tab_index, 0);
+            assert!(matches!(
+                &session.tabs[3],
+                StoredTab::Board {
+                    board_id: 4,
+                    title,
+                    ..
+                } if title == "Board 4"
+            ));
+        });
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.activate_tab(4, window, cx));
+        });
+        shell.read_with(&cx, |shell, _| {
+            assert!(matches!(
+                shell.tabs.open_tabs[4].kind,
+                OpenTabKind::Board { board_id: 5, .. }
+            ));
+            assert!(matches!(
+                shell.tabs.open_tabs[3].kind,
+                OpenTabKind::Restored(StoredTab::Board { board_id: 4, .. })
+            ));
+        });
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.open_home(window, cx));
+        });
+        shell.read_with(&cx, |shell, _| {
+            assert_eq!(shell.tabs.open_tabs.len(), 7);
+            assert!(shell.home.phase.is_loading());
+            assert!(matches!(shell.trash.phase, LoadPhase::Initial));
+        });
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.open_trash(window, cx));
+        });
+        shell.read_with(&cx, |shell, _| {
+            assert_eq!(shell.tabs.open_tabs.len(), 7);
+            assert!(shell.trash.phase.is_loading());
+        });
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.activate_tab(0, window, cx));
+        });
+
+        cx.update(|window, cx| {
+            shell.update(cx, |shell, cx| shell.close_project_tabs(7, window, cx));
+        });
+        shell.read_with(&cx, |shell, _| {
+            assert_eq!(shell.tabs.open_tabs.len(), 5);
+            assert_eq!(shell.tabs.note_views.len(), 2);
+            assert!(matches!(
+                shell.tabs.open_tabs[shell.tabs.active_tab_index].kind,
+                OpenTabKind::Note { note_id: 1, .. }
+            ));
+        });
     }
 }

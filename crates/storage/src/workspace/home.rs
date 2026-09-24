@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use sea_orm::{DbBackend, Statement};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +46,17 @@ pub async fn load_home(
          + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
      ),
 ) -> Result<WorkspaceHomeState> {
-    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    load_home_on_date(db, Local::now().date_naive()).await
+}
+
+async fn load_home_on_date(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    date: NaiveDate,
+) -> Result<WorkspaceHomeState> {
+    let today = date.format("%Y-%m-%d").to_string();
     let rows = db
         .query_all_raw(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -221,6 +231,7 @@ mod tests {
     async fn home_orders_due_work_and_separates_pinned_from_recent() -> Result<()> {
         let db = Database::connect("sqlite::memory:").await?;
         Migrator::up(&db, None).await?;
+        let today = NaiveDate::from_ymd_opt(2026, 9, 24).expect("valid test date");
 
         let project = project::ActiveModel {
             name: Set("Castle".to_string()),
@@ -262,20 +273,30 @@ mod tests {
         }
         .insert(&db)
         .await?;
-        entry::ActiveModel {
-            title: Set("Ship Home".to_string()),
-            description: Set(String::new()),
-            card_id: Set(list.id),
-            position: Set(0),
-            due_on: Set(Some(Local::now().date_naive().to_string())),
-            ..Default::default()
+        for (position, (title, due_on)) in [
+            ("Overdue", "2026-09-23"),
+            ("Ship Home", "2026-09-24"),
+            ("Future", "2026-09-25"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            entry::ActiveModel {
+                title: Set(title.to_string()),
+                description: Set(String::new()),
+                card_id: Set(list.id),
+                position: Set(position as i32),
+                due_on: Set(Some(due_on.to_string())),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
         }
-        .insert(&db)
-        .await?;
 
-        let home = load_home(&db).await?;
-        assert_eq!(home.today.len(), 1);
-        assert_eq!(home.today[0].title, "Ship Home");
+        let home = load_home_on_date(&db, today).await?;
+        assert_eq!(home.today.len(), 2);
+        assert_eq!(home.today[0].title, "Overdue");
+        assert_eq!(home.today[1].title, "Ship Home");
         assert_eq!(home.pinned.len(), 1);
         assert_eq!(home.pinned[0].id, pinned_note.id as u32);
         assert_eq!(home.recent.len(), 1);

@@ -2,6 +2,19 @@ use super::*;
 use runtime::AppRuntime;
 
 impl AppShell {
+    pub(crate) fn load_home_if_active(&mut self, cx: &mut Context<Self>) {
+        let home_is_active = matches!(
+            self.tabs
+                .open_tabs
+                .get(self.tabs.active_tab_index)
+                .map(|tab| &tab.kind),
+            Some(OpenTabKind::Chooser | OpenTabKind::Restored(StoredTab::Chooser))
+        );
+        if home_is_active {
+            self.load_home(cx);
+        }
+    }
+
     pub(crate) fn load_home(&mut self, cx: &mut Context<Self>) {
         if self.home.phase.is_loading() {
             self.home.refresh_pending = true;
@@ -91,28 +104,30 @@ impl AppShell {
     }
 
     pub(crate) fn open_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self
-            .tabs
-            .open_tabs
-            .iter()
-            .position(|tab| matches!(tab.kind, OpenTabKind::Chooser))
-        {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| {
+            matches!(
+                tab.kind,
+                OpenTabKind::Chooser | OpenTabKind::Restored(StoredTab::Chooser)
+            )
+        }) {
+            let was_active = self.tabs.active_tab_index == index;
             self.activate_tab(index, window, cx);
-            self.load_home(cx);
+            if was_active {
+                self.load_home_if_active(cx);
+            }
             return;
         }
         self.replace_or_push_active(OpenTabKind::Chooser, "Home".into(), window, cx);
-        self.load_home(cx);
     }
 
     pub(crate) fn open_trash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_pending_board_open();
-        if let Some(index) = self
-            .tabs
-            .open_tabs
-            .iter()
-            .position(|tab| matches!(tab.kind, OpenTabKind::Trash))
-        {
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| {
+            matches!(
+                tab.kind,
+                OpenTabKind::Trash | OpenTabKind::Restored(StoredTab::Trash)
+            )
+        }) {
             self.activate_tab(index, window, cx);
             self.load_trash(cx);
             return;
@@ -129,7 +144,7 @@ impl AppShell {
     ) {
         let app_runtime = cx.global::<AppRuntime>().clone();
         let db = app_runtime.store();
-        self.record_opened_task = Some(cx.spawn(async move |_, cx| {
+        self.record_opened_task = Some(cx.spawn(async move |this, cx| {
             let (cancel_on_drop, cancelled) = tokio::sync::oneshot::channel::<()>();
             let update = app_runtime.spawn_tokio(cx.background_executor(), async move {
                 tokio::select! {
@@ -143,11 +158,15 @@ impl AppShell {
             let result = update.await;
             drop(cancel_on_drop);
             match result {
+                Ok(Some(Ok(()))) => {
+                    this.update(cx, |this, cx| this.load_home_if_active(cx))
+                        .ok();
+                }
                 Ok(Some(Err(error))) => {
                     eprintln!("Failed to record opened workspace item: {error}");
                 }
                 Err(error) => eprintln!("Recent-item task failed: {error}"),
-                Ok(Some(Ok(())) | None) => {}
+                Ok(None) => {}
             }
         }));
     }

@@ -32,6 +32,10 @@ const WORKSPACE_DATA_PATH: &str = "workspace.json";
 const SETTINGS_PATH: &str = "settings.json";
 const MAX_ARCHIVE_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
+const AUTOMATIC_BACKUP_DIRECTORY: &str = "backups";
+const AUTOMATIC_BACKUP_PREFIX: &str = "automatic-";
+const AUTOMATIC_BACKUP_SUFFIX: &str = ".castle.zip";
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 25_000;
 const MAX_FILE_NAME_BYTES: usize = 180;
@@ -84,6 +88,19 @@ pub struct WorkspaceImportSummary {
     pub mode: ImportMode,
     pub settings_json: Vec<u8>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceArchivePreview {
+    pub created_at: i64,
+    pub counts: WorkspaceArchiveCounts,
+    pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutomaticWorkspaceBackup {
+    pub path: PathBuf,
+    pub created_at: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -454,6 +471,122 @@ pub async fn export_workspace(
         destination: destination.to_path_buf(),
         missing_attachments,
     })
+}
+
+/// Creates a local workspace snapshot when one is due and keeps the configured number of snapshots.
+pub async fn create_automatic_workspace_backup_if_due(
+    db: &(impl ConnectionTrait + TransactionTrait<Transaction = DatabaseTransaction>),
+    data_dir: &Path,
+    settings_json: &[u8],
+    interval_days: u32,
+    retention_count: u32,
+) -> Result<Option<WorkspaceExportSummary>> {
+    validate_settings_json(settings_json)?;
+
+    let backups = list_automatic_workspace_backups(data_dir)?;
+    let created_at = now_ts();
+    let interval_seconds = i64::from(interval_days.max(1)).saturating_mul(SECONDS_PER_DAY);
+    if backups.first().is_some_and(|backup| {
+        created_at.saturating_sub(backup.created_at) < interval_seconds
+    }) {
+        return Ok(None);
+    }
+
+    let backup_directory = automatic_backup_directory(data_dir);
+    ensure_automatic_backup_directory(&backup_directory)?;
+    let destination = backup_directory.join(format!(
+        "{AUTOMATIC_BACKUP_PREFIX}{created_at}{AUTOMATIC_BACKUP_SUFFIX}"
+    ));
+    let summary = export_workspace(db, data_dir, settings_json, &destination).await?;
+
+    let backups = list_automatic_workspace_backups(data_dir)?;
+    for backup in backups.into_iter().skip(retention_count.max(1) as usize) {
+        fs::remove_file(&backup.path)
+            .with_context(|| format!("could not remove old backup {}", backup.path.display()))?;
+    }
+
+    Ok(Some(summary))
+}
+
+pub fn list_automatic_workspace_backups(data_dir: &Path) -> Result<Vec<AutomaticWorkspaceBackup>> {
+    let backup_directory = automatic_backup_directory(data_dir);
+    let metadata = match fs::symlink_metadata(&backup_directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not inspect {}", backup_directory.display()));
+        }
+    };
+    if !metadata.file_type().is_dir() {
+        bail!("{} is not a regular directory", backup_directory.display());
+    }
+    let directory = match fs::read_dir(&backup_directory) {
+        Ok(directory) => directory,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not read {}", backup_directory.display()));
+        }
+    };
+
+    let mut backups = Vec::new();
+    for entry in directory {
+        let entry = entry.with_context(|| format!("could not read {}", backup_directory.display()))?;
+        if !entry
+            .file_type()
+            .with_context(|| format!("could not inspect {}", entry.path().display()))?
+            .is_file()
+        {
+            continue;
+        }
+        let Some(created_at) = automatic_backup_timestamp(&entry.file_name().to_string_lossy())
+        else {
+            continue;
+        };
+        backups.push(AutomaticWorkspaceBackup {
+            path: entry.path(),
+            created_at,
+        });
+    }
+    backups.sort_by_key(|backup| std::cmp::Reverse(backup.created_at));
+    Ok(backups)
+}
+
+pub fn preview_workspace_archive(archive_path: &Path) -> Result<WorkspaceArchivePreview> {
+    let (data, _, created_at) = read_archive(archive_path)?;
+    let size_bytes = fs::metadata(archive_path)
+        .with_context(|| format!("could not inspect {}", archive_path.display()))?
+        .len();
+    Ok(WorkspaceArchivePreview {
+        created_at,
+        counts: data.counts(),
+        size_bytes,
+    })
+}
+
+fn automatic_backup_directory(data_dir: &Path) -> PathBuf {
+    data_dir.join(AUTOMATIC_BACKUP_DIRECTORY)
+}
+
+fn ensure_automatic_backup_directory(backup_directory: &Path) -> Result<()> {
+    fs::create_dir_all(backup_directory)
+        .with_context(|| format!("could not create {}", backup_directory.display()))?;
+    let metadata = fs::symlink_metadata(backup_directory)
+        .with_context(|| format!("could not inspect {}", backup_directory.display()))?;
+    if !metadata.file_type().is_dir() {
+        bail!("{} is not a regular directory", backup_directory.display());
+    }
+    Ok(())
+}
+
+fn automatic_backup_timestamp(file_name: &str) -> Option<i64> {
+    let timestamp = file_name
+        .strip_prefix(AUTOMATIC_BACKUP_PREFIX)?
+        .strip_suffix(AUTOMATIC_BACKUP_SUFFIX)?;
+    if timestamp.is_empty() || !timestamp.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    timestamp.parse().ok()
 }
 
 async fn load_archive_data(db: &impl ConnectionTrait, data_dir: &Path) -> Result<ArchiveData> {
@@ -1367,7 +1500,7 @@ fn replace_archive_file(temporary_path: &Path, destination: &Path) -> Result<()>
     }
 }
 
-fn read_archive(archive_path: &Path) -> Result<(ArchiveData, Vec<u8>)> {
+fn read_archive(archive_path: &Path) -> Result<(ArchiveData, Vec<u8>, i64)> {
     let metadata = fs::metadata(archive_path)
         .with_context(|| format!("could not inspect {}", archive_path.display()))?;
     if !metadata.is_file() {
@@ -1471,7 +1604,7 @@ fn read_archive(archive_path: &Path) -> Result<(ArchiveData, Vec<u8>)> {
         }
     }
 
-    Ok((data, settings_json))
+    Ok((data, settings_json, manifest.created_at))
 }
 
 fn parse_archive_json<T: for<'de> Deserialize<'de>>(
@@ -1962,7 +2095,7 @@ pub async fn import_workspace(
     archive_path: &Path,
     mode: ImportMode,
 ) -> Result<WorkspaceImportSummary> {
-    let (data, settings_json) = read_archive(archive_path)?;
+    let (data, settings_json, _) = read_archive(archive_path)?;
     let transaction = db.begin().await?;
     let mut created_paths = Vec::new();
     let result = import_into_transaction(

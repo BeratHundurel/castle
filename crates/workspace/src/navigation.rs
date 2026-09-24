@@ -6,7 +6,7 @@ use gpui_kit::{App, Context, WeakEntity};
 pub enum WorkspaceNavigationTarget {
     Note {
         note_id: u32,
-        source_offset: Option<usize>,
+        source_range: Option<(usize, usize)>,
     },
     Board {
         board_id: u32,
