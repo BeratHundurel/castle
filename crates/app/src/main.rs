@@ -122,9 +122,12 @@ fn create_main_window(
     saved_bounds: Option<WindowBounds>,
     cx: &mut App,
 ) -> Result<tray::MainWindow> {
-    let bounds = saved_bounds.unwrap_or_else(|| {
-        WindowBounds::Windowed(Bounds::centered(None, size(px(1200.), px(768.)), cx))
-    });
+    let bounds = saved_bounds
+        .map(window_bounds_for_tray_restore)
+        .unwrap_or_else(|| {
+            WindowBounds::Windowed(Bounds::centered(None, size(px(1200.), px(768.)), cx))
+        });
+    
     let mut shell = None;
     let window = cx.open_window(main_window_options(bounds), |window, cx| {
         let integration = ShellIntegration::new(
@@ -141,6 +144,10 @@ fn create_main_window(
     })?;
     let shell = shell.context("Castle window did not construct its shell")?;
     Ok(tray::MainWindow::new(window.into(), shell))
+}
+
+fn window_bounds_for_tray_restore(saved_bounds: WindowBounds) -> WindowBounds {
+    WindowBounds::Windowed(saved_bounds.get_bounds())
 }
 
 fn main_window_options(bounds: WindowBounds) -> WindowOptions {
@@ -248,7 +255,10 @@ mod tests {
     use sea_orm::Database;
     use serde::Deserialize;
 
-    use super::{create_main_window, main_window_options, open_initial_window};
+    use super::{
+        create_main_window, main_window_options, open_initial_window,
+        window_bounds_for_tray_restore,
+    };
 
     #[derive(Deserialize)]
     struct ThemeSet {
@@ -298,13 +308,27 @@ mod tests {
     }
 
     #[test]
-    fn main_window_preserves_a_maximized_restore_state() {
-        let bounds = WindowBounds::Maximized(Bounds::default());
-        assert_eq!(main_window_options(bounds).window_bounds, Some(bounds));
+    fn tray_restore_uses_saved_geometry_without_reapplying_window_mode() {
+        let saved_bounds = Bounds {
+            origin: point(px(92.), px(144.)),
+            size: size(px(1024.), px(700.)),
+        };
+        for saved_state in [
+            WindowBounds::Windowed(saved_bounds),
+            WindowBounds::Maximized(saved_bounds),
+            WindowBounds::Fullscreen(saved_bounds),
+        ] {
+            assert_eq!(
+                window_bounds_for_tray_restore(saved_state),
+                WindowBounds::Windowed(saved_bounds)
+            );
+        }
     }
 
     #[gpui_kit::test]
-    fn closing_the_window_releases_the_shell_before_restore(cx: &mut TestAppContext) {
+    fn tray_restore_releases_the_shell_and_keeps_saved_maximized_geometry_windowed(
+        cx: &mut TestAppContext,
+    ) {
         let tokio = tokio::runtime::Runtime::new().expect("Tokio runtime");
         let _runtime_guard = tokio.enter();
         cx.executor().allow_parking();
@@ -342,12 +366,13 @@ mod tests {
             "closed shell must be released"
         );
 
-        let saved_bounds = WindowBounds::Windowed(Bounds {
+        let saved_bounds = Bounds {
             origin: point(px(92.), px(144.)),
             size: size(px(1024.), px(700.)),
-        });
+        };
         let second = cx.update(|cx| {
-            create_main_window(visibility, Some(saved_bounds), cx).expect("restored window")
+            create_main_window(visibility, Some(WindowBounds::Maximized(saved_bounds)), cx)
+                .expect("restored window")
         });
         assert_ne!(
             second
@@ -363,7 +388,7 @@ mod tests {
                 .update(cx, |_, window, _| window.window_bounds())
                 .expect("restored window should exist")
         });
-        assert_eq!(restored_bounds, saved_bounds);
+        assert_eq!(restored_bounds, WindowBounds::Windowed(saved_bounds));
         assert!(*visibility_sender.borrow());
     }
 
