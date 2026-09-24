@@ -170,12 +170,21 @@ impl WorkflowWorkspace {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(name),
                 );
+            } else if route == WorkflowRoute::Run {
+                breadcrumb = breadcrumb.child(
+                    div()
+                        .debug_selector(|| "workflow-breadcrumb-current".into())
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Run history"),
+                );
             } else {
                 let title = match route {
                     WorkflowRoute::Step if self.draft.selected_node.is_none() => "Workflow details",
                     WorkflowRoute::Step => "Step settings",
                     WorkflowRoute::Mermaid => "Mermaid preview",
-                    WorkflowRoute::Run => "Run saved workflows",
                     _ => unreachable!(),
                 };
                 breadcrumb = breadcrumb
@@ -253,6 +262,18 @@ impl WorkflowWorkspace {
                     .child(self.render_workflow_more(cx)),
             );
         } else {
+            if route == WorkflowRoute::Overview {
+                header = header.child(
+                    Button::new("workflow-open-run-history")
+                        .debug_selector(|| "workflow-run-history-button".into())
+                        .label("Run history")
+                        .outline()
+                        .small()
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            cx.emit(WorkflowWorkspaceEvent::Navigate(WorkflowRoute::Run))
+                        })),
+                );
+            }
             if route == WorkflowRoute::Overview && !self.state.new_workflow_open {
                 header = header.child(
                     Button::new("workflow-new")
@@ -910,15 +931,303 @@ impl WorkflowWorkspace {
     }
 
     fn render_manual_run(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex().w_full().max_w(px(640.)).mx_auto().p_6().gap_4()
-            .child("Choose an item to run this board’s saved manual workflows. Unsaved edits are not used.")
-            .child(Select::new(&self.state.manual_entry_select).id("workflow-run-item").placeholder("Choose a board item").search_placeholder("Search items by title or list").w_full())
+        let theme = cx.theme().clone();
+        let narrow = self.route_narrow(WorkflowRoute::Run);
+        let controls = v_flex()
+            .id("workflow-run-controls")
+            .debug_selector(|| "workflow-run-controls".into())
+            .w(px(360.))
+            .flex_shrink_0()
+            .when(narrow, |this| this.w_full())
+            .gap_4()
+            .p_5()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Run workflows"),
+                    )
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(
+                        "Run saved manual workflows for a board item. Unsaved edits are ignored.",
+                    )),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.muted_foreground)
+                            .child("Board item"),
+                    )
+                    .child(
+                        Select::new(&self.state.manual_entry_select)
+                            .id("workflow-run-item")
+                            .placeholder("Choose a board item")
+                            .search_placeholder("Search items by title or list")
+                            .w_full(),
+                    ),
+            )
+            .child(
+                Button::new("workflow-run-manual")
+                    .label(if self.state.running {
+                        "Running…"
+                    } else {
+                        "Run manual workflows"
+                    })
+                    .primary()
+                    .w_full()
+                    .disabled(self.state.running)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.run_manual_workflows_from_editor(window, cx)
+                    })),
+            )
             .when_some(self.state.run_notice.clone(), |this, notice| {
-                this.child(div().text_sm().text_color(cx.theme().muted_foreground).child(notice))
-            })
-            .child(Button::new("workflow-run-manual").label(if self.state.running {"Running…"} else {"Run saved workflows"}).primary().disabled(self.state.running)
-                .on_click(cx.listener(|this,_,_,cx|this.run_manual_workflows_from_editor(cx))))
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(notice),
+                )
+            });
+        let history = self.render_run_history(narrow, cx);
+        let content = h_flex()
+            .id("workflow-manual-run-content")
+            .debug_selector(|| "workflow-manual-run-content".into())
+            .w_full()
+            .max_w(px(1280.))
+            .min_w_0()
+            .flex_1()
+            .min_h_0()
+            .gap_6()
+            .p_6()
+            .items_start()
+            .when(narrow, |this| this.flex_col())
+            .child(controls)
+            .child(history);
+
+        v_flex()
+            .id("workflow-manual-run-page")
+            .w_full()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scrollbar()
+            .child(content)
             .into_any_element()
+    }
+
+    fn render_run_history(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let show_empty_state = self.state.runs.is_empty() && self.state.overview_notice.is_none();
+        v_flex()
+            .id("workflow-run-history")
+            .debug_selector(|| "workflow-run-history".into())
+            .w_full()
+            .min_w_0()
+            .when(!narrow, |this| this.flex_1())
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(
+                h_flex()
+                    .px_4()
+                    .py_3()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Run history"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child("Latest 20 runs across this board"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px_2()
+                            .py_1()
+                            .rounded_full()
+                            .bg(theme.background)
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!("{} shown", self.state.runs.len())),
+                    ),
+            )
+            .when_some(self.state.overview_notice.clone(), |this, notice| {
+                this.child(
+                    div()
+                        .mx_4()
+                        .mt_3()
+                        .px_3()
+                        .py_2()
+                        .rounded_sm()
+                        .bg(theme.warning.opacity(0.08))
+                        .text_sm()
+                        .text_color(theme.warning)
+                        .child(notice),
+                )
+            })
+            .when(show_empty_state, |this| {
+                this.child(
+                    v_flex()
+                        .debug_selector(|| "workflow-run-history-empty".into())
+                        .items_center()
+                        .gap_1()
+                        .p_8()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child("No runs yet"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child("Manual and automatic workflow runs will appear here."),
+                        ),
+                )
+            })
+            .children(self.state.runs.iter().enumerate().map(|(index, run)| {
+                self.render_run_history_entry(run, index + 1 == self.state.runs.len(), cx)
+            }))
+            .into_any_element()
+    }
+
+    fn render_run_history_entry(
+        &self,
+        run: &WorkflowRunHistoryEntry,
+        is_last: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let (status_label, status_color) = match run.status {
+            WorkflowRunStatus::Running => (WorkflowRunStatus::Running.label(), theme.info),
+            WorkflowRunStatus::Succeeded => (WorkflowRunStatus::Succeeded.label(), theme.success),
+            WorkflowRunStatus::Failed => (WorkflowRunStatus::Failed.label(), theme.danger),
+            WorkflowRunStatus::Skipped => {
+                (WorkflowRunStatus::Skipped.label(), theme.muted_foreground)
+            }
+        };
+        let started_at = chrono::DateTime::<chrono::Utc>::from_timestamp(run.started_at, 0)
+            .map(|time| {
+                time.with_timezone(&chrono::Local)
+                    .format("%e %b %Y, %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "Unknown time".into());
+        let trigger = humanize_workflow_trigger(&run.trigger_kind);
+        let context = match (&run.entry_title, run.entry_id) {
+            (Some(title), _) => format!("{trigger} · {title}"),
+            (None, Some(entry_id)) => format!("{trigger} · Item #{entry_id}"),
+            (None, None) => trigger,
+        };
+        let mut item = v_flex()
+            .id(SharedString::from(format!("workflow-run-{}", run.id)))
+            .debug_selector(|| format!("workflow-run-{}", run.id))
+            .gap_1()
+            .px_4()
+            .py_3()
+            .when(!is_last, |this| {
+                this.border_b_1().border_color(theme.border)
+            })
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(run.workflow_name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px_2()
+                            .py_1()
+                            .rounded_full()
+                            .bg(status_color.opacity(0.12))
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(status_color)
+                            .child(status_label),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(format!("{started_at} · {context}")),
+            );
+
+        if run.actions.is_empty() {
+            let message = if run.status == WorkflowRunStatus::Skipped {
+                "No actions matched this trigger."
+            } else {
+                "No actions recorded."
+            };
+            item = item.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(message),
+            );
+        } else {
+            item = item.child(v_flex().gap_1().children(run.actions.iter().map(|action| {
+                div().text_xs().child(format!(
+                    "• {}",
+                    self.step_label(&WorkflowNodeKind::Action {
+                        action: action.clone(),
+                    })
+                ))
+            })));
+        }
+
+        if let Some(error) = &run.error {
+            let run_id = run.id;
+            item = item.child(
+                div()
+                    .debug_selector(move || format!("workflow-run-error-{run_id}"))
+                    .mt_1()
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.danger.opacity(0.24))
+                    .bg(theme.danger.opacity(0.06))
+                    .text_xs()
+                    .text_color(theme.danger)
+                    .child(format!("Failure: {error}")),
+            );
+        }
+
+        item.into_any_element()
     }
 }
 
@@ -943,4 +1252,13 @@ impl WorkflowWorkspace {
             .collect::<Vec<_>>()
             .join(" → ")
     }
+}
+
+fn humanize_workflow_trigger(trigger: &str) -> String {
+    let label = trigger.replace('_', " ");
+    let mut characters = label.chars();
+    characters
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + characters.as_str())
+        .unwrap_or(label)
 }

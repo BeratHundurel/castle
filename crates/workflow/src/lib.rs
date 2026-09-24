@@ -67,6 +67,41 @@ pub struct WorkflowListRecord {
 pub struct WorkflowSnapshot {
     pub workflows: Vec<WorkflowRecord>,
     pub lists: Vec<WorkflowListRecord>,
+    pub runs: Vec<WorkflowRunHistoryEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkflowRunStatus {
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+impl WorkflowRunStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Running => "Running",
+            Self::Succeeded => "Succeeded",
+            Self::Failed => "Failed",
+            Self::Skipped => "Skipped",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkflowRunHistoryEntry {
+    pub id: i64,
+    pub workflow_id: i64,
+    pub workflow_name: String,
+    pub entry_id: Option<i64>,
+    pub entry_title: Option<String>,
+    pub trigger_kind: String,
+    pub status: WorkflowRunStatus,
+    pub actions: Vec<WorkflowAction>,
+    pub error: Option<String>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +138,7 @@ struct WorkflowEditorState {
     run_notice: Option<SharedString>,
     new_workflow_open: bool,
     workflows: Vec<WorkflowRecord>,
+    runs: Vec<WorkflowRunHistoryEntry>,
     manual_entry_select: Entity<SelectState<SearchableVec<EntryOption>>>,
 }
 
@@ -157,6 +193,10 @@ impl WorkflowWorkspace {
                             .then(|| format!("Skipped {invalid} invalid saved workflows").into());
                         if this.state.workflows != records {
                             this.state.workflows = records;
+                            presentation_changed = true;
+                        }
+                        if this.state.runs != snapshot.runs {
+                            this.state.runs = snapshot.runs;
                             presentation_changed = true;
                         }
                         if this.lists != snapshot.lists {
@@ -440,7 +480,11 @@ impl WorkflowWorkspace {
         cx.notify();
     }
 
-    pub(crate) fn run_manual_workflows_from_editor(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn run_manual_workflows_from_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.state.running {
             return;
         }
@@ -461,17 +505,22 @@ impl WorkflowWorkspace {
         let task = self
             .service
             .run_manual(cx.background_executor().clone(), board_id, entry_id);
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.board_id != board_id {
                     return;
                 }
                 this.state.running = false;
                 match result {
                     Ok(Ok(run_count)) => {
+                        let workflow_label = if run_count == 1 {
+                            "workflow"
+                        } else {
+                            "workflows"
+                        };
                         this.state.run_notice =
-                            Some(format!("Ran {run_count} workflow run(s)").into());
+                            Some(format!("Ran {run_count} {workflow_label}").into());
                         cx.emit(WorkflowWorkspaceEvent::Committed(board_id));
                     }
                     Ok(Err(error)) => {
@@ -481,6 +530,7 @@ impl WorkflowWorkspace {
                         this.state.run_notice = Some(error.to_string().into());
                     }
                 }
+                this.refresh(window, cx);
                 cx.notify();
             })
             .ok();
@@ -759,6 +809,7 @@ impl WorkflowWorkspace {
                 run_notice: None,
                 new_workflow_open: false,
                 workflows: Vec::new(),
+                runs: Vec::new(),
                 manual_entry_select: cx.new(|cx| {
                     SelectState::new(SearchableVec::new(Vec::new()), None, window, cx)
                         .searchable(true)

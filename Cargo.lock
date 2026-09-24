@@ -12105,6 +12105,7 @@ name = "workflow"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "gpui-kit",
  "mermaid_renderer",
  "serde",

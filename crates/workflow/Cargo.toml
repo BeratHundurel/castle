@@ -9,6 +9,7 @@ gpui-kit.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true
+chrono.workspace = true
 mermaid_renderer = { path = "../mermaid_renderer" }
 
 [dev-dependencies]

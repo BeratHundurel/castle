@@ -20,8 +20,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use workflow::{
     SaveWorkflowRequest, WorkflowListEntry, WorkflowListRecord, WorkflowPage, WorkflowRecord,
-    WorkflowRoute, WorkflowService, WorkflowSnapshot, WorkflowTask, WorkflowWorkspace,
-    WorkflowWorkspaceEvent,
+    WorkflowRoute, WorkflowRunHistoryEntry, WorkflowRunStatus, WorkflowService, WorkflowSnapshot,
+    WorkflowTask, WorkflowWorkspace, WorkflowWorkspaceEvent,
 };
 
 actions!(board_navigation, [NavigateBack]);
@@ -224,12 +224,53 @@ impl WorkflowService for StorageWorkflowService {
         runtime.spawn_store(&executor, move |store| async move {
             let records = storage::workflow::list_workflows(&store, i64::from(board_id)).await?;
             let board = storage::board::load_board_snapshot(&store, board_id).await?;
+            let workflows = records
+                .into_iter()
+                .map(workflow_record)
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let lists = board
+                .cards
+                .into_iter()
+                .map(workflow_list)
+                .collect::<Vec<_>>();
+            let workflow_names = workflows
+                .iter()
+                .map(|record| (record.id, record.name.clone()))
+                .collect::<HashMap<_, _>>();
+            let entry_titles = lists
+                .iter()
+                .flat_map(|list| {
+                    list.entries
+                        .iter()
+                        .map(|entry| (i64::from(entry.id), entry.title.clone()))
+                })
+                .collect::<HashMap<_, _>>();
+            let runs = storage::workflow::list_workflow_runs(&store, i64::from(board_id), 20)
+                .await?
+                .into_iter()
+                .map(|run| WorkflowRunHistoryEntry {
+                    id: run.id,
+                    workflow_id: run.workflow_id,
+                    workflow_name: workflow_names
+                        .get(&run.workflow_id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Workflow {}", run.workflow_id)),
+                    entry_title: run
+                        .entry_id
+                        .and_then(|entry_id| entry_titles.get(&entry_id).cloned()),
+                    entry_id: run.entry_id,
+                    trigger_kind: run.trigger_kind,
+                    status: workflow_run_status(run.status),
+                    actions: run.actions,
+                    error: run.error,
+                    started_at: run.started_at,
+                    finished_at: run.finished_at,
+                })
+                .collect();
             Ok(WorkflowSnapshot {
-                workflows: records
-                    .into_iter()
-                    .map(workflow_record)
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-                lists: board.cards.into_iter().map(workflow_list).collect(),
+                workflows,
+                lists,
+                runs,
             })
         })
     }
@@ -351,6 +392,15 @@ fn workflow_list(list: storage::board::BoardListRecord) -> WorkflowListRecord {
                 title: entry.title,
             })
             .collect(),
+    }
+}
+
+fn workflow_run_status(status: storage::workflow::WorkflowRunStatus) -> WorkflowRunStatus {
+    match status {
+        storage::workflow::WorkflowRunStatus::Running => WorkflowRunStatus::Running,
+        storage::workflow::WorkflowRunStatus::Succeeded => WorkflowRunStatus::Succeeded,
+        storage::workflow::WorkflowRunStatus::Failed => WorkflowRunStatus::Failed,
+        storage::workflow::WorkflowRunStatus::Skipped => WorkflowRunStatus::Skipped,
     }
 }
 

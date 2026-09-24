@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use super::{
     SaveWorkflowRequest, WorkflowListRecord, WorkflowPage, WorkflowRecord, WorkflowRoute,
-    WorkflowService, WorkflowSnapshot, WorkflowTask, WorkflowWorkspace, WorkflowWorkspaceEvent,
-    role_action_definition,
+    WorkflowRunHistoryEntry, WorkflowRunStatus, WorkflowService, WorkflowSnapshot, WorkflowTask,
+    WorkflowWorkspace, WorkflowWorkspaceEvent, role_action_definition,
 };
 use crate::{ListWorkflowRole, WorkflowAction};
 use gpui_kit::{
@@ -118,6 +118,68 @@ impl WorkflowService for TestWorkflowService {
     ) -> WorkflowTask<usize> {
         Self::task(executor, Ok(0))
     }
+}
+
+#[gpui_kit::test]
+fn manual_run_page_uses_wide_history_column_and_stacks_narrowly(cx: &mut TestAppContext) {
+    let service = TestWorkflowService::in_memory(WorkflowSnapshot::default());
+    let window = cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.open_window(Default::default(), |window, cx| {
+            let model = cx.new(|cx| WorkflowWorkspace::new(7, service, window, cx));
+            model.update(cx, |model, cx| {
+                model.state.runs.push(WorkflowRunHistoryEntry {
+                    id: 1,
+                    workflow_id: 2,
+                    workflow_name: "Complete on Done".into(),
+                    entry_id: Some(3),
+                    entry_title: Some("Publish release".into()),
+                    trigger_kind: "manual".into(),
+                    status: WorkflowRunStatus::Failed,
+                    actions: vec![WorkflowAction::MarkComplete],
+                    error: Some("The item could not be updated".into()),
+                    started_at: 1_758_000_000,
+                    finished_at: Some(1_758_000_001),
+                });
+                cx.notify();
+            });
+            let page = cx.new(|cx| WorkflowPage::new(model, WorkflowRoute::Run, cx));
+            cx.new(|cx| gpui_kit::component::Root::new(page, window, cx))
+        })
+        .expect("window")
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.simulate_resize(size(px(1400.), px(800.)));
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    let controls = cx
+        .debug_bounds("workflow-run-controls")
+        .expect("run controls");
+    let history = cx
+        .debug_bounds("workflow-run-history")
+        .expect("run history");
+    assert!(history.origin.x >= controls.right());
+    assert!(cx.debug_bounds("workflow-run-1").is_some());
+    assert!(cx.debug_bounds("workflow-run-error-1").is_some());
+    assert!(cx.debug_bounds("workflow-breadcrumb-editor").is_none());
+
+    cx.simulate_resize(size(px(800.), px(800.)));
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+    }
+    let controls = cx
+        .debug_bounds("workflow-run-controls")
+        .expect("run controls in narrow layout");
+    let history = cx
+        .debug_bounds("workflow-run-history")
+        .expect("run history in narrow layout");
+    assert!(history.origin.y >= controls.bottom());
 }
 
 #[gpui_kit::test]
@@ -237,6 +299,7 @@ fn workflow_overview_scrollbar_stays_aligned_with_its_viewport_at_bottom(cx: &mu
     let snapshot = WorkflowSnapshot {
         workflows,
         lists: Vec::new(),
+        runs: Vec::new(),
     };
     let service = TestWorkflowService::in_memory(snapshot.clone());
     let window = cx.update(|cx| {
