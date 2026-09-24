@@ -11,6 +11,7 @@ mod mermaid;
 mod outline;
 mod persistence;
 mod smart_editing;
+mod split_sync;
 mod state;
 mod view;
 mod vim;
@@ -19,6 +20,7 @@ use gpui_kit::component::{
     Theme,
     highlighter::Language,
     input::{EditorState, InputEvent, InputState, Rope, RopeExt as _, TabSize, TextDecoration},
+    text::TextViewState,
 };
 use gpui_kit::{
     App, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle, HighlightStyle, Pixels,
@@ -42,7 +44,6 @@ pub use document_state::{DEFAULT_NOTE, DocumentStats, SaveState};
 pub use file_paths::unique_note_path;
 pub use workspace::DocumentKind;
 
-const AUTO_SAVE_IDLE_DELAY: Duration = Duration::from_millis(1_200);
 const DOCUMENT_ANALYSIS_DELAY: Duration = Duration::from_millis(180);
 const VIEW_LAYOUT_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const OUTLINE_SCROLL_LAYOUT_DELAY: Duration = Duration::from_millis(16);
@@ -69,6 +70,9 @@ pub struct DocumentEditorView {
     zen: ZenModeState,
     persistence: PersistenceState,
     analysis: AnalysisState,
+    preview_blocks_state: Entity<TextViewState>,
+    preview_blocks_list: gpui_kit::ListState,
+    split_sync: split_sync::SplitSyncState,
     emmet_input: Entity<InputState>,
     show_emmet_input: bool,
     emmet_replacement_range: Option<Range<usize>>,
@@ -77,7 +81,7 @@ pub struct DocumentEditorView {
     mermaid: mermaid::MermaidState,
     _theme_subscription: Subscription,
     _settings_subscription: Subscription,
-    pending_navigation_offset: Option<usize>,
+    pending_navigation_range: Option<Range<usize>>,
     view_width: gpui_kit::Pixels,
     view_bounds: Option<Bounds<Pixels>>,
     view_layout_refresh_task: Option<Task<()>>,
@@ -135,6 +139,38 @@ impl DocumentEditorView {
         let focus_decorations = editor.update(cx, |editor, cx| {
             editor.create_decorations_collection(Vec::new(), cx)
         });
+        let preview_list_state =
+            gpui_kit::ListState::new(0, gpui_kit::ListAlignment::Top, gpui_kit::px(2_048.))
+                .measure_all();
+        let preview_blocks_state = cx.new(|cx| TextViewState::markdown("", cx));
+        let preview_blocks_list = preview_blocks_state.read(cx).list_state().clone();
+        let split_view = cx.entity().downgrade();
+        preview_list_state.set_scroll_handler({
+            let split_view = split_view.clone();
+            move |event, _, cx| {
+                Self::sync_source_from_preview_section(
+                    event.visible_range.start,
+                    split_view.clone(),
+                    cx,
+                );
+            }
+        });
+        preview_blocks_list.set_scroll_handler({
+            let split_view = split_view.clone();
+            let preview_blocks_list = preview_blocks_list.clone();
+            move |_, _, cx| {
+                let max = preview_blocks_list.max_offset_for_scrollbar().y.as_f32();
+                if max <= 0.0 {
+                    return;
+                }
+                let current = -preview_blocks_list
+                    .scroll_px_offset_for_scrollbar()
+                    .y
+                    .as_f32();
+                let fraction = (current / max).clamp(0.0, 1.0);
+                Self::sync_source_from_preview_fraction(fraction, split_view.clone(), cx);
+            }
+        });
         let theme_subscription = cx.observe_global::<Theme>(|this, cx| {
             if this.kind == DocumentKind::Markdown && this.mode.shows_preview() {
                 this.activate_mermaids(cx);
@@ -146,6 +182,7 @@ impl DocumentEditorView {
             });
         cx.observe(&editor, |this, _, cx| {
             this.refresh_focus_decorations(cx);
+            this.sync_preview_from_source(cx);
         })
         .detach();
         cx.on_release(|this, cx| this.mermaid.clear(cx)).detach();
@@ -223,16 +260,14 @@ impl DocumentEditorView {
                 preview_bounds: None,
                 preview_bounds_mode: None,
                 preview_sections: Arc::new(Vec::new()),
-                preview_list_state: gpui_kit::ListState::new(
-                    0,
-                    gpui_kit::ListAlignment::Top,
-                    gpui_kit::px(2_048.),
-                )
-                .measure_all(),
+                preview_list_state,
                 preview_font_size_bits: Cell::new(preview_font_size_bits),
                 outline_scroll_handle: UniformListScrollHandle::default(),
                 outline_focus_handle,
             },
+            preview_blocks_state,
+            preview_blocks_list,
+            split_sync: split_sync::SplitSyncState::default(),
             emmet_input,
             show_emmet_input: false,
             emmet_replacement_range: None,
@@ -259,7 +294,7 @@ impl DocumentEditorView {
             mermaid: mermaid::MermaidState::default(),
             _theme_subscription: theme_subscription,
             _settings_subscription: settings_subscription,
-            pending_navigation_offset: None,
+            pending_navigation_range: None,
             view_width: gpui_kit::px(0.),
             view_bounds: None,
             view_layout_refresh_task: None,
@@ -383,15 +418,39 @@ impl DocumentEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.navigate_to_range(offset..offset, window, cx);
+    }
+
+    pub fn navigate_to_range(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.persistence.is_loading {
-            self.pending_navigation_offset = Some(offset);
+            self.pending_navigation_range = Some(range);
             return;
         }
+        self.apply_navigation_range(range, window, cx);
+    }
+
+    fn apply_navigation_range(
+        &mut self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode == EditorMode::Preview {
+            self.set_mode(EditorMode::Source, window, cx);
+        }
         self.editor.update(cx, |editor, cx| {
-            let offset = offset.min(editor.text().len());
-            let position = editor.text().offset_to_position(offset);
+            let start = range.start.min(editor.text().len());
+            let end = range.end.min(editor.text().len()).max(start);
+            let position = editor.text().offset_to_position(start);
             editor.set_cursor_position(position, window, cx);
+            editor.set_selected_range(start..end, cx);
         });
+        self.focus_source_mode(window, cx);
     }
 
     fn set_mode(&mut self, mode: EditorMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -406,6 +465,9 @@ impl DocumentEditorView {
             self.deactivate_mermaids(cx);
         }
         self.focus_active_mode(window, cx);
+        if mode == EditorMode::Split {
+            self.request_split_sync(cx);
+        }
         cx.notify();
     }
 
@@ -425,6 +487,9 @@ impl DocumentEditorView {
             self.deactivate_mermaids(cx);
         }
         self.focus_active_mode(window, cx);
+        if self.mode == EditorMode::Split {
+            self.request_split_sync(cx);
+        }
         cx.notify();
     }
 
@@ -877,6 +942,17 @@ impl DocumentEditorView {
                 this.mermaid.set_analyzed(analysis.mermaids);
                 this.rebuild_outline_rows();
                 this.analysis.preview_list_state.remeasure();
+                if this.kind == DocumentKind::Markdown && this.analysis.outline.rows().is_empty() {
+                    let blocks_text = this
+                        .analysis
+                        .preview_sections
+                        .first()
+                        .cloned()
+                        .unwrap_or_default();
+                    this.preview_blocks_state.update(cx, |state, cx| {
+                        state.set_text(blocks_text.as_ref(), cx);
+                    });
+                }
                 let cursor_line = this.editor.read(cx).cursor_position().line as usize;
                 if this.kind == DocumentKind::Markdown {
                     this.analysis.outline_selected = this
@@ -885,6 +961,9 @@ impl DocumentEditorView {
                         .active_markdown_index_for_line(cursor_line);
                     if this.mode.shows_preview() {
                         this.activate_mermaids(cx);
+                    }
+                    if this.mode == EditorMode::Split {
+                        this.request_split_sync(cx);
                     }
                 }
                 cx.notify();
@@ -1071,6 +1150,7 @@ mod tests {
         changed_document_kind, document_language, focused_paragraph_range,
         row_is_in_visible_layout, source_row_centers_at_document_start,
     };
+    use crate::document_state::EditorMode;
     use entity::note;
     use gpui_kit::AppContext as _;
     use gpui_kit::component::highlighter::Language;
@@ -1259,6 +1339,105 @@ mod tests {
             view.read_with(&cx, |editor, cx| editor.loaded_content(cx)),
             Some(r#"{"alpha":1}"#.to_string())
         );
+        assert_eq!(
+            std::fs::read_to_string(&document_path).expect("autosaved document should be readable"),
+            r#"{"alpha":1}"#
+        );
+    }
+
+    #[gpui_kit::test]
+    fn autosave_respects_configured_delay(cx: &mut gpui_kit::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("test directory should be created");
+        let document_path = directory.path().join("autosave-delay.json");
+        std::fs::write(&document_path, "{}\n").expect("test document should be created");
+        let db = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                Ok::<_, anyhow::Error>(db)
+            })
+            .expect("autosave delay test database should initialize");
+        let note_id = runtime
+            .block_on(async {
+                Ok::<_, anyhow::Error>(
+                    note::ActiveModel {
+                        title: Set("Autosave Delay".to_string()),
+                        project_id: Set(None),
+                        file_path: Set(Some(document_path.display().to_string())),
+                        file_managed_by_app: Set(false),
+                        cached_content: Set("{}\n".to_string()),
+                        file_missing_since: Set(None),
+                        created_at: Set(1),
+                        updated_at: Set(1),
+                        ..Default::default()
+                    }
+                    .insert(&db)
+                    .await?
+                    .id as u32,
+                )
+            })
+            .expect("autosave delay test note should be created");
+        let db = Arc::new(db);
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(directory.path()));
+            cx.set_global(AppRuntime::new(db.clone(), directory.path().to_path_buf()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("autosave delay test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        cx.update(|_, cx| {
+            AppSettings::set_auto_save_delay(5.0, cx);
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.replace_content_for_test(r#"{"alpha":1}"#, window, cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(1_300));
+        for _ in 0..20 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(&document_path)
+                .expect("autosave delay document should be readable"),
+            "{}\n",
+            "a configured 5s auto-save delay must not save after 1.3s"
+        );
+
+        cx.executor().advance_clock(Duration::from_millis(4_000));
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if std::fs::read_to_string(&document_path)
+                .is_ok_and(|content| content == r#"{"alpha":1}"#)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         assert_eq!(
             std::fs::read_to_string(&document_path).expect("autosaved document should be readable"),
             r#"{"alpha":1}"#
@@ -1686,6 +1865,165 @@ mod tests {
         assert_eq!(
             view.read_with(&cx, |editor, _| editor.kind()),
             DocumentKind::Markdown
+        );
+    }
+
+    #[gpui_kit::test]
+    fn split_view_synchronizes_preview_with_source_scroll(cx: &mut gpui_kit::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.executor().allow_parking();
+
+        let mut content = String::from("# One\n");
+        for line in 0..60 {
+            content.push_str(&format!("Body one line {line}\n"));
+        }
+        content.push_str("# Two\n");
+        for line in 0..60 {
+            content.push_str(&format!("Body two line {line}\n"));
+        }
+        content.push_str("# Three\n");
+        for line in 0..60 {
+            content.push_str(&format!("Body three line {line}\n"));
+        }
+
+        let (db, note_id) = runtime
+            .block_on(async {
+                let db = Database::connect("sqlite::memory:").await?;
+                Migrator::up(&db, None).await?;
+                let note = note::ActiveModel {
+                    title: Set("Split sync".to_string()),
+                    project_id: Set(None),
+                    file_path: Set(None),
+                    file_managed_by_app: Set(false),
+                    cached_content: Set(content.clone()),
+                    file_missing_since: Set(None),
+                    created_at: Set(1),
+                    updated_at: Set(1),
+                    ..Default::default()
+                }
+                .insert(&db)
+                .await?;
+                Ok::<_, anyhow::Error>((db, note.id as u32))
+            })
+            .expect("split sync test database should initialize");
+        let settings_dir =
+            std::env::temp_dir().join(format!("castle-split-sync-{}", std::process::id()));
+        let mut editor_view = None;
+        let window = cx.update(|cx| {
+            cx.set_global(gpui_kit::component::Theme::default());
+            gpui_kit::init(cx);
+            cx.set_global(AppSettings::load(settings_dir));
+            cx.set_global(AppRuntime::new(Arc::new(db), PathBuf::new()));
+            cx.open_window(Default::default(), |window, cx| {
+                let view = DocumentEditorView::view(note_id, window, cx);
+                editor_view = Some(view.clone());
+                cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+            })
+            .expect("split sync test window should open")
+        });
+        let view = editor_view.expect("document editor should exist");
+        let mut cx = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(1_200.), gpui_kit::px(800.)));
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.read_with(&cx, |editor, _| !editor.persistence.is_loading) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.kind = DocumentKind::Markdown;
+                let outline = crate::outline::DocumentOutline::Markdown(
+                    crate::outline::MarkdownOutline::parse(&content),
+                );
+                let sections = if outline.markdown_sections().is_empty() {
+                    vec![gpui_kit::SharedString::from(content.as_str())]
+                } else {
+                    outline.markdown_sections().to_vec()
+                };
+                editor.analysis.outline = outline;
+                editor.analysis.preview_sections = Arc::new(
+                    crate::view::prepare_markdown_preview_sections(&content, sections),
+                );
+                editor.rebuild_outline_rows();
+                editor.set_mode(EditorMode::Split, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            let ready = view.read_with(&cx, |editor, cx| {
+                editor.mode == EditorMode::Split
+                    && editor.editor.read(cx).visible_row_range().is_some()
+                    && !editor.analysis.outline_rows.is_empty()
+            });
+            if ready {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (target_line, expected_section) = view
+            .read_with(&cx, |editor, _| {
+                let row = editor.analysis.outline_rows.get(1).cloned()?;
+                row.preview_section_index
+                    .map(|section| (row.source_line.saturating_add(5), section))
+            })
+            .expect("split sync test should have a second heading");
+
+        let source_editor = view.read_with(&cx, |editor, _| editor.editor.clone());
+        cx.update(|_, cx| {
+            source_editor.update(cx, |input, cx| {
+                let line_height = input
+                    .line_height()
+                    .expect("source line height should be laid out");
+                let current = input.scroll_offset();
+                input.set_scroll_offset(
+                    gpui_kit::point(
+                        current.x,
+                        gpui_kit::px(-(target_line as f32 * line_height.as_f32())),
+                    ),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        for _ in 0..20 {
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                view.update(cx, |editor, cx| {
+                    editor.sync_preview_from_source(cx);
+                });
+            });
+            cx.run_until_parked();
+            let preview_top = view.read_with(&cx, |editor, _| {
+                editor
+                    .analysis
+                    .preview_list_state
+                    .logical_scroll_top()
+                    .item_ix
+            });
+            if preview_top == expected_section {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            view.read_with(&cx, |editor, _| {
+                editor
+                    .analysis
+                    .preview_list_state
+                    .logical_scroll_top()
+                    .item_ix
+            }),
+            expected_section,
+            "preview should follow the source to the second heading section"
         );
     }
 }

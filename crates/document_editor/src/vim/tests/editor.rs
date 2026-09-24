@@ -116,6 +116,43 @@ fn disabling_focus_mode_clears_source_decorations(cx: &mut gpui_kit::TestAppCont
     });
 }
 
+#[gpui_kit::test]
+fn workspace_search_navigation_selects_the_utf8_match_in_source_mode(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let content = "東京 🧭\n\nWhat the user asked for";
+    let start = content
+        .find("What")
+        .expect("search match should be in content");
+    let match_range = start..start + "What".len();
+
+    with_vim_editor(cx, content, |view, cx| {
+        cx.update(|window, cx| {
+            view.update(cx, |editor, cx| {
+                editor.mode = EditorMode::Preview;
+                editor.navigate_to_range(match_range.clone(), window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        assert_eq!(
+            view.read_with(cx, |editor, cx| editor.editor.read(cx).selected_range()),
+            match_range
+        );
+        assert_eq!(
+            view.read_with(cx, |editor, _| editor.mode),
+            EditorMode::Source
+        );
+
+        cx.simulate_keystrokes("i");
+        cx.simulate_input("X");
+        assert_eq!(
+            vim_test_value(&view, cx),
+            "東京 🧭\n\nWhatX the user asked for"
+        );
+    });
+}
+
 fn set_vim_test_content(
     view: &gpui_kit::Entity<DocumentEditorView>,
     content: &str,

@@ -3,7 +3,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     rc::Rc,
-    time::Duration,
 };
 
 use anyhow::Result;
@@ -27,8 +26,6 @@ use lsp_types::{
 use serde_json::Value;
 
 use crate::store::{AppSettings, StoredSettings};
-
-const AUTO_SAVE_DELAY: Duration = Duration::from_millis(1_200);
 
 gpui_kit::actions!(settings_document, [SaveSettingsDocument]);
 
@@ -173,8 +170,9 @@ impl SettingsDocumentView {
     fn schedule_auto_save(&mut self, cx: &mut Context<Self>) {
         self.auto_save_epoch = self.auto_save_epoch.saturating_add(1);
         let epoch = self.auto_save_epoch;
+        let delay = AppSettings::auto_save_delay_duration(cx);
         self.auto_save_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(AUTO_SAVE_DELAY).await;
+            cx.background_executor().timer(delay).await;
 
             let content = this
                 .update(cx, |this, _cx| {
@@ -409,6 +407,7 @@ const NUM_FONT_SIZE: &[&str] = &["10", "12", "13", "14", "16", "18", "20", "22"]
 const NUM_INTERFACE_FONT_SIZE: &[&str] = &["12", "14", "16", "18", "20"];
 const NUM_RADIUS: &[&str] = &["0", "2", "4", "6", "8", "10", "12"];
 const NUM_SIDEBAR_WIDTH: &[&str] = &["200", "260", "320", "400", "480"];
+const NUM_AUTO_SAVE_DELAY: &[&str] = &["0.5", "1.2", "2.0", "5.0"];
 const SCROLLBAR_MODES: &[&str] = &["scrolling", "hover", "always"];
 const EDITOR_MODES: &[&str] = &["source", "split", "preview"];
 
@@ -522,6 +521,11 @@ const SETTINGS_SCHEMA: &[SettingDefinition] = &[
         name: "quick_capture_shortcut",
         detail: "Shortcut for quick capture",
         kind: SettingValueKind::Text,
+    },
+    SettingDefinition {
+        name: "auto_save_delay",
+        detail: "Auto-save delay in seconds",
+        kind: SettingValueKind::Number(NUM_AUTO_SAVE_DELAY),
     },
 ];
 
@@ -827,6 +831,15 @@ mod tests {
         let items = settings_completion_items(text, text.len() - 2, &catalog(), &rope);
 
         assert!(items.iter().any(|item| item.label == "start_at_login"));
+    }
+
+    #[test]
+    fn auto_save_delay_is_available_in_document_completion() {
+        let text = "{\n  \"auto_save_d\n}";
+        let rope = Rope::from(text);
+        let items = settings_completion_items(text, text.len() - 2, &catalog(), &rope);
+
+        assert!(items.iter().any(|item| item.label == "auto_save_delay"));
     }
 
     #[test]

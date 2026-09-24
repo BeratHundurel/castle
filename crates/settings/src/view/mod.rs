@@ -97,10 +97,13 @@ type UpdateStartAtLogin = Rc<dyn Fn(bool) -> Result<(), String>>;
 type ShortcutProvider = Rc<dyn Fn(&App) -> Vec<ShortcutReference>>;
 type OpenSettingsFileAction = Rc<dyn Fn(&mut Window, &mut App)>;
 type WorkspaceArchiveAction = Rc<dyn Fn(&mut Window, &mut App)>;
+type AutomaticBackupsToggleAction = Rc<dyn Fn(bool, &mut App)>;
 
 pub struct WorkspaceArchiveActions {
     import: WorkspaceArchiveAction,
     export: WorkspaceArchiveAction,
+    set_automatic_backups_enabled: AutomaticBackupsToggleAction,
+    restore_automatic_backup: WorkspaceArchiveAction,
 }
 
 impl WorkspaceArchiveActions {
@@ -111,7 +114,19 @@ impl WorkspaceArchiveActions {
         Self {
             import: Rc::new(import),
             export: Rc::new(export),
+            set_automatic_backups_enabled: Rc::new(|_, _| {}),
+            restore_automatic_backup: Rc::new(|_, _| {}),
         }
+    }
+
+    pub fn with_automatic_backups(
+        mut self,
+        set_enabled: impl Fn(bool, &mut App) + 'static,
+        restore: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.set_automatic_backups_enabled = Rc::new(set_enabled);
+        self.restore_automatic_backup = Rc::new(restore);
+        self
     }
 }
 
@@ -126,6 +141,8 @@ pub struct SettingsIntegration {
     open_settings_file: OpenSettingsFileAction,
     import_workspace: WorkspaceArchiveAction,
     export_workspace: WorkspaceArchiveAction,
+    set_automatic_backups_enabled: AutomaticBackupsToggleAction,
+    restore_automatic_backup: WorkspaceArchiveAction,
     agent_access: Arc<dyn AgentAccess>,
 }
 
@@ -149,6 +166,8 @@ impl SettingsIntegration {
             open_settings_file: Rc::new(|_, _| {}),
             import_workspace: archive_actions.import,
             export_workspace: archive_actions.export,
+            set_automatic_backups_enabled: archive_actions.set_automatic_backups_enabled,
+            restore_automatic_backup: archive_actions.restore_automatic_backup,
             agent_access,
         }
     }
@@ -630,7 +649,45 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                 ]),
                 SettingGroup::new()
                     .title("Workspace")
-                    .item(workspace_archive_item(settings.clone())),
+                    .items(vec![
+                        workspace_archive_item(settings.clone()),
+                        automatic_backups_setting(settings.clone()),
+                        SettingItem::new(
+                            "Snapshot interval (days)",
+                            SettingField::number_input(
+                                NumberFieldOptions {
+                                    min: 1.0,
+                                    max: 365.0,
+                                    step: 1.0,
+                                },
+                                |cx: &App| {
+                                    AppSettings::automatic_backup_interval_days(cx) as f64
+                                },
+                                AppSettings::set_automatic_backup_interval_days,
+                            )
+                            .default_value(1.0),
+                        )
+                        .description(
+                            "Choose 1 to 365 days between snapshots while Castle is running.",
+                        ),
+                        SettingItem::new(
+                            "Snapshots to keep",
+                            SettingField::number_input(
+                                NumberFieldOptions {
+                                    min: 1.0,
+                                    max: 100.0,
+                                    step: 1.0,
+                                },
+                                |cx: &App| AppSettings::automatic_backup_retention(cx) as f64,
+                                AppSettings::set_automatic_backup_retention,
+                            )
+                            .default_value(10.0),
+                        )
+                        .description(
+                            "Keep 1 to 100 snapshots. Older ones are removed after a new snapshot is saved.",
+                        ),
+                        automatic_backup_restore_item(settings.clone()),
+                    ]),
             ]),
         SettingPage::new("Editor")
             .icon(Icon::new(IconName::BookOpen))
@@ -718,6 +775,22 @@ fn setting_pages(settings: Entity<SettingsView>, cx: &mut App) -> Vec<SettingPag
                 )
                 .description(
                     "Use opt-in Normal, Insert, and Visual modes in document source editors.",
+                ),
+                SettingItem::new(
+                    "Auto-save Delay",
+                    SettingField::number_input(
+                        NumberFieldOptions {
+                            min: 0.2,
+                            max: 10.0,
+                            step: 0.1,
+                        },
+                        AppSettings::auto_save_delay,
+                        AppSettings::set_auto_save_delay,
+                    )
+                    .default_value(1.2),
+                )
+                .description(
+                    "Time in seconds to wait after typing before auto-saving documents.",
                 ),
             ]))
             .group(SettingGroup::new().title("Markdown").items(vec![
@@ -917,6 +990,71 @@ fn workspace_archive_item(settings: Entity<SettingsView>) -> SettingItem {
                                 export_workspace(window, cx);
                             }),
                     ),
+            )
+            .into_any_element()
+    })
+}
+
+fn automatic_backups_setting(settings: Entity<SettingsView>) -> SettingItem {
+    SettingItem::new(
+        "Automatic local backups",
+        SettingField::switch(
+            AppSettings::automatic_backups_enabled,
+            {
+                let settings = settings.clone();
+                move |enabled, cx| {
+                    AppSettings::set_automatic_backups_enabled(enabled, cx);
+                    let update = settings
+                        .read(cx)
+                        .integration
+                        .set_automatic_backups_enabled
+                        .clone();
+                    update(enabled, cx);
+                }
+            },
+        )
+        .default_value(false),
+    )
+    .description("Save local workspace snapshots while Castle is running. Off by default.")
+}
+
+fn automatic_backup_restore_item(settings: Entity<SettingsView>) -> SettingItem {
+    SettingItem::render(move |options, _, cx| {
+        let restore = settings
+            .read(cx)
+            .integration
+            .restore_automatic_backup
+            .clone();
+        let stacked = settings_row_is_stacked(options.layout());
+
+        gpui_kit::component::h_flex()
+            .w_full()
+            .gap_4()
+            .when(stacked, |this| this.flex_col().items_start())
+            .when(!stacked, |this| this.items_center().justify_between())
+            .child(
+                gpui_kit::component::v_flex()
+                    .min_w_0()
+                    .when(!stacked, |this| this.flex_1())
+                    .when(stacked, |this| this.w_full())
+                    .gap_1()
+                    .child("Restore a local backup")
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Preview snapshots stored on this device before restoring one."),
+                    ),
+            )
+            .child(
+                Button::new("settings-restore-workspace-backup")
+                    .label("View backups")
+                    .outline()
+                    .with_size(options.size())
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        restore(window, cx);
+                    }),
             )
             .into_any_element()
     })

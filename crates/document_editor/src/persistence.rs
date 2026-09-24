@@ -1,4 +1,4 @@
-use gpui_kit::component::{WindowExt as _, input::RopeExt as _, notification::Notification};
+use gpui_kit::component::{WindowExt as _, notification::Notification};
 use gpui_kit::{Context, SharedString, Task, Window};
 use std::{
     fs::read_to_string,
@@ -14,11 +14,12 @@ use super::file_paths::{
     unique_note_path_with_extension,
 };
 use super::outline::DocumentOutline;
-use super::{AUTO_SAVE_IDLE_DELAY, DocumentEditorEvent, DocumentEditorView};
+use super::{DocumentEditorEvent, DocumentEditorView};
 use super::{
     DocumentKind,
     document_state::{DocumentStats, SaveState},
 };
+use settings::AppSettings;
 
 impl DocumentEditorView {
     pub(super) fn load_note_async(
@@ -200,18 +201,16 @@ impl DocumentEditorView {
         self.rebuild_outline_rows();
 
         self.persistence.suppress_editor_events = true;
-        let pending_navigation_offset = self.pending_navigation_offset.take();
+        let pending_navigation_range = self.pending_navigation_range.take();
         self.editor.update(cx, |editor, cx| {
             editor.set_value(content.as_str(), window, cx);
-            if let Some(offset) = pending_navigation_offset {
-                let offset = offset.min(editor.text().len());
-                let position = editor.text().offset_to_position(offset);
-                editor.set_cursor_position(position, window, cx);
-            }
         });
         self.persistence.suppress_editor_events = false;
         self.reset_vim_command();
         self.focus_source_mode(window, cx);
+        if let Some(range) = pending_navigation_range {
+            self.apply_navigation_range(range, window, cx);
+        }
         self.schedule_document_analysis(false, cx);
         self.refresh_board_embeds(cx);
 
@@ -258,9 +257,10 @@ impl DocumentEditorView {
         self.persistence.auto_save_epoch = self.persistence.auto_save_epoch.saturating_add(1);
         let epoch = self.persistence.auto_save_epoch;
         let app_runtime = cx.global::<AppRuntime>().clone();
+        let auto_save_delay = AppSettings::auto_save_delay_duration(cx);
 
         self.persistence.auto_save_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(AUTO_SAVE_IDLE_DELAY).await;
+            cx.background_executor().timer(auto_save_delay).await;
 
             let save_request = this
                 .update(cx, |this, cx| {

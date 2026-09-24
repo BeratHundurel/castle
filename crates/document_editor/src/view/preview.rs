@@ -1,6 +1,13 @@
 use super::*;
 use std::{collections::HashMap, sync::Arc};
 
+use gpui_kit::component::text::{FrontmatterPlugin, MarkdownExtensions};
+
+fn markdown_preview_view(view: TextView) -> TextView {
+    view.markdown_extensions(MarkdownExtensions::default().frontmatter())
+        .plugin(FrontmatterPlugin::new())
+}
+
 impl DocumentEditorView {
     pub(crate) fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (outline_in_layout, _) = editor_layout_signature(
@@ -92,29 +99,54 @@ impl DocumentEditorView {
         }
 
         let content = match virtualization {
-            MarkdownPreviewVirtualization::Blocks => TextView::markdown(
-                "markdown-preview-blocks",
-                sections.first().cloned().unwrap_or_default(),
-            )
-            .plugin(local_image_plugin)
-            .plugin(board_embed_plugin)
-            .plugin(wikilink_plugin)
-            .plugin(crate::mermaid::MermaidPlugin::new(
-                editor_entity,
-                0,
-                mermaid_snapshots,
-            ))
-            .style(preview_style)
-            .code_block_actions(|code_block, _window, _cx| {
-                Clipboard::new("copy-code").value(code_block.code())
-            })
-            .size_full()
-            .px(horizontal_padding)
-            .py_6()
-            .text_size(font_size)
-            .scrollable(true)
-            .selectable(true)
-            .into_any_element(),
+            MarkdownPreviewVirtualization::Blocks => {
+                if self.analysis.preview_sections.is_empty() {
+                    markdown_preview_view(TextView::markdown(
+                        "markdown-preview-blocks",
+                        sections.first().cloned().unwrap_or_default(),
+                    ))
+                    .plugin(local_image_plugin)
+                    .plugin(board_embed_plugin)
+                    .plugin(wikilink_plugin)
+                    .plugin(crate::mermaid::MermaidPlugin::new(
+                        editor_entity,
+                        0,
+                        mermaid_snapshots,
+                    ))
+                    .style(preview_style)
+                    .code_block_actions(|code_block, _window, _cx| {
+                        Clipboard::new("copy-code").value(code_block.code())
+                    })
+                    .size_full()
+                    .px(horizontal_padding)
+                    .py_6()
+                    .text_size(font_size)
+                    .scrollable(true)
+                    .selectable(true)
+                    .into_any_element()
+                } else {
+                    markdown_preview_view(TextView::new(&self.preview_blocks_state))
+                        .plugin(local_image_plugin)
+                        .plugin(board_embed_plugin)
+                        .plugin(wikilink_plugin)
+                        .plugin(crate::mermaid::MermaidPlugin::new(
+                            editor_entity,
+                            0,
+                            mermaid_snapshots,
+                        ))
+                        .style(preview_style)
+                        .code_block_actions(|code_block, _window, _cx| {
+                            Clipboard::new("copy-code").value(code_block.code())
+                        })
+                        .size_full()
+                        .px(horizontal_padding)
+                        .py_6()
+                        .text_size(font_size)
+                        .scrollable(true)
+                        .selectable(true)
+                        .into_any_element()
+                }
+            }
             MarkdownPreviewVirtualization::Sections => {
                 list(self.analysis.preview_list_state.clone(), {
                     move |index, _window, _cx| {
@@ -125,10 +157,10 @@ impl DocumentEditorView {
                             .when(index == 0, |this| this.pt_6())
                             .when(index + 1 == section_count, |this| this.pb_6())
                             .child(
-                                TextView::markdown(
+                                markdown_preview_view(TextView::markdown(
                                     ("markdown-preview-section", index),
                                     sections[index].clone(),
-                                )
+                                ))
                                 .plugin(local_image_plugin.clone())
                                 .plugin(board_embed_plugin.clone())
                                 .plugin(wikilink_plugin.clone())

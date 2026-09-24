@@ -35,6 +35,15 @@ const DEFAULT_START_AT_LOGIN: bool = false;
 const DEFAULT_CLOSE_TO_TRAY: bool = true;
 pub const DEFAULT_TRAY_SHORTCUT: &str = "Ctrl+Alt+Space";
 pub const DEFAULT_QUICK_CAPTURE_SHORTCUT: &str = "Ctrl+Alt+N";
+const DEFAULT_AUTO_SAVE_DELAY: f64 = 1.2;
+const MIN_AUTO_SAVE_DELAY: f64 = 0.2;
+const MAX_AUTO_SAVE_DELAY: f64 = 10.0;
+const DEFAULT_AUTOMATIC_BACKUP_INTERVAL_DAYS: u32 = 1;
+const MIN_AUTOMATIC_BACKUP_INTERVAL_DAYS: u32 = 1;
+const MAX_AUTOMATIC_BACKUP_INTERVAL_DAYS: u32 = 365;
+const DEFAULT_AUTOMATIC_BACKUP_RETENTION: u32 = 10;
+const MIN_AUTOMATIC_BACKUP_RETENTION: u32 = 1;
+const MAX_AUTOMATIC_BACKUP_RETENTION: u32 = 100;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -98,6 +107,10 @@ pub(crate) struct StoredSettings {
     close_to_tray: bool,
     tray_shortcut: String,
     quick_capture_shortcut: String,
+    auto_save_delay: f64,
+    automatic_backups_enabled: bool,
+    automatic_backup_interval_days: u32,
+    automatic_backup_retention: u32,
     tab_session: TabSession,
 }
 
@@ -126,6 +139,10 @@ impl Default for StoredSettings {
             close_to_tray: DEFAULT_CLOSE_TO_TRAY,
             tray_shortcut: DEFAULT_TRAY_SHORTCUT.to_string(),
             quick_capture_shortcut: DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string(),
+            auto_save_delay: DEFAULT_AUTO_SAVE_DELAY,
+            automatic_backups_enabled: false,
+            automatic_backup_interval_days: DEFAULT_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+            automatic_backup_retention: DEFAULT_AUTOMATIC_BACKUP_RETENTION,
             tab_session: TabSession::default(),
         }
     }
@@ -170,6 +187,9 @@ impl AppSettings {
         let mut document = serde_json::to_value(values)?;
         if let Some(object) = document.as_object_mut() {
             object.remove("tab_session");
+            object.remove("automatic_backups_enabled");
+            object.remove("automatic_backup_interval_days");
+            object.remove("automatic_backup_retention");
         }
         serde_json::to_string_pretty(&document)
     }
@@ -177,6 +197,12 @@ impl AppSettings {
     pub fn apply_document_json(bytes: &[u8], cx: &mut App) -> serde_json::Result<()> {
         let mut values: StoredSettings = serde_json::from_slice(bytes)?;
         values.tab_session = cx.global::<Self>().values.tab_session.clone();
+        values.automatic_backups_enabled =
+            cx.global::<Self>().values.automatic_backups_enabled;
+        values.automatic_backup_interval_days =
+            cx.global::<Self>().values.automatic_backup_interval_days;
+        values.automatic_backup_retention =
+            cx.global::<Self>().values.automatic_backup_retention;
         values.normalize();
 
         let write = {
@@ -197,6 +223,12 @@ impl AppSettings {
     pub fn import_json(bytes: &[u8], cx: &mut App) -> serde_json::Result<()> {
         let mut values: StoredSettings = serde_json::from_slice(bytes)?;
         values.tab_session = TabSession::default();
+        values.automatic_backups_enabled =
+            cx.global::<Self>().values.automatic_backups_enabled;
+        values.automatic_backup_interval_days =
+            cx.global::<Self>().values.automatic_backup_interval_days;
+        values.automatic_backup_retention =
+            cx.global::<Self>().values.automatic_backup_retention;
         values.normalize();
 
         let write = {
@@ -434,6 +466,46 @@ impl AppSettings {
         });
     }
 
+    pub fn automatic_backups_enabled(cx: &App) -> bool {
+        cx.global::<Self>().values.automatic_backups_enabled
+    }
+
+    pub fn set_automatic_backups_enabled(enabled: bool, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.automatic_backups_enabled = enabled;
+        });
+    }
+
+    pub fn automatic_backup_interval_days(cx: &App) -> u32 {
+        cx.global::<Self>().values.automatic_backup_interval_days
+    }
+
+    pub fn set_automatic_backup_interval_days(days: f64, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.automatic_backup_interval_days = normalize_backup_setting(
+                days,
+                DEFAULT_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+                MIN_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+                MAX_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+            );
+        });
+    }
+
+    pub fn automatic_backup_retention(cx: &App) -> u32 {
+        cx.global::<Self>().values.automatic_backup_retention
+    }
+
+    pub fn set_automatic_backup_retention(count: f64, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.automatic_backup_retention = normalize_backup_setting(
+                count,
+                DEFAULT_AUTOMATIC_BACKUP_RETENTION,
+                MIN_AUTOMATIC_BACKUP_RETENTION,
+                MAX_AUTOMATIC_BACKUP_RETENTION,
+            );
+        });
+    }
+
     pub fn tray_shortcut(cx: &App) -> SharedString {
         cx.global::<Self>().values.tray_shortcut.as_str().into()
     }
@@ -457,6 +529,29 @@ impl AppSettings {
         let shortcut = shortcut.to_string();
         Self::update(cx, |settings| {
             settings.values.quick_capture_shortcut = shortcut.clone();
+        });
+    }
+
+    pub fn auto_save_delay(cx: &App) -> f64 {
+        cx.global::<Self>().values.auto_save_delay
+    }
+
+    pub fn auto_save_delay_duration(cx: &App) -> std::time::Duration {
+        let secs = cx.global::<Self>().values.auto_save_delay;
+        if secs.is_finite() && secs > 0.0 {
+            std::time::Duration::from_secs_f64(secs.clamp(MIN_AUTO_SAVE_DELAY, MAX_AUTO_SAVE_DELAY))
+        } else {
+            std::time::Duration::from_secs_f64(DEFAULT_AUTO_SAVE_DELAY)
+        }
+    }
+
+    pub fn set_auto_save_delay(delay: f64, cx: &mut App) {
+        Self::update(cx, |settings| {
+            settings.values.auto_save_delay = if delay.is_finite() {
+                delay.clamp(MIN_AUTO_SAVE_DELAY, MAX_AUTO_SAVE_DELAY)
+            } else {
+                DEFAULT_AUTO_SAVE_DELAY
+            };
         });
     }
 
@@ -511,6 +606,20 @@ impl StoredSettings {
             normalize_font_family(&self.editor_font_family, DEFAULT_EDITOR_FONT_FAMILY);
         self.editor_font_size = self.editor_font_size.clamp(10.0, 22.0);
         self.markdown_preview_font_size = self.markdown_preview_font_size.clamp(10.0, 22.0);
+        self.auto_save_delay = if self.auto_save_delay.is_finite() {
+            self.auto_save_delay
+                .clamp(MIN_AUTO_SAVE_DELAY, MAX_AUTO_SAVE_DELAY)
+        } else {
+            DEFAULT_AUTO_SAVE_DELAY
+        };
+        self.automatic_backup_interval_days = self.automatic_backup_interval_days.clamp(
+            MIN_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+            MAX_AUTOMATIC_BACKUP_INTERVAL_DAYS,
+        );
+        self.automatic_backup_retention = self.automatic_backup_retention.clamp(
+            MIN_AUTOMATIC_BACKUP_RETENTION,
+            MAX_AUTOMATIC_BACKUP_RETENTION,
+        );
 
         if !matches!(
             self.scrollbar_show.as_str(),
@@ -550,6 +659,14 @@ impl StoredSettings {
                 .active_tab_index
                 .min(self.tab_session.tabs.len() - 1);
         }
+    }
+}
+
+fn normalize_backup_setting(value: f64, default: u32, min: u32, max: u32) -> u32 {
+    if value.is_finite() {
+        (value.round() as u32).clamp(min, max)
+    } else {
+        default
     }
 }
 
@@ -691,6 +808,64 @@ mod tests {
             settings.quick_capture_shortcut,
             DEFAULT_QUICK_CAPTURE_SHORTCUT
         );
+        assert_eq!(settings.auto_save_delay, DEFAULT_AUTO_SAVE_DELAY);
+    }
+
+    #[test]
+    fn auto_save_delay_round_trips() {
+        let settings: StoredSettings = serde_json::from_str(r#"{"auto_save_delay":2.5}"#)
+            .expect("auto-save delay should deserialize");
+
+        assert_eq!(settings.auto_save_delay, 2.5);
+
+        let serialized = serde_json::to_value(settings).expect("settings should serialize");
+        assert_eq!(
+            serialized.get("auto_save_delay"),
+            Some(&serde_json::json!(2.5))
+        );
+    }
+
+    #[test]
+    fn auto_save_delay_is_normalized_to_bounds() {
+        let mut settings = StoredSettings {
+            auto_save_delay: 100.0,
+            ..StoredSettings::default()
+        };
+
+        settings.normalize();
+        assert_eq!(settings.auto_save_delay, MAX_AUTO_SAVE_DELAY);
+
+        settings.auto_save_delay = 0.01;
+        settings.normalize();
+        assert_eq!(settings.auto_save_delay, MIN_AUTO_SAVE_DELAY);
+
+        settings.auto_save_delay = f64::NAN;
+        settings.normalize();
+        assert_eq!(settings.auto_save_delay, DEFAULT_AUTO_SAVE_DELAY);
+    }
+
+    #[gpui_kit::test]
+    fn auto_save_delay_duration_follows_the_configured_setting(cx: &mut gpui_kit::TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio test runtime should start");
+        let _runtime_guard = runtime.enter();
+        cx.update(|cx| {
+            let directory = tempfile::tempdir().expect("settings directory should be created");
+            cx.set_global(AppSettings::load(directory.path()));
+            assert_eq!(
+                AppSettings::auto_save_delay_duration(cx),
+                std::time::Duration::from_secs_f64(DEFAULT_AUTO_SAVE_DELAY)
+            );
+
+            AppSettings::set_auto_save_delay(5.0, cx);
+            assert_eq!(AppSettings::auto_save_delay(cx), 5.0);
+            assert_eq!(
+                AppSettings::auto_save_delay_duration(cx),
+                std::time::Duration::from_secs(5)
+            );
+
+            AppSettings::set_auto_save_delay(100.0, cx);
+            assert_eq!(AppSettings::auto_save_delay(cx), MAX_AUTO_SAVE_DELAY);
+        });
     }
 
     #[test]
