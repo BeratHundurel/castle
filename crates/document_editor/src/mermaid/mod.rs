@@ -1349,9 +1349,12 @@ impl DocumentEditorView {
             cx.background_executor()
                 .timer(Duration::from_millis(16))
                 .await;
+
             this.update(cx, |this, cx| {
                 this.mermaid.remeasure_pending = false;
                 this.analysis.preview_list_state.remeasure();
+                this.preview_blocks_list.remeasure();
+                this.request_split_sync(cx);
                 cx.notify();
             })
             .ok();

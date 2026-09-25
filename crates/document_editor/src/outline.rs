@@ -75,6 +75,13 @@ impl DocumentOutline {
         }
     }
 
+    pub(crate) fn markdown_rows(&self) -> &[OutlineRow] {
+        match self {
+            Self::Markdown(outline) => &outline.items,
+            Self::None | Self::Json(_) => &[],
+        }
+    }
+
     pub(crate) fn markdown_section_offsets(&self) -> &[usize] {
         match self {
             Self::Markdown(outline) => &outline.section_offsets,
@@ -165,9 +172,16 @@ impl MarkdownOutline {
         let mut fence_marker = None::<char>;
         let mut previous_line = None::<(&str, usize, usize, usize)>;
         let mut line_offset = 0usize;
+        let frontmatter_line_count = yaml_frontmatter_line_count(source);
 
         for (line_index, line) in source.lines().enumerate() {
             let source_byte_offset = line.as_ptr() as usize - source.as_ptr() as usize;
+            if frontmatter_line_count.is_some_and(|end| line_index < end) {
+                previous_line = None;
+                line_offset = line_offset.saturating_add(line.len()).saturating_add(1);
+                continue;
+            }
+
             let trimmed = line.trim_start();
             let marker = trimmed.chars().next();
             if matches!(marker, Some('`' | '~'))
@@ -294,6 +308,18 @@ impl MarkdownOutline {
         });
         (insertion_index.checked_sub(1), comparisons)
     }
+}
+
+fn yaml_frontmatter_line_count(source: &str) -> Option<usize> {
+    let mut lines = source.lines();
+    let opening = lines.next()?.trim_start_matches('\u{feff}').trim();
+    if opening != "---" {
+        return None;
+    }
+
+    lines
+        .enumerate()
+        .find_map(|(index, line)| (line.trim() == "---").then_some(index + 2))
 }
 
 fn markdown_section(source: &str, start: usize, end: usize) -> SharedString {
@@ -687,6 +713,26 @@ mod tests {
         assert_eq!(outline.section_offsets, vec![0, 7, 18]);
         assert_eq!(outline.items[1].preview_section_index, Some(2));
         assert_eq!(outline.items[1].depth, 1);
+    }
+
+    #[test]
+    fn keeps_yaml_frontmatter_together_in_the_preview_preamble() {
+        let source = "---\nname: gpui\ndescription: Build Castle's UI\n---\n# Castle\nBody";
+        let outline = MarkdownOutline::parse(source);
+
+        assert_eq!(outline.items.len(), 1);
+        assert_eq!(outline.items[0].title, "Castle");
+        assert_eq!(outline.items[0].source_line, 4);
+        assert_eq!(outline.sections.len(), 2);
+        assert_eq!(
+            outline.sections[0].as_ref(),
+            "---\nname: gpui\ndescription: Build Castle's UI\n---"
+        );
+        assert_eq!(outline.sections[1].as_ref(), "# Castle\nBody");
+        assert_eq!(
+            outline.section_offsets,
+            vec![0, source.find("# Castle").expect("heading should exist")]
+        );
     }
 
     #[test]

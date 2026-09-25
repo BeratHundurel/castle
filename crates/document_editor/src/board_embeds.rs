@@ -484,17 +484,30 @@ impl DocumentEditorView {
             self.embeds.request.clear();
             self.embeds.loading_keys.clear();
             if states_changed {
+                self.remeasure_preview_after_embed_change(cx);
                 cx.notify();
             }
             return;
         }
         if keys_to_load.is_empty() {
             if states_changed {
+                self.remeasure_preview_after_embed_change(cx);
                 cx.notify();
             }
             return;
         }
+        if states_changed {
+            self.remeasure_preview_after_embed_change(cx);
+        }
         self.start_board_embed_load(keys_to_load, cx);
+    }
+
+    fn remeasure_preview_after_embed_change(&mut self, cx: &mut Context<Self>) {
+        self.analysis.preview_list_state.remeasure();
+        self.preview_blocks_list.remeasure();
+        if self.mode == super::document_state::EditorMode::Split {
+            self.request_split_sync(cx);
+        }
     }
 
     pub(crate) fn schedule_board_embed_refresh(&mut self, cx: &mut Context<Self>) {
@@ -671,6 +684,7 @@ impl DocumentEditorView {
                     }
                 }
                 this.embeds.states = Arc::new(merged);
+                this.remeasure_preview_after_embed_change(cx);
                 cx.notify();
             })
             .ok();

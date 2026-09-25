@@ -213,6 +213,16 @@ impl DocumentEditorView {
                 virtualization == MarkdownPreviewVirtualization::Sections,
                 |this| this.vertical_scrollbar(&self.analysis.preview_list_state),
             )
+            .when(
+                virtualization == MarkdownPreviewVirtualization::Sections,
+                |this| {
+                    this.child(crate::split_sync::PreviewScrollBoundaryGuard::new(
+                        self.analysis.preview_list_state.clone(),
+                        self.split_sync.preview_wheel_direction.clone(),
+                        cx.entity().downgrade(),
+                    ))
+                },
+            )
     }
 }
 

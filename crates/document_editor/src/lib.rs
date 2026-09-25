@@ -145,46 +145,58 @@ impl DocumentEditorView {
         let preview_blocks_state = cx.new(|cx| TextViewState::markdown("", cx));
         let preview_blocks_list = preview_blocks_state.read(cx).list_state().clone();
         let split_view = cx.entity().downgrade();
+        let split_sync = split_sync::SplitSyncState::default();
         preview_list_state.set_scroll_handler({
             let split_view = split_view.clone();
-            move |event, _, cx| {
-                Self::sync_source_from_preview_section(
-                    event.visible_range.start,
-                    split_view.clone(),
-                    cx,
-                );
+            let wheel_direction = split_sync.preview_wheel_direction.clone();
+            move |_, _, cx| {
+                let split_view = split_view.clone();
+                let wheel_direction = wheel_direction.take();
+                cx.defer(move |cx| {
+                    Self::sync_source_from_preview_scroll(split_view, wheel_direction, cx);
+                });
             }
         });
         preview_blocks_list.set_scroll_handler({
             let split_view = split_view.clone();
             let preview_blocks_list = preview_blocks_list.clone();
             move |_, _, cx| {
-                let max = preview_blocks_list.max_offset_for_scrollbar().y.as_f32();
-                if max <= 0.0 {
-                    return;
-                }
-                let current = -preview_blocks_list
-                    .scroll_px_offset_for_scrollbar()
-                    .y
-                    .as_f32();
-                let fraction = (current / max).clamp(0.0, 1.0);
-                Self::sync_source_from_preview_fraction(fraction, split_view.clone(), cx);
+                let split_view = split_view.clone();
+                let preview_blocks_list = preview_blocks_list.clone();
+                cx.defer(move |cx| {
+                    let max = preview_blocks_list.max_offset_for_scrollbar().y.as_f32();
+                    if max <= 0.0 {
+                        return;
+                    }
+                    let current = -preview_blocks_list
+                        .scroll_px_offset_for_scrollbar()
+                        .y
+                        .as_f32();
+                    let fraction = (current / max).clamp(0.0, 1.0);
+                    Self::sync_source_from_preview_fraction(fraction, split_view, cx);
+                });
             }
         });
+
         let theme_subscription = cx.observe_global::<Theme>(|this, cx| {
             if this.kind == DocumentKind::Markdown && this.mode.shows_preview() {
                 this.activate_mermaids(cx);
             }
         });
+
         let settings_subscription = cx
             .observe_global_in::<AppSettings>(window, |this, window, cx| {
                 this.sync_writing_preferences(window, cx)
             });
+
         cx.observe(&editor, |this, _, cx| {
             this.refresh_focus_decorations(cx);
-            this.sync_preview_from_source(cx);
+            if !this.sync_preview_from_source(cx) {
+                this.request_split_sync(cx);
+            }
         })
         .detach();
+
         cx.on_release(|this, cx| this.mermaid.clear(cx)).detach();
         cx.subscribe_in(
             &editor,
@@ -267,7 +279,7 @@ impl DocumentEditorView {
             },
             preview_blocks_state,
             preview_blocks_list,
-            split_sync: split_sync::SplitSyncState::default(),
+            split_sync,
             emmet_input,
             show_emmet_input: false,
             emmet_replacement_range: None,
@@ -1154,6 +1166,7 @@ mod tests {
     use entity::note;
     use gpui_kit::AppContext as _;
     use gpui_kit::component::highlighter::Language;
+    use gpui_kit::component::input::RopeExt as _;
     use migration::{Migrator, MigratorTrait};
     use runtime::AppRuntime;
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
@@ -1506,7 +1519,6 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-
         let legacy_allocation = test_alloc::start_measurement();
         let legacy_started = std::time::Instant::now();
         for _ in 0..RESCHEDULES {
@@ -1876,16 +1888,22 @@ mod tests {
 
         let mut content = String::from("# One\n");
         for line in 0..60 {
-            content.push_str(&format!("Body one line {line}\n"));
+            content.push_str(&format!(
+                "Body one line {line}: {}\n",
+                "long source text that wraps in the editor ".repeat(5)
+            ));
         }
         content.push_str("# Two\n");
+        content.push_str("```rust\n");
         for line in 0..60 {
-            content.push_str(&format!("Body two line {line}\n"));
+            content.push_str(&format!("let value_{line} = {line};\n"));
         }
+        content.push_str("```\n");
         content.push_str("# Three\n");
         for line in 0..60 {
             content.push_str(&format!("Body three line {line}\n"));
         }
+        content.push_str(&format!("Final long row: {}", "wrapped words ".repeat(300)));
 
         let (db, note_id) = runtime
             .block_on(async {
@@ -1967,6 +1985,37 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        let top_preview_notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        cx.update(|_, cx| {
+            let notifications = top_preview_notifications.clone();
+            cx.observe(&view, move |_, _| {
+                notifications.set(notifications.get() + 1);
+            })
+            .detach();
+        });
+        let top_viewport = view.read_with(&cx, |editor, _| {
+            editor.analysis.preview_list_state.viewport_bounds()
+        });
+        for _ in 0..10 {
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: top_viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(8.),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            top_preview_notifications.get(),
+            0,
+            "clamped upward wheel events should not redraw the preview"
+        );
 
         let (target_line, expected_section) = view
             .read_with(&cx, |editor, _| {
@@ -1993,6 +2042,40 @@ mod tests {
             });
         });
         cx.run_until_parked();
+        for _ in 0..50 {
+            let visible_top = source_editor
+                .read_with(&cx, |input, _| {
+                    input.visible_row_range().map(|range| range.start)
+                })
+                .expect("source should have a visible row range");
+            if (target_line..target_line + 3).contains(&visible_top) {
+                break;
+            }
+            cx.update(|_, cx| {
+                source_editor.update(cx, |input, cx| {
+                    let line_height = input.line_height().expect("source line height");
+                    let current = input.scroll_offset();
+                    let remaining_lines = target_line as f32 - visible_top as f32;
+                    input.set_scroll_offset(
+                        gpui_kit::point(
+                            current.x,
+                            current.y - gpui_kit::px(remaining_lines * line_height.as_f32()),
+                        ),
+                        cx,
+                    );
+                });
+            });
+            cx.run_until_parked();
+        }
+        let visible_top = source_editor
+            .read_with(&cx, |input, _| {
+                input.visible_row_range().map(|range| range.start)
+            })
+            .expect("source should have a visible row range");
+        assert!(
+            (target_line..target_line + 3).contains(&visible_top),
+            "test must reach the second section despite wrapped source lines"
+        );
         for _ in 0..20 {
             cx.run_until_parked();
             cx.update(|_, cx| {
@@ -2024,6 +2107,462 @@ mod tests {
             }),
             expected_section,
             "preview should follow the source to the second heading section"
+        );
+
+        let first_offset = view.read_with(&cx, |editor, _| {
+            editor
+                .analysis
+                .preview_list_state
+                .logical_scroll_top()
+                .offset_in_item
+        });
+        assert!(
+            first_offset > gpui_kit::px(1.),
+            "preview should track progress inside a section"
+        );
+
+        cx.update(|_, cx| {
+            source_editor.update(cx, |input, cx| {
+                let line_height = input
+                    .line_height()
+                    .expect("source line height should be laid out");
+                let current = input.scroll_offset();
+                input.set_scroll_offset(
+                    gpui_kit::point(
+                        current.x,
+                        current.y - gpui_kit::px(20. * line_height.as_f32()),
+                    ),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |editor, cx| {
+                editor.sync_preview_from_source(cx);
+            });
+        });
+        cx.run_until_parked();
+        let second_offset = view.read_with(&cx, |editor, _| {
+            editor
+                .analysis
+                .preview_list_state
+                .logical_scroll_top()
+                .offset_in_item
+        });
+        assert!(
+            second_offset > first_offset,
+            "preview should move within the same section"
+        );
+
+        let viewport = view.read_with(&cx, |editor, _| {
+            editor.analysis.preview_list_state.viewport_bounds()
+        });
+        let source_before_preview_wheel =
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y);
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(-100.),
+            )),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert!(
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y)
+                < source_before_preview_wheel,
+            "scrolling the preview should move the source within the same section"
+        );
+        let after_wheel = view.read_with(&cx, |editor, _| {
+            editor.analysis.preview_list_state.logical_scroll_top()
+        });
+        assert_eq!(after_wheel.item_ix, expected_section);
+        assert!(after_wheel.offset_in_item > second_offset);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let after_draw = view.read_with(&cx, |editor, _| {
+            editor.analysis.preview_list_state.logical_scroll_top()
+        });
+        assert_eq!(after_draw.item_ix, after_wheel.item_ix);
+        assert!(
+            (after_draw.offset_in_item - after_wheel.offset_in_item).abs() < gpui_kit::px(1.),
+            "source updates must not bounce the preview scrollbar back"
+        );
+        let mut source_scroll_positions =
+            vec![source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32())];
+        for _ in 0..14 {
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+            source_scroll_positions
+                .push(source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32()));
+            if !view.read_with(&cx, |editor, _| editor.split_sync.preview_drives_source) {
+                break;
+            }
+        }
+        assert!(
+            source_scroll_positions
+                .windows(2)
+                .all(|positions| positions[1] <= positions[0] + 1.0),
+            "source should not jump backward while settling a downward preview scroll: {source_scroll_positions:?}"
+        );
+        assert!(
+            !view.read_with(&cx, |editor, _| editor.split_sync.preview_drives_source),
+            "preview-driven source scroll should finish its feedback guard"
+        );
+        let expected_source_line = view.read_with(&cx, |editor, _| {
+            let rows = editor.analysis.outline.markdown_rows();
+            let height = editor
+                .analysis
+                .preview_list_state
+                .bounds_for_item(expected_section)
+                .expect("second preview section should be measured")
+                .size
+                .height
+                .as_f32();
+            rows[1].source_line as f32
+                + after_wheel.offset_in_item.as_f32() / height
+                    * (rows[2].source_line - rows[1].source_line) as f32
+        });
+        let actual_source_line = source_editor
+            .read_with(&cx, |input, _| {
+                input.visible_row_range().map(|range| range.start)
+            })
+            .expect("source should remain laid out");
+        assert!(
+            (actual_source_line as f32 - expected_source_line).abs() < 2.0,
+            "preview scroll should settle near the corresponding source line"
+        );
+
+        let mut previous_source_scroll =
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+        for _ in 0..8 {
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-8.),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            let source_scroll =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            assert!(
+                source_scroll <= previous_source_scroll + 1.0,
+                "small downward preview scrolls should not move the source backward"
+            );
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+            previous_source_scroll =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            assert!(
+                previous_source_scroll <= source_scroll + 1.0,
+                "settling a small downward preview scroll should not reverse the source"
+            );
+        }
+        let source_before_upward_scroll = previous_source_scroll;
+        for _ in 0..8 {
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(8.),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            let source_scroll =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            assert!(
+                source_scroll >= previous_source_scroll - 1.0,
+                "small upward preview scrolls should not move the source downward"
+            );
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+            previous_source_scroll =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            assert!(
+                previous_source_scroll >= source_scroll - 1.0,
+                "settling a small upward preview scroll should not reverse the source"
+            );
+        }
+        assert!(
+            previous_source_scroll > source_before_upward_scroll + 1.0,
+            "upward preview scrolling should still move the source"
+        );
+
+        for _ in 0..100 {
+            let remaining = view.read_with(&cx, |editor, _| {
+                let list = &editor.analysis.preview_list_state;
+                list.max_offset_for_scrollbar().y.as_f32()
+                    + list.scroll_px_offset_for_scrollbar().y.as_f32()
+            });
+            if remaining <= 80.0 {
+                break;
+            }
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-(remaining - 80.0).min(1_000.)),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+        }
+        let line_height = source_editor
+            .read_with(&cx, |input, _| {
+                input.line_height().map(|height| height.as_f32())
+            })
+            .expect("source line height should remain laid out");
+        let mut bottom_source_positions = Vec::new();
+        for _ in 0..20 {
+            let previous =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-8.),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            let current = source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            assert!(
+                current <= previous + 1.0 && previous - current < 6.0 * line_height,
+                "an 8px preview scroll near the bottom should move the source steadily: {previous} -> {current}"
+            );
+            bottom_source_positions.push(current);
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+            bottom_source_positions
+                .push(source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32()));
+        }
+        assert!(
+            bottom_source_positions
+                .windows(2)
+                .all(|positions| positions[1] <= positions[0] + 1.0),
+            "source should not reverse while preview scrolls into its bottom limit: {bottom_source_positions:?}"
+        );
+        let mut stable_bottom_steps = 0;
+        let mut clamped_source_positions = Vec::new();
+        for _ in 0..100 {
+            let remaining = view.read_with(&cx, |editor, _| {
+                let list = &editor.analysis.preview_list_state;
+                list.max_offset_for_scrollbar().y.as_f32()
+                    + list.scroll_px_offset_for_scrollbar().y.as_f32()
+            });
+            stable_bottom_steps = if remaining <= 1.0 {
+                stable_bottom_steps + 1
+            } else {
+                clamped_source_positions.clear();
+                0
+            };
+            if stable_bottom_steps >= 12 {
+                break;
+            }
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-remaining.clamp(8.0, 1_000.)),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(16));
+            cx.run_until_parked();
+            if remaining <= 1.0 {
+                clamped_source_positions.push(
+                    source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32()),
+                );
+            }
+        }
+        let (preview_at_bottom, preview_remaining, preview_top) =
+            view.read_with(&cx, |editor, _| {
+                let list = &editor.analysis.preview_list_state;
+                let current = -list.scroll_px_offset_for_scrollbar().y.as_f32();
+                let max = list.max_offset_for_scrollbar().y.as_f32();
+                (
+                    max > 0.0 && max - current <= 1.0,
+                    max - current,
+                    list.logical_scroll_top(),
+                )
+            });
+        assert!(
+            preview_at_bottom,
+            "test must reach the preview bottom: {preview_remaining} px remaining at {preview_top:?}"
+        );
+        let source_at_bottom = view.read_with(&cx, |editor, cx| {
+            let input = editor.editor.read(cx);
+            let last_line = input.text().lines_len().saturating_sub(1);
+            let start = input.text().line_start_offset(last_line);
+            let end = input.text().line_end_offset(last_line);
+            editor.analysis.source_bounds.is_some_and(|viewport| {
+                input
+                    .range_to_bounds(&(start..end))
+                    .is_some_and(|line| line.bottom() <= viewport.bottom() + gpui_kit::px(1.))
+            })
+        });
+        assert!(
+            source_at_bottom,
+            "source should reach the bottom with preview"
+        );
+        assert!(
+            clamped_source_positions[clamped_source_positions.len() - 8..]
+                .windows(2)
+                .all(|positions| (positions[1] - positions[0]).abs() <= 1.0),
+            "source should remain still when preview cannot scroll farther"
+        );
+        let source_notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        let preview_notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        cx.update(|_, cx| {
+            view.update(cx, |_, cx| {
+                let notifications = source_notifications.clone();
+                cx.observe(&source_editor, move |_, _, _| {
+                    notifications.set(notifications.get() + 1);
+                })
+                .detach();
+            });
+            let notifications = preview_notifications.clone();
+            cx.observe(&view, move |_, _| {
+                notifications.set(notifications.get() + 1);
+            })
+            .detach();
+        });
+        let source_before_clamped_wheel =
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y);
+        for _ in 0..10 {
+            cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-8.),
+                )),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y),
+            source_before_clamped_wheel
+        );
+        assert_eq!(
+            source_notifications.get(),
+            0,
+            "clamped preview wheel events should not update the source"
+        );
+        assert_eq!(
+            preview_notifications.get(),
+            0,
+            "clamped preview wheel events should not redraw the preview"
+        );
+        cx.update(|_, cx| {
+            view.update(cx, |editor, _| {
+                editor.split_sync.preview_drives_source = true;
+            });
+            source_editor.update(cx, |input, cx| {
+                let current = input.scroll_offset();
+                input.set_scroll_offset(
+                    gpui_kit::point(current.x, current.y + gpui_kit::px(200.)),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        let displaced_source = source_editor.read_with(&cx, |input, _| input.scroll_offset().y);
+        assert!(
+            displaced_source > source_before_clamped_wheel + gpui_kit::px(100.),
+            "test must leave source behind while preview stays at its bottom"
+        );
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(-8.),
+            )),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert!(
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y)
+                < displaced_source - gpui_kit::px(1.),
+            "scrolling farther at the preview bottom should catch up the source"
+        );
+        let source_before_leaving_bottom =
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(8.),
+            )),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert!(
+            source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32())
+                > source_before_leaving_bottom,
+            "scrolling upward from the preview bottom should move the source upward"
+        );
+        for (wheel_delta, source_direction) in [(2.0, 1.0), (-2.0, -1.0)] {
+            let mut previous =
+                source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+            for _ in 0..20 {
+                cx.simulate_event(gpui_kit::ScrollWheelEvent {
+                    position: viewport.center(),
+                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(0.),
+                        gpui_kit::px(wheel_delta),
+                    )),
+                    ..Default::default()
+                });
+                cx.run_until_parked();
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_millis(5));
+                cx.run_until_parked();
+                let current =
+                    source_editor.read_with(&cx, |input, _| input.scroll_offset().y.as_f32());
+                assert!(
+                    (current - previous) * source_direction >= -0.01,
+                    "trackpad-sized preview scroll should not reverse the source: {previous} -> {current}"
+                );
+                previous = current;
+            }
+        }
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(-2.),
+            )),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(48));
+        cx.run_until_parked();
+        assert!(
+            view.read_with(&cx, |editor, _| editor.split_sync.preview_drives_source),
+            "preview should keep ownership through a brief trackpad pause"
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(160));
+        cx.run_until_parked();
+        assert!(
+            !view.read_with(&cx, |editor, _| editor.split_sync.preview_drives_source),
+            "preview ownership should end after scrolling settles"
         );
     }
 }
