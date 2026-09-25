@@ -272,7 +272,8 @@ fn edge_kind_order(kind: &WorkflowEdgeKind) -> u8 {
 mod tests {
     use super::*;
     use crate::model::{
-        EventOrigin, ListWorkflowRole, MovePosition, WorkflowEdge, WorkflowNode, WorkflowNodeKind,
+        EventOrigin, ListWorkflowRole, MovePosition, WorkflowBranchCase, WorkflowEdge,
+        WorkflowNode, WorkflowNodeKind,
     };
 
     fn event(kind: WorkflowEventKind) -> WorkflowEvent {
@@ -293,6 +294,82 @@ mod tests {
             list_id: 8,
             list_role: ListWorkflowRole::Done,
             ..Default::default()
+        }
+    }
+
+    fn branch_definition(
+        cases: Vec<WorkflowBranchCase>,
+        branch_edges: Vec<WorkflowEdge>,
+    ) -> WorkflowDefinition {
+        let connected_targets = branch_edges
+            .iter()
+            .map(|edge| edge.to.as_str())
+            .collect::<HashSet<_>>();
+        let mut nodes = vec![
+            WorkflowNode {
+                id: "trigger".to_string(),
+                kind: WorkflowNodeKind::Trigger {
+                    trigger: WorkflowTrigger::Manual,
+                },
+                position: Default::default(),
+            },
+            WorkflowNode {
+                id: "branch".to_string(),
+                kind: WorkflowNodeKind::Branch { cases },
+                position: Default::default(),
+            },
+        ];
+        nodes.extend(
+            [
+                ("first-case", WorkflowAction::MarkComplete),
+                ("second-case", WorkflowAction::Archive),
+                ("otherwise", WorkflowAction::Trash),
+                (
+                    "default",
+                    WorkflowAction::AddHistory {
+                        message: "default route".to_string(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .filter(|(id, _)| connected_targets.contains(id))
+            .map(|(id, action)| WorkflowNode {
+                id: id.to_string(),
+                kind: WorkflowNodeKind::Action { action },
+                position: Default::default(),
+            }),
+        );
+
+        let mut edges = vec![WorkflowEdge {
+            id: "trigger-branch".to_string(),
+            from: "trigger".to_string(),
+            to: "branch".to_string(),
+            kind: WorkflowEdgeKind::Default,
+        }];
+        edges.extend(branch_edges);
+
+        WorkflowDefinition {
+            enabled: true,
+            nodes,
+            edges,
+            ..Default::default()
+        }
+    }
+
+    fn branch_edge(id: &str, kind: WorkflowEdgeKind, to: &str) -> WorkflowEdge {
+        WorkflowEdge {
+            id: id.to_string(),
+            from: "branch".to_string(),
+            to: to.to_string(),
+            kind,
+        }
+    }
+
+    fn branch_case(id: &str, condition: WorkflowCondition) -> WorkflowBranchCase {
+        WorkflowBranchCase {
+            id: id.to_string(),
+            label: id.to_string(),
+            condition,
         }
     }
 
@@ -694,6 +771,77 @@ mod tests {
         assert_eq!(
             evaluate(&definition, &event(WorkflowEventKind::Manual), &context()).len(),
             1
+        );
+    }
+
+    #[test]
+    fn branch_follows_only_the_first_matching_case_in_declared_order() {
+        let definition = branch_definition(
+            vec![
+                branch_case("z-first", WorkflowCondition::Always),
+                branch_case("a-second", WorkflowCondition::Always),
+            ],
+            vec![
+                branch_edge(
+                    "second-case",
+                    WorkflowEdgeKind::Case("a-second".to_string()),
+                    "second-case",
+                ),
+                branch_edge(
+                    "first-case",
+                    WorkflowEdgeKind::Case("z-first".to_string()),
+                    "first-case",
+                ),
+                branch_edge("otherwise", WorkflowEdgeKind::Otherwise, "otherwise"),
+            ],
+        );
+
+        assert!(crate::validate(&definition).is_ok());
+        assert_eq!(
+            evaluate(&definition, &event(WorkflowEventKind::Manual), &context()),
+            vec![WorkflowAction::MarkComplete]
+        );
+    }
+
+    #[test]
+    fn branch_uses_otherwise_when_no_case_matches() {
+        let definition = branch_definition(
+            vec![branch_case(
+                "cancelled",
+                WorkflowCondition::ListRoleIs {
+                    role: ListWorkflowRole::Cancelled,
+                },
+            )],
+            vec![
+                branch_edge(
+                    "case",
+                    WorkflowEdgeKind::Case("cancelled".to_string()),
+                    "first-case",
+                ),
+                branch_edge("otherwise", WorkflowEdgeKind::Otherwise, "otherwise"),
+            ],
+        );
+
+        assert!(crate::validate(&definition).is_ok());
+        assert_eq!(
+            evaluate(&definition, &event(WorkflowEventKind::Manual), &context()),
+            vec![WorkflowAction::Trash]
+        );
+    }
+
+    #[test]
+    fn branch_uses_default_when_the_selected_outcome_is_unconnected() {
+        let definition = branch_definition(
+            vec![branch_case("ready", WorkflowCondition::Always)],
+            vec![branch_edge("default", WorkflowEdgeKind::Default, "default")],
+        );
+
+        assert!(crate::validate(&definition).is_ok());
+        assert_eq!(
+            evaluate(&definition, &event(WorkflowEventKind::Manual), &context()),
+            vec![WorkflowAction::AddHistory {
+                message: "default route".to_string(),
+            }]
         );
     }
 }
