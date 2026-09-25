@@ -423,6 +423,15 @@ pub async fn create_board(
     }
     .insert(db)
     .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        db,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::Board,
+            id: board.id,
+        }],
+    )
+    .await
+    .map_err(|error| DbErr::Custom(error.to_string()))?;
 
     Ok(WorkspaceItem {
         id: board.id as u32,

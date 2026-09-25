@@ -119,6 +119,14 @@ async fn insert_card(
         indexed_at,
     )
     .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        db,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::Card,
+            id: card.id,
+        }],
+    )
+    .await?;
     Ok(BoardCardRecord {
         id: card.id as u32,
         title: card.title,
@@ -150,6 +158,14 @@ pub async fn create_board_list(
         ..Default::default()
     }
     .insert(db)
+    .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        db,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::List,
+            id: list.id,
+        }],
+    )
     .await?;
     Ok(BoardListRecord {
         id: list.id as u32,
@@ -184,6 +200,14 @@ pub async fn duplicate_board_list(
         ..Default::default()
     }
     .insert(&txn)
+    .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        &txn,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::List,
+            id: list.id,
+        }],
+    )
     .await?;
     for mut card in source.cards {
         card.list_id = list.id as u32;

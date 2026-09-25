@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Context as _, Result, bail};
 use entity::{
     board, board::Entity as Board, card, card::Entity as Card, entry, entry::Entity as Entry, note,
-    note::Entity as Note, note_alias, note_alias::Entity as NoteAlias, project,
-    project::Entity as Project, saved_board_view, saved_board_view::Entity as SavedBoardView,
-    workspace_link, workspace_link::Entity as WorkspaceLink, workspace_link_index_state,
+    note::Entity as Note, note_alias, note_alias::Entity as NoteAlias, note_link,
+    note_link::Entity as NoteLink, project, project::Entity as Project, saved_board_view,
+    saved_board_view::Entity as SavedBoardView, workspace_link,
+    workspace_link::Entity as WorkspaceLink, workspace_link_index_state,
     workspace_link_index_state::Entity as WorkspaceLinkIndexState, workspace_reference_alias,
     workspace_reference_alias::Entity as WorkspaceReferenceAliasEntity,
 };
@@ -746,6 +747,84 @@ pub(crate) async fn index_note_workspace_links_with_catalog(
     }
     update_index_state(db, "note", source.item.id, content).await?;
     Ok(())
+}
+
+pub(crate) async fn reindex_note_workspace_links_for_targets(
+    db: &impl ConnectionTrait,
+    targets: &[WorkspaceItemRef],
+) -> Result<usize> {
+    let targets = targets.iter().copied().collect::<HashSet<_>>();
+    if targets.is_empty() {
+        return Ok(0);
+    }
+
+    let catalog = load_workspace_reference_catalog(db).await?;
+    let candidate_note_ids = NoteLink::find()
+        .filter(note_link::Column::TargetNoteId.is_null())
+        .all(db)
+        .await?
+        .into_iter()
+        .filter(|link| is_workspace_target(&link.raw_target))
+        .filter(|link| {
+            resolve_workspace_item(&link.raw_target, &catalog)
+                .is_ok_and(|target| targets.contains(&target))
+        })
+        .map(|link| link.source_note_id)
+        .collect::<HashSet<_>>();
+    let indexed_notes = WorkspaceLinkIndexState::find()
+        .filter(workspace_link_index_state::Column::SourceKind.eq("note"))
+        .all(db)
+        .await?;
+    let mut candidate_note_ids = candidate_note_ids;
+    for state in indexed_notes {
+        if !state.indexed_content.contains("![[") {
+            continue;
+        }
+        let has_resolved_embed =
+            crate::board::projection::parse_board_view_embeds(&state.indexed_content)
+                .iter()
+                .any(|embed| {
+                    matches!(
+                        resolve_board_view_target(&embed.raw_target, &catalog),
+                        Ok(ResolvedWorkspaceReference::BoardView { board_id, .. })
+                            if targets.contains(&WorkspaceItemRef {
+                                kind: WorkspaceItemKind::Board,
+                                id: board_id,
+                            })
+                    )
+                });
+        if has_resolved_embed {
+            candidate_note_ids.insert(state.source_id);
+        }
+    }
+    if candidate_note_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let notes = Note::find()
+        .filter(note::Column::Id.is_in(candidate_note_ids))
+        .all(db)
+        .await?;
+    let mut indexed = 0;
+    for source in notes {
+        let source_ref = WorkspaceItemRef {
+            kind: WorkspaceItemKind::Note,
+            id: source.id,
+        };
+        if catalog.item(source_ref).is_none() {
+            continue;
+        }
+        index_note_workspace_links_with_catalog(
+            db,
+            source.id,
+            &source.cached_content,
+            source.updated_at,
+            &catalog,
+        )
+        .await?;
+        indexed += 1;
+    }
+    Ok(indexed)
 }
 
 pub async fn index_entry_workspace_links(

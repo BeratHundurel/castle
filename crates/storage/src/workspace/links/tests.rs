@@ -240,6 +240,148 @@ async fn note_workspace_links_resolve_readable_references() -> Result<()> {
 }
 
 #[tokio::test]
+async fn creating_a_workspace_target_resolves_existing_note_references() -> Result<()> {
+    let db = Database::connect("sqlite::memory:").await?;
+    Migrator::up(&db, None).await?;
+    let content = "[[board:Roadmap]] [[list:Roadmap / Ideas]] [[card:Roadmap / Ideas / Ship]]\n![[board:Roadmap#Current]]";
+    let source = note::ActiveModel {
+        title: Set("Brief".to_string()),
+        cached_content: Set(content.to_string()),
+        file_managed_by_app: Set(false),
+        created_at: Set(0),
+        updated_at: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await?;
+    crate::note::links::index_note_links(&db, source.id, content, 0).await?;
+
+    assert_eq!(
+        crate::note::links::load_note_links(&db, source.id)
+            .await?
+            .unresolved
+            .len(),
+        3
+    );
+    assert!(
+        load_note_workspace_links(&db, source.id)
+            .await?
+            .references
+            .is_empty()
+    );
+
+    let board = crate::workspace::create_board(&db, None, "Roadmap".to_string()).await?;
+    let list = crate::board::commands::create_board_list(
+        &db,
+        crate::board::commands::BoardListDraft {
+            title: "Ideas".to_string(),
+            board_id: board.id,
+            position: 0,
+            workflow_role: crate::board::ListWorkflowRole::Neutral,
+            cards: Vec::new(),
+        },
+    )
+    .await?;
+    let card = crate::board::commands::create_board_card(
+        &db,
+        crate::board::commands::BoardCardDraft {
+            title: "Ship".to_string(),
+            description: String::new(),
+            list_id: list.id,
+            position: 0,
+            due_on: None,
+            label_ids: Vec::new(),
+            checklist_items: Vec::new(),
+        },
+        0,
+    )
+    .await?;
+    let view = crate::board::properties::create_board_view(
+        &db,
+        i64::from(board.id),
+        "Current".to_string(),
+        Default::default(),
+    )
+    .await?;
+
+    assert!(
+        crate::note::links::load_note_links(&db, source.id)
+            .await?
+            .unresolved
+            .is_empty()
+    );
+    let links = load_note_workspace_links(&db, source.id).await?;
+    assert_eq!(links.references.len(), 4);
+    assert!(links.references.iter().any(|reference| {
+        reference.item.item
+            == WorkspaceItemRef {
+                kind: WorkspaceItemKind::Board,
+                id: i64::from(board.id),
+            }
+    }));
+    assert!(links.references.iter().any(|reference| {
+        reference.origin == WorkspaceLinkOrigin::Embed
+            && reference.item.item
+                == WorkspaceItemRef {
+                    kind: WorkspaceItemKind::Board,
+                    id: i64::from(board.id),
+                }
+    }));
+    assert!(links.references.iter().any(|reference| {
+        reference.item.item
+            == WorkspaceItemRef {
+                kind: WorkspaceItemKind::List,
+                id: i64::from(list.id),
+            }
+    }));
+    assert!(links.references.iter().any(|reference| {
+        reference.item.item
+            == WorkspaceItemRef {
+                kind: WorkspaceItemKind::Card,
+                id: i64::from(card.id),
+            }
+    }));
+
+    let related = load_related_notes(
+        &db,
+        WorkspaceItemRef {
+            kind: WorkspaceItemKind::Board,
+            id: i64::from(board.id),
+        },
+    )
+    .await?;
+    assert_eq!(related.len(), 1);
+    assert!(related[0].origins.contains(&WorkspaceLinkOrigin::Wikilink));
+    assert!(related[0].origins.contains(&WorkspaceLinkOrigin::Embed));
+    let embedded_view_id = WorkspaceLink::find()
+        .filter(workspace_link::Column::SourceNoteId.eq(source.id))
+        .filter(workspace_link::Column::Origin.eq("embed"))
+        .one(&db)
+        .await?
+        .and_then(|link| link.target_saved_view_id);
+    assert_eq!(embedded_view_id, Some(view.id));
+    let list_related = load_related_notes(
+        &db,
+        WorkspaceItemRef {
+            kind: WorkspaceItemKind::List,
+            id: i64::from(list.id),
+        },
+    )
+    .await?;
+    assert_eq!(list_related.len(), 1);
+    let card_related = load_related_notes(
+        &db,
+        WorkspaceItemRef {
+            kind: WorkspaceItemKind::Card,
+            id: i64::from(card.id),
+        },
+    )
+    .await?;
+    assert_eq!(card_related.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn rename_operations_record_historical_reference_aliases_transactionally() -> Result<()> {
     let db = Database::connect("sqlite::memory:").await?;
     Migrator::up(&db, None).await?;

@@ -395,6 +395,10 @@ pub(crate) async fn create_board_from_template_in_transaction(
     }
     .insert(transaction)
     .await?;
+    let mut created_targets = vec![crate::workspace::links::WorkspaceItemRef {
+        kind: crate::workspace::links::WorkspaceItemKind::Board,
+        id: board.id,
+    }];
 
     for (column_position, template_column) in definition.columns.into_iter().enumerate() {
         let column = card::ActiveModel {
@@ -406,9 +410,13 @@ pub(crate) async fn create_board_from_template_in_transaction(
         }
         .insert(transaction)
         .await?;
+        created_targets.push(crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::List,
+            id: column.id,
+        });
 
         for (entry_position, template_entry) in template_column.entries.into_iter().enumerate() {
-            entry::ActiveModel {
+            let entry = entry::ActiveModel {
                 title: Set(template_entry.title),
                 description: Set(template_entry.description),
                 card_id: Set(column.id),
@@ -417,8 +425,17 @@ pub(crate) async fn create_board_from_template_in_transaction(
             }
             .insert(transaction)
             .await?;
+            created_targets.push(crate::workspace::links::WorkspaceItemRef {
+                kind: crate::workspace::links::WorkspaceItemKind::Card,
+                id: entry.id,
+            });
         }
     }
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        transaction,
+        &created_targets,
+    )
+    .await?;
 
     Ok(WorkspaceItem {
         id: board.id as u32,

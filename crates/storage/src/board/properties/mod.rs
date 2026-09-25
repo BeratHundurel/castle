@@ -538,6 +538,14 @@ pub async fn create_board_view(
     }
     .insert(db)
     .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        db,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::Board,
+            id: board_id,
+        }],
+    )
+    .await?;
     decode_board_view(model)
 }
 
