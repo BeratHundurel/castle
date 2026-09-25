@@ -7,15 +7,17 @@ use gpui_kit::component::{
     calendar::Date,
     date_picker::{DatePicker, DatePickerEvent, DatePickerState},
     h_flex,
-    input::{Escape as InputEscape, InputEvent, Textarea, TextareaState},
+    input::{
+        Escape as InputEscape, IndentInline, InputEvent, OutdentInline, Textarea, TextareaState,
+    },
     searchable_list::{SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, Global, InteractiveElement as _, IntoElement,
-    KeyBinding, MouseButton, ParentElement as _, Render, SharedString, Styled as _, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
+    App, AppContext as _, Context, Entity, Focusable as _, Global, InteractiveElement as _,
+    IntoElement, KeyBinding, MouseButton, ParentElement as _, Render, SharedString, Styled as _,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
     actions, div, prelude::FluentBuilder as _, px, size,
 };
 use runtime::AppRuntime;
@@ -31,7 +33,10 @@ const QUICK_CAPTURE_MIN_HEIGHT: f32 = 380.0;
 const MAX_TITLE_CHARS: usize = 80;
 const QUICK_CAPTURE_KEY_CONTEXT: &str = "QuickCapture";
 
-actions!(quick_capture, [ToggleCaptureKind]);
+actions!(
+    quick_capture,
+    [FocusNextInput, FocusPreviousInput, ToggleCaptureKind]
+);
 
 struct QuickCaptureKeyBindings;
 
@@ -134,13 +139,21 @@ impl QuickCaptureView {
                 ToggleCaptureKind,
                 Some(QUICK_CAPTURE_KEY_CONTEXT),
             )]);
+            cx.bind_keys([
+                KeyBinding::new("tab", FocusNextInput, Some(QUICK_CAPTURE_KEY_CONTEXT)),
+                KeyBinding::new(
+                    "shift-tab",
+                    FocusPreviousInput,
+                    Some(QUICK_CAPTURE_KEY_CONTEXT),
+                ),
+            ]);
         }
 
         let textarea = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(4, 10)
                 .submit_on_enter(true)
-                .placeholder("Write a note or task…")
+                .placeholder("Write a note…")
         });
         let project_select = cx.new(|cx| {
             SelectState::new(
@@ -322,12 +335,19 @@ impl QuickCaptureView {
         });
     }
 
-    fn set_capture_kind(&mut self, kind: CaptureKind, cx: &mut Context<Self>) {
+    fn set_capture_kind(&mut self, kind: CaptureKind, window: &mut Window, cx: &mut Context<Self>) {
         if self.phase == CapturePhase::Saving || self.capture_kind == kind {
             return;
         }
         self.capture_kind = kind;
         self.error = None;
+        let placeholder = match kind {
+            CaptureKind::Note => "Write a note…",
+            CaptureKind::Task => "What needs to be done?",
+        };
+        self.textarea.update(cx, |textarea, cx| {
+            textarea.set_placeholder(placeholder, window, cx);
+        });
         cx.notify();
     }
 
@@ -341,7 +361,7 @@ impl QuickCaptureView {
             return;
         }
 
-        self.set_capture_kind(kind, cx);
+        self.set_capture_kind(kind, window, cx);
         if kind == CaptureKind::Task && !self.workspace_loading {
             self.project_select
                 .update(cx, |select, cx| select.focus(window, cx));
@@ -361,6 +381,9 @@ impl QuickCaptureView {
     fn reset_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.phase = CapturePhase::Ready;
         self.capture_kind = CaptureKind::Note;
+        self.textarea.update(cx, |textarea, cx| {
+            textarea.set_placeholder("Write a note…", window, cx);
+        });
         self.selected_project_id = None;
         self.has_content = false;
         self.due_on = None;
@@ -492,10 +515,15 @@ impl QuickCaptureView {
                 h_flex()
                     .items_center()
                     .gap_1()
+                    .rounded(theme.radius)
+                    .bg(theme.secondary)
+                    .p_1()
                     .child(
                         Button::new("quick-capture-note-type")
                             .label("Note")
                             .small()
+                            .tab_stop(false)
+                            .tooltip("Switch type with Ctrl+Tab")
                             .disabled(saving)
                             .when(self.capture_kind == CaptureKind::Note, |button| {
                                 button.primary()
@@ -511,6 +539,8 @@ impl QuickCaptureView {
                         Button::new("quick-capture-task-type")
                             .label("Task")
                             .small()
+                            .tab_stop(false)
+                            .tooltip("Switch type with Ctrl+Tab")
                             .disabled(saving)
                             .when(self.capture_kind == CaptureKind::Task, |button| {
                                 button.primary()
@@ -524,17 +554,12 @@ impl QuickCaptureView {
                     ),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("Switch type · Ctrl+Tab"),
-            )
-            .child(
                 Button::new("quick-capture-close")
                     .icon(IconName::Close)
                     .ghost()
                     .xsmall()
-                    .tooltip("Close")
+                    .tab_stop(false)
+                    .tooltip("Close · Esc")
                     .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
             )
     }
@@ -542,15 +567,6 @@ impl QuickCaptureView {
     fn render_task_options(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let saving = self.phase == CapturePhase::Saving;
         let theme = cx.theme().clone();
-        let helper = self
-            .workspace_load_error
-            .clone()
-            .unwrap_or_else(|| "Inbox by default".into());
-        let helper_color = if self.workspace_load_error.is_some() {
-            theme.danger
-        } else {
-            theme.muted_foreground
-        };
         v_flex()
             .gap_2()
             .child(
@@ -587,13 +603,13 @@ impl QuickCaptureView {
                                     div()
                                         .text_xs()
                                         .text_color(theme.muted_foreground)
-                                        .child("Board"),
+                                        .child("Save to"),
                                 )
                                 .child(
                                     Select::new(&self.board_select)
                                         .id("quick-capture-board")
                                         .placeholder("Inbox")
-                                        .accessibility_label("Board")
+                                        .accessibility_label("Save to")
                                         .search_placeholder("Search boards")
                                         .menu_max_h(px(220.))
                                         .disabled(saving || self.workspace_loading)
@@ -601,14 +617,9 @@ impl QuickCaptureView {
                                         .w_full(),
                                 ),
                         ),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .items_end()
-                    .gap_2()
+                    )
                     .child(
-                        div().w(px(190.)).child(
+                        div().w(px(140.)).flex_shrink_0().child(
                             v_flex()
                                 .gap_1()
                                 .child(
@@ -625,26 +636,20 @@ impl QuickCaptureView {
                                         .small(),
                                 ),
                         ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .pb_2()
-                            .text_xs()
-                            .text_color(helper_color)
-                            .child(helper),
                     ),
             )
+            .when_some(self.workspace_load_error.clone(), |this, error| {
+                this.child(div().text_xs().text_color(theme.danger).child(error))
+            })
     }
 
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let saving = self.phase == CapturePhase::Saving;
         let error = self.error.clone();
-        let footer_message = error
-            .clone()
-            .unwrap_or_else(|| "Enter saves · Shift+Enter for a line break · Esc closes".into());
+        let footer_message = error.clone().unwrap_or_else(|| {
+            "Tab moves between fields · Shift+Tab goes back · Ctrl+Tab switches type".into()
+        });
         let save_label = match (saving, self.capture_kind) {
             (true, _) => "Saving…",
             (false, CaptureKind::Note) => "Save note",
@@ -692,8 +697,9 @@ impl QuickCaptureView {
 }
 
 impl Render for QuickCaptureView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let textarea_focused = self.textarea.read(cx).focus_handle(cx).is_focused(window);
         let textarea_label = match self.capture_kind {
             CaptureKind::Note => "Note content",
             CaptureKind::Task => "Task title and details",
@@ -719,6 +725,22 @@ impl Render for QuickCaptureView {
                 this.close(window, cx);
             }))
             .key_context(QUICK_CAPTURE_KEY_CONTEXT)
+            .on_action(cx.listener(|_, _: &FocusNextInput, window, cx| {
+                cx.stop_propagation();
+                window.focus_next(cx);
+            }))
+            .on_action(cx.listener(|_, _: &FocusPreviousInput, window, cx| {
+                cx.stop_propagation();
+                window.focus_prev(cx);
+            }))
+            .on_action(cx.listener(|_, _: &IndentInline, window, cx| {
+                cx.stop_propagation();
+                window.focus_next(cx);
+            }))
+            .on_action(cx.listener(|_, _: &OutdentInline, window, cx| {
+                cx.stop_propagation();
+                window.focus_prev(cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleCaptureKind, window, cx| {
                 let next_kind = match this.capture_kind {
                     CaptureKind::Note => CaptureKind::Task,
@@ -746,6 +768,7 @@ impl Render for QuickCaptureView {
                             .border_color(theme.border)
                             .bg(theme.background)
                             .p_2()
+                            .when(textarea_focused, |this| this.border_color(theme.ring))
                             .child(textarea),
                     ),
             )
