@@ -240,7 +240,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "board",
@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "board"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "calendar",
@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "calendar"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "castle-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "rmcp",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "command_palette"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "entity",
  "gpui-kit",
@@ -2312,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "document_editor"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dprint-plugin-json",
@@ -2535,7 +2535,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "entity"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sea-orm",
 ]
@@ -5752,7 +5752,7 @@ dependencies = [
 
 [[package]]
 name = "mermaid_renderer"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
@@ -5839,7 +5839,7 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sea-orm-migration",
  "tokio",
@@ -7513,7 +7513,7 @@ dependencies = [
 
 [[package]]
 name = "quick_capture"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
@@ -8057,7 +8057,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "gpui-kit",
  "storage",
@@ -8824,7 +8824,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "global-hotkey",
@@ -8886,7 +8886,7 @@ dependencies = [
 
 [[package]]
 name = "shell"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "board",
@@ -9312,7 +9312,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9771,7 +9771,7 @@ dependencies = [
 
 [[package]]
 name = "test_support"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "text_lines"
@@ -12102,7 +12102,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workflow"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -12114,7 +12114,7 @@ dependencies = [
 
 [[package]]
 name = "workspace"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
