@@ -9,7 +9,7 @@ Download the latest Windows release from the repository's [Releases page](https:
 - Intel or AMD PC: choose the `windows-x86_64` file.
 - Windows on ARM PC: choose the `windows-arm64` file.
 - Use the `.msi` for a normal installation or the `.exe` as a standalone app.
-- MCP agent access is optional. The MSI includes the helper, while standalone users can download the matching `Castle-MCP` executable when they want it.
+- MCP agent access is optional. The MSI offers the Castle MCP helper as an optional setup feature; standalone users can download the matching `Castle-MCP` executable when they want it.
 
 Windows may show a SmartScreen warning because the current release artifacts are not code-signed.
 

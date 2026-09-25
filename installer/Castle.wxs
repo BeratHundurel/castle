@@ -1,4 +1,7 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix
+    xmlns="http://wixtoolset.org/schemas/v4/wxs"
+    xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+>
   <Package
         Name="Castle"
         Manufacturer="Castle"
@@ -10,6 +13,9 @@
     <MajorUpgrade
             DowngradeErrorMessage="A newer version of Castle is already installed."
         />
+    <Icon Id="Castle.exe" SourceFile="$(SourceIcon)" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(SourceLicenseRtf)" />
+    <ui:WixUI Id="WixUI_FeatureTree" />
     <MediaTemplate EmbedCab="yes" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
@@ -28,6 +34,8 @@
                             Description="Private notes and kanban workspace"
                             WorkingDirectory="INSTALLFOLDER"
                             Advertise="yes"
+                            Icon="Castle.exe"
+                            IconIndex="0"
                         >
               <ShortcutProperty
                                 Key="System.AppUserModel.ID"
@@ -51,6 +59,15 @@
 
     <Feature Id="MainFeature" Title="Castle" Level="1">
       <ComponentRef Id="CastleExecutable" />
+    </Feature>
+
+    <Feature
+            Id="McpFeature"
+            Title="Castle MCP Server"
+            Description="Install the optional MCP helper for agent access. You can enable agent access later in Castle Settings."
+            Level="2"
+            AllowAbsent="yes"
+        >
       <ComponentRef Id="CastleMcpExecutable" />
     </Feature>
   </Package>

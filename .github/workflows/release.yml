@@ -21,7 +21,7 @@ concurrency:
 jobs:
   metadata:
     name: Validate release
-    runs-on: windows-2022
+    runs-on: ubuntu-slim
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -33,36 +33,46 @@ jobs:
 
       - name: Validate tag and Cargo version
         id: release
-        shell: pwsh
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
-          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            '${{ inputs.tag }}'
-          } else {
-            '${{ github.ref_name }}'
-          }
+          tag="$RELEASE_TAG"
+          if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
+            echo "Release tag '$tag' must use vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
 
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
-            throw "Release tag '$tag' must use vMAJOR.MINOR.PATCH."
-          }
-          $version = $Matches[1]
+          cargo_version="$(awk '
+            /^\[workspace\.package\]$/ { in_workspace_package = 1; next }
+            /^\[/ { in_workspace_package = 0 }
+            in_workspace_package && /^[[:space:]]*version[[:space:]]*=/ {
+              sub(/^[^"]*"/, "")
+              sub(/".*$/, "")
+              print
+              exit
+            }
+          ' Cargo.toml)"
 
-          $manifest = Get-Content Cargo.toml -Raw
-          if ($manifest -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
-            throw 'Could not read workspace.package.version from Cargo.toml.'
-          }
-          $cargoVersion = $Matches[1]
+          if [[ -z "$cargo_version" ]]; then
+            echo 'Could not read workspace.package.version from Cargo.toml.' >&2
+            exit 1
+          fi
 
-          if ($version -ne $cargoVersion) {
-            throw "Tag version '$version' does not match Cargo version '$cargoVersion'."
-          }
+          if [[ "$version" != "$cargo_version" ]]; then
+            echo "Tag version '$version' does not match Cargo version '$cargo_version'." >&2
+            exit 1
+          fi
 
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   architecture:
     name: Validate architecture
     needs: metadata
-    runs-on: windows-2022
+    runs-on: ubuntu-latest
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
@@ -82,7 +92,7 @@ jobs:
 
   build:
     name: Windows ${{ matrix.arch }}
-    needs: [metadata, architecture]
+    needs: metadata
     strategy:
       fail-fast: false
       matrix:
@@ -113,15 +123,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
+          cache-workspace-crates: true
 
-      - name: Build Castle
-        run: cargo build --locked --release --package app --bin castle --target ${{ matrix.target }}
-
-      - name: Build Castle MCP
-        run: cargo build --locked --release --package castle-mcp --bin castle-mcp --target ${{ matrix.target }}
+      - name: Build Castle and MCP
+        run: cargo build --locked --release --package app --package castle-mcp --target ${{ matrix.target }}
 
       - name: Install WiX Toolset
         run: dotnet tool install --tool-path .wix wix --version 5.0.2
+
+      - name: Install WiX UI extension
+        run: .\.wix\wix.exe extension add --global WixToolset.UI.wixext/5.0.2
 
       - name: Package executable and installer
         shell: pwsh
@@ -130,6 +141,8 @@ jobs:
           $arch = '${{ matrix.arch }}'
           $sourceExe = (Resolve-Path 'target/${{ matrix.target }}/release/castle.exe').Path
           $sourceMcpExe = (Resolve-Path 'target/${{ matrix.target }}/release/castle-mcp.exe').Path
+          $sourceIcon = (Resolve-Path 'crates/app/assets/icon/castle.ico').Path
+          $sourceLicenseRtf = (Resolve-Path 'installer/License.rtf').Path
           $dist = New-Item -ItemType Directory -Force dist
           $portableExe = Join-Path $dist "Castle-$version-windows-$arch.exe"
           $portableMcpExe = Join-Path $dist "Castle-MCP-$version-windows-$arch.exe"
@@ -138,10 +151,13 @@ jobs:
           Copy-Item -LiteralPath $sourceExe -Destination $portableExe
           Copy-Item -LiteralPath $sourceMcpExe -Destination $portableMcpExe
           .\.wix\wix.exe build installer/Castle.wxs `
+            -ext WixToolset.UI.wixext `
             -arch '${{ matrix.wix_arch }}' `
             -d "Version=$version" `
             -d "SourceExe=$sourceExe" `
             -d "SourceMcpExe=$sourceMcpExe" `
+            -d "SourceIcon=$sourceIcon" `
+            -d "SourceLicenseRtf=$sourceLicenseRtf" `
             -d 'UpgradeCode=${{ matrix.upgrade_code }}' `
             -pdbtype none `
             -o $installer
@@ -151,11 +167,12 @@ jobs:
         with:
           name: Castle-${{ needs.metadata.outputs.version }}-windows-${{ matrix.arch }}
           path: dist/*
+          compression-level: 0
           if-no-files-found: error
 
   publish:
     name: Publish GitHub release
-    needs: [metadata, build]
+    needs: [metadata, architecture, build]
     runs-on: windows-2022
     permissions:
       contents: write
