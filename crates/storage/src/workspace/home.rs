@@ -1,6 +1,8 @@
-use anyhow::Result;
-use chrono::{Local, NaiveDate};
-use sea_orm::{DbBackend, Statement};
+use anyhow::{Context as _, Result};
+use chrono::{Days, Local, NaiveDate};
+use sea_orm::{DbBackend, Statement, Value};
+
+pub const HOME_TASK_PAGE_SIZE: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceItemKind {
@@ -20,22 +22,31 @@ pub struct WorkspaceHomeItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TodayEntry {
+pub struct PlannerTask {
     pub entry_id: u32,
     pub board_id: u32,
     pub project_id: Option<u32>,
     pub title: String,
     pub board_title: String,
     pub list_title: String,
-    pub due_on: String,
-    pub labels: Vec<String>,
-    pub checklist_checked: u32,
-    pub checklist_total: u32,
+    pub due_on: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlannerTaskGroup {
+    Today,
+    Upcoming,
+    Unscheduled,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkspaceHomeState {
-    pub today: Vec<TodayEntry>,
+    pub today: Vec<PlannerTask>,
+    pub today_total: usize,
+    pub upcoming: Vec<PlannerTask>,
+    pub upcoming_total: usize,
+    pub unscheduled: Vec<PlannerTask>,
+    pub unscheduled_total: usize,
     pub pinned: Vec<WorkspaceHomeItem>,
     pub recent: Vec<WorkspaceHomeItem>,
 }
@@ -56,74 +67,194 @@ async fn load_home_on_date(
      ),
     date: NaiveDate,
 ) -> Result<WorkspaceHomeState> {
-    let today = date.format("%Y-%m-%d").to_string();
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r#"
-            SELECT e.id AS entry_id, b.id AS board_id, b.project_id, e.title,
-                   b.title AS board_title, c.title AS list_title, e.due_on,
-                   COALESCE(GROUP_CONCAT(DISTINCT bl.name), '') AS labels,
-                   COUNT(DISTINCT ci.id) AS checklist_total,
-                   COUNT(DISTINCT CASE WHEN ci.checked = 1 THEN ci.id END) AS checklist_checked
-            FROM entry e
-            JOIN card c ON c.id = e.card_id AND c.deleted_at IS NULL
-            JOIN board b ON b.id = c.board_id AND b.deleted_at IS NULL
-            LEFT JOIN project p ON p.id = b.project_id
-            LEFT JOIN entry_label el ON el.entry_id = e.id
-            LEFT JOIN board_label bl ON bl.id = el.board_label_id
-            LEFT JOIN entry_checklist_item ci ON ci.entry_id = e.id
-            WHERE e.deleted_at IS NULL
-              AND e.due_on IS NOT NULL
-              AND e.due_on <= ?
-              AND (b.project_id IS NULL OR p.deleted_at IS NULL)
-            GROUP BY e.id, b.id, b.project_id, e.title, b.title, c.title, e.due_on
-            ORDER BY e.due_on ASC, b.title ASC, c.position ASC, e.position ASC, e.id ASC
-            "#,
-            [today.into()],
-        ))
-        .await?;
+    let (today_total, upcoming_total, unscheduled_total) =
+        load_planner_task_counts(db, date).await?;
 
-    let mut due_entries = Vec::with_capacity(rows.len());
-    for row in rows {
-        let labels: String = row.try_get("", "labels")?;
-        due_entries.push(TodayEntry {
-            entry_id: row.try_get::<i64>("", "entry_id")? as u32,
-            board_id: row.try_get::<i64>("", "board_id")? as u32,
-            project_id: row
-                .try_get::<Option<i64>>("", "project_id")?
-                .map(|id| id as u32),
-            title: row.try_get("", "title")?,
-            board_title: row.try_get("", "board_title")?,
-            list_title: row.try_get("", "list_title")?,
-            due_on: row.try_get("", "due_on")?,
-            labels: labels
-                .split(',')
-                .filter(|label| !label.is_empty())
-                .map(str::to_string)
-                .collect(),
-            checklist_checked: row.try_get::<i64>("", "checklist_checked")? as u32,
-            checklist_total: row.try_get::<i64>("", "checklist_total")? as u32,
-        });
-    }
+    let today_entries =
+        load_planner_task_page_on_date(db, date, PlannerTaskGroup::Today, 0, HOME_TASK_PAGE_SIZE)
+            .await?;
+
+    let upcoming_entries = load_planner_task_page_on_date(
+        db,
+        date,
+        PlannerTaskGroup::Upcoming,
+        0,
+        HOME_TASK_PAGE_SIZE,
+    )
+    .await?;
+
+    let unscheduled_entries = load_planner_task_page_on_date(
+        db,
+        date,
+        PlannerTaskGroup::Unscheduled,
+        0,
+        HOME_TASK_PAGE_SIZE,
+    )
+    .await?;
 
     let items = load_home_items(db).await?;
     let pinned = items
         .iter()
         .filter(|item| item.is_pinned)
+        .take(5)
         .cloned()
         .collect();
+
     let recent = items
         .into_iter()
         .filter(|item| !item.is_pinned && item.last_opened_at.is_some())
-        .take(8)
+        .take(5)
         .collect();
 
     Ok(WorkspaceHomeState {
-        today: due_entries,
+        today: today_entries,
+        today_total,
+        upcoming: upcoming_entries,
+        upcoming_total,
+        unscheduled: unscheduled_entries,
+        unscheduled_total,
         pinned,
         recent,
     })
+}
+
+pub async fn load_planner_task_page(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    group: PlannerTaskGroup,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<PlannerTask>> {
+    load_planner_task_page_on_date(db, Local::now().date_naive(), group, offset, limit).await
+}
+
+async fn load_planner_task_counts(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    date: NaiveDate,
+) -> Result<(usize, usize, usize)> {
+    let today = date.format("%Y-%m-%d").to_string();
+    let week_through = date
+        .checked_add_days(Days::new(7))
+        .unwrap_or(date)
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"
+            SELECT
+                COUNT(CASE WHEN e.due_on <= ? THEN 1 END) AS today_total,
+                COUNT(CASE WHEN e.due_on > ? AND e.due_on <= ? THEN 1 END) AS upcoming_total,
+                COUNT(CASE WHEN e.due_on IS NULL THEN 1 END) AS unscheduled_total
+            FROM entry e
+            JOIN card c ON c.id = e.card_id AND c.deleted_at IS NULL
+            JOIN board b ON b.id = c.board_id AND b.deleted_at IS NULL
+            LEFT JOIN project p ON p.id = b.project_id
+            WHERE e.deleted_at IS NULL
+              AND e.archived = 0
+              AND e.completed_at IS NULL
+              AND e.cancelled_at IS NULL
+              AND c.workflow_role = 'neutral'
+              AND (b.project_id IS NULL OR p.deleted_at IS NULL)
+            "#,
+            [
+                today.clone().into(),
+                today.clone().into(),
+                week_through.into(),
+            ],
+        ))
+        .await?
+        .context("planner task counts query returned no row")?;
+    Ok((
+        row.try_get::<i64>("", "today_total")?.try_into()?,
+        row.try_get::<i64>("", "upcoming_total")?.try_into()?,
+        row.try_get::<i64>("", "unscheduled_total")?.try_into()?,
+    ))
+}
+
+async fn load_planner_task_page_on_date(
+    db: &(
+         impl sea_orm::ConnectionTrait
+         + sea_orm::TransactionTrait<Transaction = sea_orm::DatabaseTransaction>
+     ),
+    date: NaiveDate,
+    group: PlannerTaskGroup,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<PlannerTask>> {
+    let today = date.format("%Y-%m-%d").to_string();
+    let week_through = date
+        .checked_add_days(Days::new(7))
+        .unwrap_or(date)
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let (date_filter, mut values): (&str, Vec<Value>) = match group {
+        PlannerTaskGroup::Today => ("e.due_on <= ?", vec![today.into()]),
+        PlannerTaskGroup::Upcoming => (
+            "e.due_on > ? AND e.due_on <= ?",
+            vec![today.into(), week_through.into()],
+        ),
+        PlannerTaskGroup::Unscheduled => ("e.due_on IS NULL", Vec::new()),
+    };
+    values.push(
+        i64::try_from(limit)
+            .context("planner page size is out of range")?
+            .into(),
+    );
+    values.push(
+        i64::try_from(offset)
+            .context("planner page offset is out of range")?
+            .into(),
+    );
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                r#"
+                SELECT e.id AS entry_id, b.id AS board_id, b.project_id, e.title,
+                       b.title AS board_title, c.title AS list_title, e.due_on
+                FROM entry e
+                JOIN card c ON c.id = e.card_id AND c.deleted_at IS NULL
+                JOIN board b ON b.id = c.board_id AND b.deleted_at IS NULL
+                LEFT JOIN project p ON p.id = b.project_id
+                WHERE e.deleted_at IS NULL
+                  AND e.archived = 0
+                  AND e.completed_at IS NULL
+                  AND e.cancelled_at IS NULL
+                  AND c.workflow_role = 'neutral'
+                  AND (b.project_id IS NULL OR p.deleted_at IS NULL)
+                  AND ({date_filter})
+                ORDER BY CASE WHEN e.due_on IS NULL THEN 1 ELSE 0 END,
+                         e.due_on ASC, b.title ASC, c.position ASC, e.position ASC, e.id ASC
+                LIMIT ? OFFSET ?
+                "#
+            ),
+            values,
+        ))
+        .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(PlannerTask {
+                entry_id: row.try_get::<i64>("", "entry_id")? as u32,
+                board_id: row.try_get::<i64>("", "board_id")? as u32,
+                project_id: row
+                    .try_get::<Option<i64>>("", "project_id")?
+                    .map(|id| id as u32),
+                title: row.try_get("", "title")?,
+                board_title: row.try_get("", "board_title")?,
+                list_title: row.try_get("", "list_title")?,
+                due_on: row.try_get("", "due_on")?,
+            })
+        })
+        .collect()
 }
 
 async fn load_home_items(
@@ -136,8 +267,7 @@ async fn load_home_items(
         .query_all_raw(Statement::from_string(
             DbBackend::Sqlite,
             r#"
-            SELECT kind, id, title, project_id, project_name, is_pinned, last_opened_at
-            FROM (
+            WITH items AS (
                 SELECT 'note' AS kind, n.id, n.title, n.project_id, p.name AS project_name,
                        n.is_pinned, n.last_opened_at
                 FROM note n
@@ -149,8 +279,23 @@ async fn load_home_items(
                 FROM board b
                 LEFT JOIN project p ON p.id = b.project_id
                 WHERE b.deleted_at IS NULL AND (b.project_id IS NULL OR p.deleted_at IS NULL)
+            ), pinned AS (
+                SELECT * FROM items
+                WHERE is_pinned = 1
+                ORDER BY COALESCE(last_opened_at, 0) DESC, title ASC
+                LIMIT 5
+            ), recent AS (
+                SELECT * FROM items
+                WHERE is_pinned = 0 AND last_opened_at IS NOT NULL
+                ORDER BY last_opened_at DESC, title ASC
+                LIMIT 5
             )
-            WHERE is_pinned = 1 OR last_opened_at IS NOT NULL
+            SELECT kind, id, title, project_id, project_name, is_pinned, last_opened_at
+            FROM (
+                SELECT * FROM pinned
+                UNION ALL
+                SELECT * FROM recent
+            )
             ORDER BY is_pinned DESC, COALESCE(last_opened_at, 0) DESC, title ASC
             "#,
         ))

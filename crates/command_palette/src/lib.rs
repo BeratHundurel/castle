@@ -44,6 +44,7 @@ struct SearchablePaletteCommand {
 
 #[derive(Clone)]
 enum PaletteCommandKind {
+    OpenCalendar,
     OpenNote {
         note_id: u32,
         project_id: Option<u32>,
@@ -79,6 +80,7 @@ enum PaletteCommandKind {
 #[derive(Clone)]
 pub enum CommandPaletteEvent {
     Closed,
+    OpenCalendar,
     OpenNote {
         note_id: u32,
         project_id: Option<u32>,

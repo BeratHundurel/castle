@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, sync::OnceLock, time::Duration};
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use notify::Watcher;
 use storage::Store;
-use storage::note::reminders::DueReminder;
+use storage::{calendar::CalendarReminderRecord, note::reminders::DueReminder};
 use tokio::sync::Notify;
 
 use ::board::{NotificationAvailability, NotificationGateway};
@@ -33,7 +33,13 @@ pub fn install_board_gateway(cx: &mut gpui_kit::App) {
 const RETRY_DELAY: Duration = Duration::from_secs(300);
 const MAX_DEADLINE_SLEEP: Duration = Duration::from_secs(12 * 60 * 60);
 
-type ReminderPresenter = dyn Fn(&DueReminder) -> anyhow::Result<()> + Send + Sync;
+#[derive(Clone, Debug)]
+enum ReminderNotification {
+    Card(DueReminder),
+    Calendar(CalendarReminderRecord),
+}
+
+type ReminderPresenter = dyn Fn(&ReminderNotification) -> anyhow::Result<()> + Send + Sync;
 
 pub fn start(store: Store, database_path: &Path) {
     let wake = REMINDER_WAKE
@@ -100,13 +106,21 @@ async fn run_reminder_scheduler(
     loop {
         let now = Local::now();
         let today = now.date_naive().format("%Y-%m-%d").to_string();
-        if let Err(error) = deliver_due_reminders(&store, &today, present.as_ref()).await {
-            eprintln!("Failed to deliver card reminders: {error}");
+        if let Err(_error) = deliver_due_reminders(&store, &today, present.as_ref()).await {
             wait_for_wake_or_retry(&wake).await;
             continue;
         }
 
-        match storage::note::reminders::next_pending_reminder_due_on(&store).await {
+        let next_due = async {
+            let (card_due, calendar_due) = tokio::try_join!(
+                storage::note::reminders::next_pending_reminder_due_on(&store),
+                storage::calendar::next_pending_reminder_date(&store),
+            )?;
+            Ok::<_, anyhow::Error>(card_due.into_iter().chain(calendar_due).min())
+        }
+        .await;
+
+        match next_due {
             Ok(Some(due_on)) => match NaiveDate::parse_from_str(&due_on, "%Y-%m-%d") {
                 Ok(date) => {
                     let delay = duration_until_due_date(date, Local::now());
@@ -118,13 +132,13 @@ async fn run_reminder_scheduler(
                     wait_for_deadline_or_wake(&wake, Some(delay)).await;
                 }
                 Err(error) => {
-                    eprintln!("Invalid card reminder due date {due_on}: {error}");
+                    eprintln!("Invalid reminder due date {due_on}: {error}");
                     wait_for_wake_or_retry(&wake).await;
                 }
             },
             Ok(None) => wait_for_deadline_or_wake(&wake, fallback_rescan).await,
             Err(error) => {
-                eprintln!("Failed to schedule card reminders: {error}");
+                eprintln!("Failed to schedule reminders: {error}");
                 wait_for_wake_or_retry(&wake).await;
             }
         }
@@ -215,40 +229,74 @@ async fn deliver_due_reminders(
     today: &str,
     present: &ReminderPresenter,
 ) -> anyhow::Result<()> {
-    let due = storage::note::reminders::load_due_reminders(store, today).await?;
-    let mut notified = Vec::with_capacity(due.len());
-    for reminder in &due {
-        if let Err(error) = present(reminder) {
-            if !notified.is_empty() {
-                storage::note::reminders::mark_many_reminders_notified(store, &notified).await?;
+    let card_due = storage::note::reminders::load_due_reminders(store, today).await?;
+    let calendar_due = storage::calendar::load_due_reminders(store, today).await?;
+    let mut notified_cards = Vec::with_capacity(card_due.len());
+    let mut notified_calendar = Vec::with_capacity(calendar_due.len());
+
+    for reminder in card_due {
+        if let Err(error) = present(&ReminderNotification::Card(reminder.clone())) {
+            if !notified_cards.is_empty() {
+                storage::note::reminders::mark_many_reminders_notified(store, &notified_cards)
+                    .await?;
+            }
+            if !notified_calendar.is_empty() {
+                storage::calendar::mark_reminders_notified(store, &notified_calendar).await?;
             }
             return Err(error);
         }
-        notified.push((reminder.entry_id, reminder.due_on.clone()));
+        notified_cards.push((reminder.entry_id, reminder.due_on));
     }
-    if !notified.is_empty() {
-        storage::note::reminders::mark_many_reminders_notified(store, &notified).await?;
+
+    for reminder in calendar_due {
+        if let Err(error) = present(&ReminderNotification::Calendar(reminder.clone())) {
+            if !notified_cards.is_empty() {
+                storage::note::reminders::mark_many_reminders_notified(store, &notified_cards)
+                    .await?;
+            }
+            if !notified_calendar.is_empty() {
+                storage::calendar::mark_reminders_notified(store, &notified_calendar).await?;
+            }
+            return Err(error);
+        }
+        notified_calendar.push(reminder);
+    }
+
+    if !notified_cards.is_empty() {
+        storage::note::reminders::mark_many_reminders_notified(store, &notified_cards).await?;
+    }
+
+    if !notified_calendar.is_empty() {
+        storage::calendar::mark_reminders_notified(store, &notified_calendar).await?;
     }
 
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn show_system_notification(reminder: &DueReminder) -> anyhow::Result<()> {
+fn show_system_notification(reminder: &ReminderNotification) -> anyhow::Result<()> {
     ensure_notifications_available()?;
-    show_toast(
-        "Castle · Card due",
-        &reminder.title,
-        &format!(
-            "{} · {} · due {}",
-            reminder.board_title, reminder.list_title, reminder.due_on
+    match reminder {
+        ReminderNotification::Card(reminder) => show_toast(
+            "Castle · Card due",
+            &reminder.title,
+            &format!(
+                "{} · {} · due {}",
+                reminder.board_title, reminder.list_title, reminder.due_on
+            ),
+            true,
         ),
-        true,
-    )
+        ReminderNotification::Calendar(reminder) => show_toast(
+            "Castle · Calendar reminder",
+            &reminder.title,
+            &reminder.date,
+            true,
+        ),
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn show_system_notification(_: &DueReminder) -> anyhow::Result<()> {
+fn show_system_notification(_: &ReminderNotification) -> anyhow::Result<()> {
     anyhow::bail!("system notifications are not implemented for this platform")
 }
 
@@ -375,7 +423,7 @@ mod scheduler_tests {
     async fn delivery_marks_only_successfully_presented_reminders() -> Result<()> {
         let (store, today, _) = store_with_due_reminders().await?;
         let calls = AtomicUsize::new(0);
-        let presenter = move |_: &DueReminder| {
+        let presenter = move |_: &ReminderNotification| {
             let call = calls.fetch_add(1, Ordering::Relaxed);
             if call == 1 {
                 anyhow::bail!("notification service failed");
@@ -405,8 +453,12 @@ mod scheduler_tests {
         let (store, today, list_id) = store_with_due_reminders().await?;
         let wake = Arc::new(Notify::new());
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let presenter: Arc<ReminderPresenter> = Arc::new(move |reminder: &DueReminder| {
-            sender.send(reminder.title.clone())?;
+        let presenter: Arc<ReminderPresenter> = Arc::new(move |reminder: &ReminderNotification| {
+            let title = match reminder {
+                ReminderNotification::Card(reminder) => reminder.title.clone(),
+                ReminderNotification::Calendar(reminder) => reminder.title.clone(),
+            };
+            sender.send(title)?;
             Ok(())
         });
         let scheduler = tokio::spawn(run_reminder_scheduler(

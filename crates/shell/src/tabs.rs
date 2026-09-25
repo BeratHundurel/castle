@@ -3,6 +3,66 @@ use runtime::AppRuntime;
 use settings::{StoredTab, TabSession};
 
 impl AppShell {
+    fn create_calendar_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) -> OpenTabKind {
+        let runtime = cx.global::<AppRuntime>().clone();
+        let service: Arc<dyn CalendarService> = Arc::new(StorageCalendarService::new(runtime));
+        let workspace = cx.new(|cx| CalendarWorkspace::new(None, service, window, cx));
+        let view = cx.new(|cx| CalendarPage::new(workspace.clone(), CalendarRoute::Month, cx));
+        let page = view.clone();
+        cx.subscribe_in(
+            &workspace,
+            window,
+            move |this, _, event: &CalendarWorkspaceEvent, window, cx| match event {
+                CalendarWorkspaceEvent::Navigate(route) => {
+                    page.update(cx, |page, cx| page.set_route(*route, cx));
+                }
+                CalendarWorkspaceEvent::Back => {
+                    page.update(cx, |page, cx| page.set_route(CalendarRoute::Month, cx));
+                }
+                CalendarWorkspaceEvent::Board => this.open_home(window, cx),
+                CalendarWorkspaceEvent::Committed(board_id) => {
+                    for tab in &this.tabs.open_tabs {
+                        let OpenTabKind::Board {
+                            board_id: open_board_id,
+                            view,
+                            ..
+                        } = &tab.kind
+                        else {
+                            continue;
+                        };
+                        if open_board_id == board_id {
+                            view.update(cx, |board, cx| board.reload_board(*board_id, cx));
+                        }
+                    }
+                }
+                CalendarWorkspaceEvent::ReminderCommitted => this.load_home_if_active(window, cx),
+            },
+        )
+        .detach();
+        workspace.update(cx, |workspace, cx| workspace.refresh(window, cx));
+        OpenTabKind::Calendar { workspace, view }
+    }
+
+    pub(crate) fn open_workspace_calendar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_pending_board_open();
+        if let Some(index) = self.tabs.open_tabs.iter().position(|tab| {
+            matches!(
+                tab.kind,
+                OpenTabKind::Calendar { .. } | OpenTabKind::Restored(StoredTab::Calendar)
+            )
+        }) {
+            self.activate_tab(index, window, cx);
+            if let Some(OpenTabKind::Calendar { workspace, .. }) =
+                self.tabs.open_tabs.get(index).map(|tab| &tab.kind)
+            {
+                workspace.update(cx, |workspace, cx| workspace.refresh(window, cx));
+            }
+            return;
+        }
+        let kind = self.create_calendar_tab(window, cx);
+        self.replace_or_push_active(kind, "Calendar".into(), window, cx);
+    }
+
     fn active_board_view(&self, cx: &App) -> Option<Entity<BoardView>> {
         self.tabs
             .open_tabs
@@ -184,6 +244,7 @@ impl AppShell {
             .filter_map(|tab| match &tab.kind {
                 OpenTabKind::Restored(stored_tab) => Some(stored_tab.clone()),
                 OpenTabKind::Chooser => Some(StoredTab::Chooser),
+                OpenTabKind::Calendar { .. } => Some(StoredTab::Calendar),
                 OpenTabKind::Trash => Some(StoredTab::Trash),
                 OpenTabKind::Cheatsheet { .. } => Some(StoredTab::Cheatsheet),
                 OpenTabKind::Board {
@@ -271,6 +332,12 @@ impl AppShell {
                         cx.notify();
                     });
                 }
+                OpenTabKind::Calendar { .. } => {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.clear_active_item();
+                        cx.notify();
+                    });
+                }
                 OpenTabKind::Restored(_)
                 | OpenTabKind::Trash
                 | OpenTabKind::Settings { .. }
@@ -297,6 +364,7 @@ impl AppShell {
         };
         let kind = match stored_tab.clone() {
             StoredTab::Chooser => OpenTabKind::Chooser,
+            StoredTab::Calendar => self.create_calendar_tab(window, cx),
             StoredTab::Trash => OpenTabKind::Trash,
             StoredTab::Cheatsheet => OpenTabKind::Cheatsheet {
                 view: CheatsheetView::view((self.shortcuts)(cx), window, cx),
@@ -399,6 +467,7 @@ impl AppShell {
             }
             OpenTabKind::Restored(_)
             | OpenTabKind::Chooser
+            | OpenTabKind::Calendar { .. }
             | OpenTabKind::Trash
             | OpenTabKind::Settings { .. }
             | OpenTabKind::Cheatsheet { .. } => {}
@@ -409,7 +478,7 @@ impl AppShell {
         self.focus_active_tab(window, cx);
         self.persist_tab_session(cx);
         if tab_changed {
-            self.load_home_if_active(cx);
+            self.load_home_if_active(window, cx);
         }
         cx.notify();
     }
@@ -424,6 +493,7 @@ impl AppShell {
             Some(OpenTabKind::Board { navigation, .. }) => {
                 navigation.update(cx, |navigation, cx| navigation.focus_current(window, cx));
             }
+            Some(OpenTabKind::Calendar { view, .. }) => view.focus_handle(cx).focus(window, cx),
             Some(OpenTabKind::Cheatsheet { view }) => view.focus_handle(cx).focus(window, cx),
             _ => self.focus_handle.focus(window, cx),
         }
@@ -523,7 +593,7 @@ impl AppShell {
         self.focus_handle.focus(window, cx);
         self.persist_tab_session(cx);
         if was_active {
-            self.load_home_if_active(cx);
+            self.load_home_if_active(window, cx);
         }
         cx.notify();
     }
@@ -597,7 +667,7 @@ impl AppShell {
         self.sync_title_input(window, cx);
         self.focus_handle.focus(window, cx);
         self.persist_tab_session(cx);
-        self.load_home_if_active(cx);
+        self.load_home_if_active(window, cx);
         cx.notify();
     }
 
@@ -675,6 +745,7 @@ impl AppShell {
             OpenTabKind::Board { board_id, .. } => Some(WorkspaceTitleTarget::Board(*board_id)),
             OpenTabKind::Restored(_)
             | OpenTabKind::Chooser
+            | OpenTabKind::Calendar { .. }
             | OpenTabKind::Trash
             | OpenTabKind::Settings { .. }
             | OpenTabKind::Cheatsheet { .. } => None,
@@ -826,6 +897,7 @@ impl AppShell {
         self.record_item_opened(
             storage::workspace::home::WorkspaceItemKind::Board,
             board_id,
+            window,
             cx,
         );
         if let Some(pending) = self
@@ -924,6 +996,7 @@ impl AppShell {
         self.record_item_opened(
             storage::workspace::home::WorkspaceItemKind::Note,
             note_id,
+            window,
             cx,
         );
         if let Some(index) = self.tabs.open_tabs.iter().position(|tab| match &tab.kind {
@@ -1141,11 +1214,12 @@ mod restore_tests {
             assert_eq!(shell.home.data.recent[0].id, board_id);
         });
 
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
             shell.update(cx, |shell, cx| {
                 shell.record_item_opened(
                     storage::workspace::home::WorkspaceItemKind::Note,
                     opened_note_id,
+                    window,
                     cx,
                 );
             });

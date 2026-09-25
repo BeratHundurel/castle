@@ -311,6 +311,7 @@ impl AppShell {
         match &tab.kind {
             OpenTabKind::Restored(_) => div().size_full().into_any_element(),
             OpenTabKind::Chooser => self.render_chooser(cx).into_any_element(),
+            OpenTabKind::Calendar { view, .. } => view.clone().into_any_element(),
             OpenTabKind::Trash => self.render_trash(cx).into_any_element(),
             OpenTabKind::Board { navigation, .. } => navigation.clone().into_any_element(),
             OpenTabKind::Note { view, .. } => view.clone().into_any_element(),

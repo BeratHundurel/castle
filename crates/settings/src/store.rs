@@ -49,6 +49,7 @@ const MAX_AUTOMATIC_BACKUP_RETENTION: u32 = 100;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoredTab {
     Chooser,
+    Calendar,
     Trash,
     Cheatsheet,
     Board {

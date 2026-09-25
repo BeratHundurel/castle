@@ -16,6 +16,7 @@ impl CalendarWorkspace {
             let day = month + Duration::days(day_offset);
             let in_month = day.month() == month.month();
             let is_today = day == today;
+            let is_selected = self.state.selected_date == Some(day);
             let date_text = if in_month {
                 day.day().to_string()
             } else {
@@ -31,6 +32,16 @@ impl CalendarWorkspace {
             } else {
                 Vec::new()
             };
+            let day_reminders = if in_month {
+                self.state
+                    .reminders
+                    .iter()
+                    .filter(|reminder| reminder.date == day.to_string())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             day_entries.sort_by(|left, right| {
                 let rank = |entry: &CalendarEntryRecord| match calendar_entry_lifecycle(entry) {
                     EntryLifecycleState::Open => 0,
@@ -41,26 +52,108 @@ impl CalendarWorkspace {
                     .cmp(&rank(right))
                     .then_with(|| left.title.cmp(&right.title))
             });
+            let mut day_rows = Vec::new();
+            for entry in day_entries {
+                let entry_id = entry.entry_id;
+                let selected = self.state.selected_entry_id == Some(entry_id);
+                let accent = match entry.workflow_role {
+                    CalendarListRole::Neutral => theme.primary,
+                    CalendarListRole::Done => theme.success,
+                    CalendarListRole::Cancelled => theme.danger,
+                };
+
+                let label = if entry.occurrence_key.is_some() {
+                    format!("↻ {}", entry.title)
+                } else {
+                    entry.title.clone()
+                };
+
+                let can_drag = entry.occurrence_key.is_none();
+                let mut entry_view = div()
+                    .id(SharedString::from(format!(
+                        "calendar-entry-{}-{}",
+                        entry.entry_id, day
+                    )))
+                    .debug_selector(|| format!("calendar-entry-{entry_id}-{day}"))
+                    .w_full()
+                    .min_w_0()
+                    .truncate()
+                    .px_1()
+                    .py_0p5()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .bg(accent.opacity(if selected { 0.28 } else { 0.12 }))
+                    .text_xs()
+                    .text_color(accent)
+                    .hover(|this| this.bg(accent.opacity(0.24)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_calendar_entry(entry_id, window, cx);
+                    }))
+                    .child(label);
+
+                if can_drag {
+                    entry_view = entry_view.on_drag(
+                        CalendarEntryDrag {
+                            entry_id: entry.entry_id,
+                            title: entry.title.clone().into(),
+                        },
+                        |drag, _, _, cx| cx.new(|_| drag.clone()),
+                    );
+                }
+                day_rows.push(entry_view.into_any_element());
+            }
+            for reminder in day_reminders {
+                let reminder_id = reminder.id;
+                let selected = self.state.selected_reminder_id == Some(reminder_id);
+                day_rows.push(
+                    div()
+                        .id(SharedString::from(format!(
+                            "calendar-reminder-{}-{}",
+                            reminder.id, day
+                        )))
+                        .debug_selector(|| format!("calendar-reminder-{reminder_id}-{day}"))
+                        .w_full()
+                        .min_w_0()
+                        .truncate()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .bg(theme.warning.opacity(if selected { 0.3 } else { 0.14 }))
+                        .text_xs()
+                        .text_color(theme.warning)
+                        .hover(|this| this.bg(theme.warning.opacity(0.24)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.open_calendar_reminder(reminder_id, window, cx);
+                        }))
+                        .child(format!("◷ {}", reminder.title))
+                        .into_any_element(),
+                );
+            }
+            let overflow_count = day_rows.len().saturating_sub(2);
             let mut cell = v_flex()
                 .id(SharedString::from(format!("calendar-day-{day}")))
                 .flex_1()
-                .min_h(px(96.))
+                .min_h(px(72.))
                 .min_w_0()
                 .gap_1()
                 .p_2()
                 .border_1()
-                .border_color(if is_today {
+                .border_color(if is_selected {
                     theme.primary.opacity(0.82)
                 } else {
-                    theme.border.opacity(if in_month { 0.68 } else { 0.28 })
+                    theme.border.opacity(if in_month { 0.42 } else { 0.2 })
                 })
-                .bg(if is_today {
-                    theme.primary.opacity(0.07)
+                .bg(if is_selected {
+                    theme.primary.opacity(0.09)
                 } else if in_month {
                     theme.background
                 } else {
                     theme.background.opacity(0.36)
                 })
+                .hover(|this| this.bg(theme.secondary_hover.opacity(0.24)))
                 .child(
                     h_flex()
                         .items_center()
@@ -89,6 +182,9 @@ impl CalendarWorkspace {
                             )
                         }),
                 )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_calendar_day(day, window, cx);
+                }))
                 .drag_over::<CalendarEntryDrag>(|this, _, _, cx| {
                     this.border_2()
                         .border_color(cx.theme().primary)
@@ -99,63 +195,35 @@ impl CalendarWorkspace {
                         this.reschedule_calendar_entry(info.entry_id, day.to_string(), window, cx);
                     }),
                 );
-            for entry in day_entries {
-                let entry_id = entry.entry_id;
-                let selected = self.state.selected_entry_id == Some(entry_id);
-                let accent = match entry.workflow_role {
-                    CalendarListRole::Neutral => theme.primary,
-                    CalendarListRole::Done => theme.success,
-                    CalendarListRole::Cancelled => theme.danger,
-                };
-                let label = if entry.occurrence_key.is_some() {
-                    format!("↻ {}", entry.title)
-                } else {
-                    entry.title.clone()
-                };
-                let can_drag = entry.occurrence_key.is_none();
-                let mut entry_view = div()
-                    .id(SharedString::from(format!(
-                        "calendar-entry-{}-{}",
-                        entry.entry_id, day
-                    )))
-                    .debug_selector(|| format!("calendar-entry-{entry_id}-{day}"))
-                    .w_full()
-                    .px_1()
-                    .py_0p5()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .bg(accent.opacity(if selected { 0.28 } else { 0.12 }))
-                    .text_xs()
-                    .text_color(accent)
-                    .hover(|this| this.bg(accent.opacity(0.24)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_calendar_entry(entry_id, window, cx);
-                    }))
-                    .child(label);
-                if can_drag {
-                    entry_view = entry_view.on_drag(
-                        CalendarEntryDrag {
-                            entry_id: entry.entry_id,
-                            title: entry.title.clone().into(),
-                        },
-                        |drag, _, _, cx| cx.new(|_| drag.clone()),
-                    );
-                }
-                cell = cell.child(entry_view);
+
+            for row in day_rows.into_iter().take(2) {
+                cell = cell.child(row);
+            }
+
+            if overflow_count > 0 {
+                cell = cell.child(
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("+{overflow_count} more")),
+                );
             }
             cell.into_any_element()
         });
+
         let weeks = (0..6).map(|week| {
             h_flex()
                 .flex_1()
                 .min_h_0()
+                .items_stretch()
                 .children(cells.clone().skip(week * 7).take(7))
                 .into_any_element()
         });
         v_flex()
             .w_full()
             .flex_1()
-            .min_h(px(616.))
+            .min_h(px(480.))
             .gap_1()
             .child(
                 h_flex()
@@ -411,20 +479,22 @@ impl CalendarWorkspace {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(
-                        div()
-                            .debug_selector(|| "calendar-repeat-entry".into())
-                            .child(
-                                Button::new("calendar-repeat-entry")
-                                    .label("Repeat")
-                                    .outline()
-                                    .small()
-                                    .tooltip("Create a recurring schedule for this item")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_recurrence_for_entry(entry_id, window, cx);
-                                    })),
-                            ),
-                    )
+                    .when(self.is_board_calendar(), |this| {
+                        this.child(
+                            div()
+                                .debug_selector(|| "calendar-repeat-entry".into())
+                                .child(
+                                    Button::new("calendar-repeat-entry")
+                                        .label("Repeat")
+                                        .outline()
+                                        .small()
+                                        .tooltip("Create a recurring schedule for this item")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_recurrence_for_entry(entry_id, window, cx);
+                                        })),
+                                ),
+                        )
+                    })
                     .child(
                         Button::new("calendar-close-entry-details")
                             .icon(IconName::Close)
@@ -515,6 +585,14 @@ impl CalendarWorkspace {
             .occurrence_key
             .as_ref()
             .map(|_| "Recurring occurrence · edits apply to the source card");
+        let location = if self.is_board_calendar() {
+            format!("{} · {}", entry.list_title, entry.due_on)
+        } else {
+            format!(
+                "{} · {} · {}",
+                entry.board_title, entry.list_title, entry.due_on
+            )
+        };
 
         v_flex()
             .id("calendar-entry-details")
@@ -529,7 +607,7 @@ impl CalendarWorkspace {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(format!("{} · {}", entry.list_title, entry.due_on)),
+                    .child(location),
             )
             .when(!entry.description.trim().is_empty(), |this| {
                 this.child(
@@ -603,6 +681,101 @@ impl CalendarWorkspace {
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(format!("Entry #{entry_id}")),
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn render_calendar_reminder_details(
+        &self,
+        reminder: Option<&CalendarReminderRecord>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let reminder_id = reminder.map(|reminder| reminder.id);
+        v_flex()
+            .id("calendar-reminder-details")
+            .debug_selector(|| "calendar-reminder-details".into())
+            .gap_3()
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(
+                        if reminder_id.is_some() {
+                            "Reminder details"
+                        } else {
+                            "New reminder"
+                        },
+                    ))
+                    .child(
+                        Button::new("calendar-close-reminder-details")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .compact()
+                            .tooltip("Close reminder details")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_calendar_entry(cx);
+                                if this.route_narrow(CalendarRoute::Month) {
+                                    cx.emit(CalendarWorkspaceEvent::Back);
+                                }
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.muted_foreground)
+                    .child("Title"),
+            )
+            .child(Input::new(&self.state.detail_title_input).w_full())
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.muted_foreground)
+                    .child("Date"),
+            )
+            .child(
+                DatePicker::new(&self.state.detail_due_picker)
+                    .placeholder("Choose a date")
+                    .cleanable(true)
+                    .number_of_months(1)
+                    .w_full(),
+            )
+            .when_some(self.state.reminder_error.clone(), |this, error| {
+                this.child(div().text_xs().text_color(theme.danger).child(error))
+            })
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("save-calendar-reminder")
+                            .label(if self.state.saving_reminder {
+                                "Saving..."
+                            } else {
+                                "Save reminder"
+                            })
+                            .primary()
+                            .small()
+                            .disabled(self.state.saving_reminder)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_calendar_reminder(window, cx);
+                            })),
+                    )
+                    .when_some(reminder_id, |this, reminder_id| {
+                        this.child(
+                            Button::new("delete-calendar-reminder")
+                                .label("Delete")
+                                .outline()
+                                .small()
+                                .disabled(self.state.saving_reminder)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.delete_calendar_reminder(reminder_id, window, cx);
+                                })),
+                        )
+                    }),
             )
             .into_any_element()
     }

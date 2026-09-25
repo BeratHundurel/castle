@@ -1,22 +1,27 @@
 use chrono::{Local, TimeZone as _};
-use gpui_kit::StatefulInteractiveElement as _;
+use gpui_kit::Styled as _;
 use gpui_kit::component::{
-    Icon, Selectable as _, WindowExt as _,
+    Disableable as _, Icon, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariant, ButtonVariants as _},
+    calendar::{Calendar, CalendarEvent, CalendarState, Date},
     dialog::DialogButtonProps,
     input::Input,
+    popover::Popover,
     scroll::ScrollableElement as _,
 };
+use gpui_kit::{InteractiveElement as _, StatefulInteractiveElement as _};
 
 use super::*;
-use storage::workspace::home::{TodayEntry, WorkspaceHomeItem, WorkspaceItemKind};
+use storage::workspace::home::{
+    PlannerTask, PlannerTaskGroup, WorkspaceHomeItem, WorkspaceItemKind,
+};
 use storage::workspace::trash::{MoveToTrash, PurgeTrashItem, PurgedArtifacts, RestoreTrashItem};
 
 mod loading;
 mod render;
 mod trash;
 
-fn today_entry_navigation_target(entry: &TodayEntry) -> ::workspace::WorkspaceNavigationTarget {
+fn planner_task_navigation_target(entry: &PlannerTask) -> ::workspace::WorkspaceNavigationTarget {
     ::workspace::WorkspaceNavigationTarget::Board {
         board_id: entry.board_id,
         list_id: None,
@@ -116,22 +121,19 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     #[test]
-    fn today_entry_routes_through_deferred_board_navigation() {
-        let entry = TodayEntry {
+    fn planner_task_routes_through_deferred_board_navigation() {
+        let entry = PlannerTask {
             entry_id: 41,
             board_id: 7,
             project_id: Some(3),
             title: "Card".to_string(),
             board_title: "Board".to_string(),
             list_title: "List".to_string(),
-            due_on: "2026-08-27".to_string(),
-            labels: Vec::new(),
-            checklist_checked: 0,
-            checklist_total: 0,
+            due_on: Some("2026-08-27".to_string()),
         };
 
         assert_eq!(
-            today_entry_navigation_target(&entry),
+            planner_task_navigation_target(&entry),
             ::workspace::WorkspaceNavigationTarget::Board {
                 board_id: 7,
                 list_id: None,

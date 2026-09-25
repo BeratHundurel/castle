@@ -130,6 +130,7 @@ impl CommandPaletteView {
         cx: &mut Context<Self>,
     ) {
         let event = match command.kind {
+            PaletteCommandKind::OpenCalendar => CommandPaletteEvent::OpenCalendar,
             PaletteCommandKind::OpenNote {
                 note_id,
                 project_id,

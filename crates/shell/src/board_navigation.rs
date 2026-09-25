@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use board::{BoardDestination, BoardView, BoardViewEvent};
 use calendar::{
-    CalendarEntryRecord, CalendarListRecord, CalendarListRole, CalendarPage, CalendarRoute,
-    CalendarService, CalendarSnapshot, CalendarTask, CalendarWorkspace, CalendarWorkspaceEvent,
-    CreateCalendarRecurrence, EntryLifecycleState, SaveCalendarEntry,
+    CalendarEntryRecord, CalendarListRecord, CalendarListRole, CalendarPage,
+    CalendarReminderRecord, CalendarRoute, CalendarService, CalendarSnapshot, CalendarTask,
+    CalendarWorkspace, CalendarWorkspaceEvent, CreateCalendarRecurrence, EntryLifecycleState,
+    SaveCalendarEntry, SaveCalendarReminder,
 };
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use gpui_kit::base::{
@@ -29,12 +30,12 @@ struct NavigationBindings;
 impl Global for NavigationBindings {}
 
 #[derive(Clone)]
-struct StorageCalendarService {
+pub(super) struct StorageCalendarService {
     runtime: AppRuntime,
 }
 
 impl StorageCalendarService {
-    fn new(runtime: AppRuntime) -> Self {
+    pub(super) fn new(runtime: AppRuntime) -> Self {
         Self { runtime }
     }
 }
@@ -43,7 +44,7 @@ impl CalendarService for StorageCalendarService {
     fn load(
         &self,
         executor: gpui_kit::BackgroundExecutor,
-        board_id: u32,
+        board_id: Option<u32>,
         month: NaiveDate,
     ) -> CalendarTask<CalendarSnapshot> {
         let runtime = self.runtime.clone();
@@ -55,45 +56,60 @@ impl CalendarService for StorageCalendarService {
         let through = through.to_string();
         let today = Local::now().date_naive().to_string();
         runtime.spawn_store(&executor, move |store| async move {
-            let today =
-                calendar::CalendarDate::parse(&today).map_err(|error| anyhow::anyhow!(error))?;
-            let materialized =
-                storage::calendar::materialize_scheduled_recurring_tasks(&store, today).await?;
-            let workflow_report = storage::workflow::run_scheduled_workflows(
-                &store,
-                Some(i64::from(board_id)),
-                "calendar_open",
-                workflow::EventOrigin::Scheduler,
-            )
-            .await?;
-            let workflow_changed_board = workflow_report
-                .runs
-                .iter()
-                .flat_map(|run| &run.actions)
-                .any(|action| {
-                    !matches!(
-                        action,
-                        workflow::WorkflowAction::Notify { .. }
-                            | workflow::WorkflowAction::AddHistory { .. }
-                    )
-                });
-            let board_changed = materialized > 0 || workflow_changed_board;
+            let mut board_changed = false;
+            if let Some(board_id) = board_id {
+                let today = calendar::CalendarDate::parse(&today)
+                    .map_err(|error| anyhow::anyhow!(error))?;
+                let materialized =
+                    storage::calendar::materialize_scheduled_recurring_tasks(&store, today).await?;
+                let workflow_report = storage::workflow::run_scheduled_workflows(
+                    &store,
+                    Some(i64::from(board_id)),
+                    "calendar_open",
+                    workflow::EventOrigin::Scheduler,
+                )
+                .await?;
+                let workflow_changed_board = workflow_report
+                    .runs
+                    .iter()
+                    .flat_map(|run| &run.actions)
+                    .any(|action| {
+                        !matches!(
+                            action,
+                            workflow::WorkflowAction::Notify { .. }
+                                | workflow::WorkflowAction::AddHistory { .. }
+                        )
+                    });
+                board_changed = materialized > 0 || workflow_changed_board;
+            }
             let entries = storage::calendar::load_entries(
                 &store,
                 Some(&from),
                 Some(&through),
-                Some(i64::from(board_id)),
+                board_id.map(i64::from),
             );
-            let recurring = storage::calendar::list_recurring_tasks(&store, i64::from(board_id));
-            let snapshot = storage::board::load_board_snapshot(&store, board_id).await?;
-            let (entries, recurring) = tokio::try_join!(entries, recurring)?;
+            let reminders = storage::calendar::load_reminders(&store, Some(&from), Some(&through));
+            let (entries, reminders) = tokio::try_join!(entries, reminders)?;
+            let (recurring, lists) = if let Some(board_id) = board_id {
+                let recurring =
+                    storage::calendar::list_recurring_tasks(&store, i64::from(board_id));
+                let snapshot = storage::board::load_board_snapshot(&store, board_id).await?;
+                (
+                    recurring
+                        .await?
+                        .into_iter()
+                        .map(transcode)
+                        .collect::<anyhow::Result<Vec<_>>>()?,
+                    snapshot.cards.into_iter().map(calendar_list).collect(),
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
             Ok(CalendarSnapshot {
                 entries: entries.into_iter().map(calendar_entry).collect(),
-                recurring: recurring
-                    .into_iter()
-                    .map(transcode)
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-                lists: snapshot.cards.into_iter().map(calendar_list).collect(),
+                reminders: reminders.into_iter().map(calendar_reminder).collect(),
+                recurring,
+                lists,
                 board_changed,
             })
         })
@@ -200,6 +216,47 @@ impl CalendarService for StorageCalendarService {
                 .await?;
             Ok(())
         })
+    }
+
+    fn save_reminder(
+        &self,
+        executor: gpui_kit::BackgroundExecutor,
+        request: SaveCalendarReminder,
+    ) -> CalendarTask<CalendarReminderRecord> {
+        let runtime = self.runtime.clone();
+        runtime.spawn_store(&executor, move |store| async move {
+            let reminder = storage::calendar::save_reminder(
+                &store,
+                storage::calendar::CalendarReminderDraft {
+                    id: request.id,
+                    title: request.title,
+                    date: request.date,
+                },
+            )
+            .await?;
+            Ok(calendar_reminder(reminder))
+        })
+    }
+
+    fn delete_reminder(
+        &self,
+        executor: gpui_kit::BackgroundExecutor,
+        reminder_id: i64,
+    ) -> CalendarTask<()> {
+        let runtime = self.runtime.clone();
+        runtime.spawn_store(&executor, move |store| async move {
+            storage::calendar::delete_reminder(&store, reminder_id).await
+        })
+    }
+}
+
+fn calendar_reminder(
+    reminder: storage::calendar::CalendarReminderRecord,
+) -> CalendarReminderRecord {
+    CalendarReminderRecord {
+        id: reminder.id,
+        title: reminder.title,
+        date: reminder.date,
     }
 }
 
@@ -561,8 +618,8 @@ impl BoardNavigation {
                     model.clone()
                 } else {
                     let service = self.calendar_service.clone();
-                    let model =
-                        cx.new(|cx| CalendarWorkspace::new(self.board_id, service, window, cx));
+                    let model = cx
+                        .new(|cx| CalendarWorkspace::new(Some(self.board_id), service, window, cx));
                     cx.subscribe_in(&model, window, |this, _, event, window, cx| match event {
                         CalendarWorkspaceEvent::Navigate(route) => this.navigate(
                             Destination::Calendar(*route),
@@ -577,6 +634,7 @@ impl BoardNavigation {
                         CalendarWorkspaceEvent::Committed(board_id) => {
                             this.committed(*board_id, cx)
                         }
+                        CalendarWorkspaceEvent::ReminderCommitted => {}
                     })
                     .detach();
                     self.calendar = Some(model.clone());

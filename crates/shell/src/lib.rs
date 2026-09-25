@@ -2,7 +2,7 @@ mod action;
 mod action_handlers;
 mod board_integration;
 mod board_navigation;
-use board_navigation::BoardNavigation;
+use board_navigation::{BoardNavigation, StorageCalendarService};
 mod home;
 mod render;
 mod tabs;
@@ -17,6 +17,7 @@ pub(crate) use action::{CloseAllTabsAction, CloseOtherTabsAction, CloseTabAction
 use gpui_kit::component::{
     ActiveTheme, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    calendar::CalendarState,
     h_flex,
     input::{
         Escape as InputEscape, InputEvent, InputState, MoveDown as InputMoveDown,
@@ -40,6 +41,9 @@ pub use ::workspace::{
 };
 use ::workspace::{SidebarEvent, SidebarView};
 use board::{BoardTemplatePicker, BoardTemplatePickerEvent, BoardView, BoardViewEvent};
+use calendar::{
+    CalendarPage, CalendarRoute, CalendarService, CalendarWorkspace, CalendarWorkspaceEvent,
+};
 use command_palette::{CommandPaletteEvent, CommandPaletteView};
 use document_editor::{
     DEFAULT_NOTE, DocumentEditorEvent, DocumentEditorView, DocumentKind, SaveState,
@@ -51,7 +55,7 @@ use settings::{
     WorkspaceArchiveActions,
 };
 use storage::time::unix_timestamp_seconds as now_ts;
-use storage::workspace::home::WorkspaceHomeState;
+use storage::workspace::home::{PlannerTaskGroup, WorkspaceHomeState};
 use storage::workspace::trash::{TrashItem, TrashItemKind};
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH: f32 = 900.;
@@ -184,6 +188,10 @@ struct OpenTab {
 enum OpenTabKind {
     Restored(StoredTab),
     Chooser,
+    Calendar {
+        workspace: Entity<CalendarWorkspace>,
+        view: Entity<CalendarPage>,
+    },
     Trash,
     Board {
         board_id: u32,
@@ -300,6 +308,17 @@ struct HomeState {
     data: WorkspaceHomeState,
     phase: LoadPhase,
     refresh_pending: bool,
+    planner_calendars: HashMap<u32, PlannerCalendarPicker>,
+    open_planner_date_picker: Option<u32>,
+    rescheduling: bool,
+    loading_more_group: Option<PlannerTaskGroup>,
+    planner_load_generation: u64,
+    planner_action_error: Option<SharedString>,
+}
+
+struct PlannerCalendarPicker {
+    state: Entity<CalendarState>,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct TrashState {
@@ -349,9 +368,9 @@ impl AppShell {
         cx.new(|cx| Self::new(window, integration, cx))
     }
 
-    pub fn refresh_after_quick_capture(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh_after_quick_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_workspace(cx);
-        self.load_home(cx);
+        self.load_home(window, cx);
     }
 
     pub fn tray_release_state(&self, cx: &App) -> TrayReleaseState {
@@ -581,6 +600,7 @@ impl AppShell {
             window,
             |this, _, event: &CommandPaletteEvent, window, cx| match event {
                 CommandPaletteEvent::Closed => this.focus_active_tab(window, cx),
+                CommandPaletteEvent::OpenCalendar => this.open_workspace_calendar(window, cx),
                 CommandPaletteEvent::OpenNote {
                     note_id,
                     project_id,
@@ -662,6 +682,7 @@ impl AppShell {
         for stored_tab in tab_session.tabs {
             let title = match &stored_tab {
                 StoredTab::Chooser => SharedString::from("Home"),
+                StoredTab::Calendar => SharedString::from("Calendar"),
                 StoredTab::Trash => SharedString::from("Trash"),
                 StoredTab::Cheatsheet => SharedString::from("Cheatsheet"),
                 StoredTab::Board { title, .. } | StoredTab::Note { title, .. } => {
@@ -729,7 +750,7 @@ impl AppShell {
                 SidebarEvent::ImportFile => this.import_file(window, cx),
                 SidebarEvent::WidthChanged => cx.notify(),
                 SidebarEvent::WorkspaceChanged => {
-                    this.load_home(cx);
+                    this.load_home(window, cx);
                     this.load_trash(cx);
                     this.refresh_workspace(cx);
                 }
@@ -1023,6 +1044,12 @@ impl AppShell {
                 data: WorkspaceHomeState::default(),
                 phase: LoadPhase::Initial,
                 refresh_pending: false,
+                planner_calendars: HashMap::new(),
+                open_planner_date_picker: None,
+                rescheduling: false,
+                loading_more_group: None,
+                planner_load_generation: 0,
+                planner_action_error: None,
             },
             trash: TrashState {
                 items: Vec::new(),
@@ -1073,7 +1100,7 @@ impl AppShell {
             .get(active_tab_index)
             .map(|tab| &tab.kind)
         {
-            Some(OpenTabKind::Chooser) => this.load_home(cx),
+            Some(OpenTabKind::Chooser) => this.load_home(window, cx),
             Some(OpenTabKind::Trash) => this.load_trash(cx),
             _ => {}
         }

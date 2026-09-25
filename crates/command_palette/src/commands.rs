@@ -44,6 +44,12 @@ impl CommandPaletteView {
 
         commands.extend([
             PaletteCommand {
+                label: "Open calendar".into(),
+                subtitle: "Plan tasks and reminders by date".into(),
+                icon: IconName::Calendar,
+                kind: PaletteCommandKind::OpenCalendar,
+            },
+            PaletteCommand {
                 label: "New tab".into(),
                 subtitle: format!("Open an empty chooser tab ({})", shortcut("", "T")).into(),
                 icon: IconName::Plus,

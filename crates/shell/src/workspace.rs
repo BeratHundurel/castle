@@ -487,7 +487,7 @@ impl AppShell {
             }
         }
         self.refresh_workspace(cx);
-        self.load_home(cx);
+        self.load_home(window, cx);
         self.load_trash(cx);
     }
 
@@ -1337,7 +1337,7 @@ impl AppShell {
                                 });
                                 this.set_sidebar_visible(show_sidebar, cx);
                                 this.refresh_workspace(cx);
-                                this.load_home(cx);
+                                this.load_home(window, cx);
                                 this.load_trash(cx);
 
                                 let mut message = format!(

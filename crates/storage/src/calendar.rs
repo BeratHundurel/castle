@@ -56,6 +56,20 @@ pub struct RecurringTaskDraft {
     pub generation_mode: GenerationMode,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CalendarReminderRecord {
+    pub id: i64,
+    pub title: String,
+    pub date: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CalendarReminderDraft {
+    pub id: Option<i64>,
+    pub title: String,
+    pub date: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredRecurrence {
     start_on: CalendarDate,
@@ -237,6 +251,174 @@ pub async fn load_entries(
             .then_with(|| left.recurrence_series_id.cmp(&right.recurrence_series_id))
     });
     Ok(records)
+}
+
+pub async fn load_reminders(
+    db: &(impl ConnectionTrait + TransactionTrait),
+    start_on: Option<&str>,
+    end_on: Option<&str>,
+) -> Result<Vec<CalendarReminderRecord>> {
+    let start_on = parse_date(start_on, "start_on")?;
+    let end_on = parse_date(end_on, "end_on")?;
+    if let (Some(start_on), Some(end_on)) = (start_on, end_on)
+        && start_on > end_on
+    {
+        bail!("start_on must not be after end_on");
+    }
+
+    let mut sql = String::from("SELECT id, title, date FROM calendar_reminder WHERE 1 = 1");
+    let mut values = Vec::new();
+    if let Some(start_on) = start_on {
+        sql.push_str(" AND date >= ?");
+        values.push(start_on.format("%Y-%m-%d").to_string().into());
+    }
+    if let Some(end_on) = end_on {
+        sql.push_str(" AND date <= ?");
+        values.push(end_on.format("%Y-%m-%d").to_string().into());
+    }
+    sql.push_str(" ORDER BY date ASC, id ASC");
+
+    db.query_all_raw(Statement::from_sql_and_values(
+        sea_orm::DbBackend::Sqlite,
+        sql,
+        values,
+    ))
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(CalendarReminderRecord {
+            id: row.try_get("", "id")?,
+            title: row.try_get("", "title")?,
+            date: row.try_get("", "date")?,
+        })
+    })
+    .collect()
+}
+
+pub async fn save_reminder<C>(
+    store: &Store<C>,
+    draft: CalendarReminderDraft,
+) -> Result<CalendarReminderRecord>
+where
+    C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
+{
+    let title = draft.title.trim();
+    if title.is_empty() {
+        bail!("reminder title cannot be empty");
+    }
+    let date = CalendarDate::parse(draft.date.trim())?.to_string();
+    let now = unix_timestamp_seconds();
+    let id = if let Some(id) = draft.id {
+        let result = store
+            .execute_raw(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "UPDATE calendar_reminder SET title = ?, date = ?, updated_at = ? WHERE id = ?",
+                [title.into(), date.clone().into(), now.into(), id.into()],
+            ))
+            .await?;
+        if result.rows_affected() == 0 {
+            bail!("calendar reminder {id} was not found");
+        }
+        id
+    } else {
+        i64::try_from(
+            store
+                .execute_raw(Statement::from_sql_and_values(
+                    sea_orm::DbBackend::Sqlite,
+                    "INSERT INTO calendar_reminder (title, date, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    [title.into(), date.clone().into(), now.into(), now.into()],
+                ))
+                .await?
+                .last_insert_id(),
+        )
+        .context("calendar reminder ID is out of range")?
+    };
+
+    Ok(CalendarReminderRecord {
+        id,
+        title: title.to_string(),
+        date,
+    })
+}
+
+pub async fn delete_reminder<C>(store: &Store<C>, id: i64) -> Result<()>
+where
+    C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
+{
+    let result = store
+        .execute_raw(Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "DELETE FROM calendar_reminder WHERE id = ?",
+            [id.into()],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        bail!("calendar reminder {id} was not found");
+    }
+    Ok(())
+}
+
+pub async fn next_pending_reminder_date(
+    db: &(impl ConnectionTrait + TransactionTrait),
+) -> Result<Option<String>> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT MIN(date) AS date FROM calendar_reminder WHERE notified_on IS NULL OR notified_on <> date",
+        ))
+        .await?;
+    row.map(|row| row.try_get("", "date"))
+        .transpose()
+        .map(Option::flatten)
+        .map_err(Into::into)
+}
+
+pub async fn load_due_reminders<C>(
+    store: &Store<C>,
+    due_through: &str,
+) -> Result<Vec<CalendarReminderRecord>>
+where
+    C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
+{
+    store
+        .query_all_raw(Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "SELECT id, title, date FROM calendar_reminder WHERE date <= ? AND (notified_on IS NULL OR notified_on <> date) ORDER BY date, id",
+            [due_through.into()],
+        ))
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(CalendarReminderRecord {
+                id: row.try_get("", "id")?,
+                title: row.try_get("", "title")?,
+                date: row.try_get("", "date")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn mark_reminders_notified<C>(
+    store: &Store<C>,
+    reminders: &[CalendarReminderRecord],
+) -> Result<()>
+where
+    C: ConnectionTrait + TransactionTrait + Send + Sync + 'static,
+{
+    for reminder in reminders {
+        store
+            .execute_raw(Statement::from_sql_and_values(
+                sea_orm::DbBackend::Sqlite,
+                "UPDATE calendar_reminder SET notified_on = ? WHERE id = ? AND date = ?",
+                [
+                    reminder.date.clone().into(),
+                    reminder.id.into(),
+                    reminder.date.clone().into(),
+                ],
+            ))
+            .await?;
+    }
+    Ok(())
 }
 
 async fn load_recurring_rows<C>(db: &C, board_id: Option<i64>) -> Result<Vec<RecurringTaskRecord>>
@@ -538,6 +720,14 @@ where
         next_entry.id,
         &next_entry.description,
         unix_timestamp_seconds(),
+    )
+    .await?;
+    crate::workspace::links::reindex_note_workspace_links_for_targets(
+        &transaction,
+        &[crate::workspace::links::WorkspaceItemRef {
+            kind: crate::workspace::links::WorkspaceItemKind::Card,
+            id: next_entry.id,
+        }],
     )
     .await?;
     transaction.commit().await?;

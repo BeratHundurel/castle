@@ -30,6 +30,7 @@ mod m20260908_000027_list_workflow_roles;
 mod m20260908_000028_workflows;
 mod m20260908_000029_recurring_tasks;
 mod m20260909_000030_entry_lifecycle_and_schedule;
+mod m20260924_000031_calendar_reminders;
 
 pub struct Migrator;
 
@@ -67,6 +68,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260908_000028_workflows::Migration),
             Box::new(m20260908_000029_recurring_tasks::Migration),
             Box::new(m20260909_000030_entry_lifecycle_and_schedule::Migration),
+            Box::new(m20260924_000031_calendar_reminders::Migration),
         ]
     }
 }

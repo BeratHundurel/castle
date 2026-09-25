@@ -244,7 +244,7 @@ impl AppShell {
                         .retain(|candidate| candidate.kind != item.kind || candidate.id != item.id);
                     this.reload_open_boards_after_restore(item.kind, cx);
                     this.load_trash(cx);
-                    this.load_home(cx);
+                    this.load_home(window, cx);
                     this.refresh_workspace(cx);
                 }
                 Err(err) => {

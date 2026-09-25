@@ -1,5 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod icons;
+
 use anyhow::{Context as _, Result};
 #[cfg(debug_assertions)]
 use dotenvy::dotenv;
@@ -31,7 +33,7 @@ async fn main() -> Result<()> {
     }
     let start_in_tray = app::startup::starts_in_tray(arguments);
 
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application().with_assets(icons::CastleAssets);
     #[cfg(debug_assertions)]
     let _ = dotenv();
 
@@ -127,7 +129,7 @@ fn create_main_window(
         .unwrap_or_else(|| {
             WindowBounds::Windowed(Bounds::centered(None, size(px(1200.), px(768.)), cx))
         });
-    
+
     let mut shell = None;
     let window = cx.open_window(main_window_options(bounds), |window, cx| {
         let integration = ShellIntegration::new(

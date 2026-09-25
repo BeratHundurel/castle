@@ -22,6 +22,11 @@ impl CalendarPage {
             focus: cx.focus_handle(),
         }
     }
+
+    pub fn set_route(&mut self, route: CalendarRoute, cx: &mut Context<Self>) {
+        self.route = route;
+        cx.notify();
+    }
 }
 
 impl Focusable for CalendarPage {
@@ -42,9 +47,17 @@ impl Render for CalendarPage {
             .debug_selector(move || format!("calendar-page-{route:?}"))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &gpui_kit::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && this.route == CalendarRoute::Month {
+                if event.keystroke.key == "escape" {
+                    let route = this.route;
                     this.workspace.update(cx, |model, cx| {
-                        model.state.selected_entry_id = None;
+                        if route == CalendarRoute::Month {
+                            model.state.selected_entry_id = None;
+                            model.state.selected_reminder_id = None;
+                            model.state.new_reminder_date = None;
+                            model.state.selected_date = None;
+                        } else if route == CalendarRoute::Item {
+                            cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Month));
+                        }
                         cx.notify();
                     });
                 }
@@ -66,7 +79,10 @@ impl Render for CalendarPage {
                                     if !was_narrow
                                         && narrow
                                         && route == CalendarRoute::Month
-                                        && model.state.selected_entry_id.is_some()
+                                        && (model.state.selected_entry_id.is_some()
+                                            || model.state.selected_reminder_id.is_some()
+                                            || model.state.new_reminder_date.is_some()
+                                            || model.state.selected_date.is_some())
                                     {
                                         cx.defer_in(window, |_, _, cx| {
                                             cx.emit(CalendarWorkspaceEvent::Navigate(
@@ -119,6 +135,17 @@ impl CalendarWorkspace {
     fn render_header(&self, route: CalendarRoute, cx: &mut Context<Self>) -> AnyElement {
         let title = match route {
             CalendarRoute::Month => "Calendar",
+            CalendarRoute::Item
+                if self.state.selected_reminder_id.is_some()
+                    || self.state.new_reminder_date.is_some() =>
+            {
+                "Reminder details"
+            }
+            CalendarRoute::Item
+                if self.state.selected_entry_id.is_none() && self.state.selected_date.is_some() =>
+            {
+                "Day agenda"
+            }
             CalendarRoute::Item => "Item details",
             CalendarRoute::Recurring => "Recurring tasks",
         };
@@ -131,13 +158,32 @@ impl CalendarWorkspace {
             .gap_2()
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(
-                Button::new("calendar-back")
-                    .label("Board")
-                    .child(IconName::ChevronRight)
-                    .ghost()
-                    .small()
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(CalendarWorkspaceEvent::Board))),
+            .when(self.is_board_calendar(), |this| {
+                this.child(
+                    Button::new("calendar-back")
+                        .label("Board")
+                        .child(IconName::ChevronRight)
+                        .ghost()
+                        .small()
+                        .on_click(
+                            cx.listener(|_, _, _, cx| cx.emit(CalendarWorkspaceEvent::Board)),
+                        ),
+                )
+            })
+            .when(
+                route == CalendarRoute::Item && self.route_narrow(CalendarRoute::Item),
+                |this| {
+                    this.child(
+                        Button::new("calendar-back-to-month")
+                            .label("Calendar")
+                            .child(IconName::ChevronLeft)
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Month));
+                            })),
+                    )
+                },
             )
             .when(route == CalendarRoute::Recurring, |this| {
                 this.child(
@@ -203,20 +249,21 @@ impl CalendarWorkspace {
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| {
                             let today = Local::now().date_naive();
-                            this.state.month = today.with_day(1).unwrap_or(today);
-                            this.refresh(window, cx);
+                            this.select_calendar_day(today, window, cx);
                         })),
                 )
-                .child(
-                    Button::new("calendar-recurring")
-                        .label("Recurring tasks")
-                        .icon(IconName::ExternalLink)
-                        .ghost()
-                        .small()
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Recurring));
-                        })),
-                )
+                .when(self.is_board_calendar(), |this| {
+                    this.child(
+                        Button::new("calendar-recurring")
+                            .label("Recurring tasks")
+                            .icon(AssetIconName::Repeat)
+                            .ghost()
+                            .small()
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(CalendarWorkspaceEvent::Navigate(CalendarRoute::Recurring));
+                            })),
+                    )
+                })
             })
             .when(
                 route == CalendarRoute::Recurring && !self.state.recurrence_form_open,
@@ -260,7 +307,11 @@ impl CalendarWorkspace {
                     ),
             )
             .when(!self.route_narrow(CalendarRoute::Month), |this| {
-                if self.state.selected_entry_id.is_some() {
+                if self.state.selected_entry_id.is_some()
+                    || self.state.selected_reminder_id.is_some()
+                    || self.state.new_reminder_date.is_some()
+                    || self.state.selected_date.is_some()
+                {
                     this.child(self.render_inspector(false, cx))
                 } else {
                     this.child(self.render_calendar_up_next(cx))
@@ -339,6 +390,48 @@ impl CalendarWorkspace {
                 }))
                 .into_any_element()
         });
+        let reminder_rows = self.state.reminders.iter().map(|reminder| {
+            let reminder_id = reminder.id;
+            Button::new(("calendar-agenda-reminder", reminder_id as u64))
+                .accessibility_label(format!("Open {} on {}", reminder.title, reminder.date))
+                .ghost()
+                .w_full()
+                .h_auto()
+                .px_0()
+                .py_3()
+                .rounded(gpui_kit::component::button::ButtonRounded::None)
+                .border_b_1()
+                .border_color(theme.border.opacity(0.56))
+                .child(
+                    v_flex()
+                        .debug_selector(move || format!("calendar-agenda-reminder-{reminder_id}"))
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .truncate()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.warning)
+                                .child(reminder.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(reminder.date.clone()),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_calendar_reminder(reminder_id, window, cx);
+                }))
+                .into_any_element()
+        });
+        let scheduled_count = entries.len() + self.state.reminders.len();
+        let scheduled_rows = rows.chain(reminder_rows);
         v_flex()
             .debug_selector(|| "calendar-up-next".into())
             .w(px(CALENDAR_RAIL_WIDTH))
@@ -364,8 +457,8 @@ impl CalendarWorkspace {
                             .text_color(theme.muted_foreground)
                             .child(format!(
                                 "{} scheduled item{}",
-                                entries.len(),
-                                if entries.len() == 1 { "" } else { "s" }
+                                scheduled_count,
+                                if scheduled_count == 1 { "" } else { "s" }
                             )),
                     ),
             )
@@ -375,11 +468,27 @@ impl CalendarWorkspace {
                     .min_h_0()
                     .w_full()
                     .px_4()
-                    .children(rows)
+                    .children(scheduled_rows.take(5))
                     .overflow_y_scrollbar()
                     .id("calendar-up-next-scroll"),
             )
-            .when(entries.is_empty(), |this| {
+            .when(scheduled_count > 5, |this| {
+                this.child(
+                    div()
+                        .flex_shrink_0()
+                        .px_4()
+                        .py_2()
+                        .border_t_1()
+                        .border_color(theme.border.opacity(0.56))
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!(
+                            "+{} more · select a day for its full agenda",
+                            scheduled_count - 5
+                        )),
+                )
+            })
+            .when(scheduled_count == 0, |this| {
                 this.child(
                     v_flex()
                         .debug_selector(|| "calendar-upcoming-empty-guidance".into())
@@ -389,35 +498,50 @@ impl CalendarWorkspace {
                         .border_t_1()
                         .border_color(theme.border.opacity(0.72))
                         .bg(theme.muted.opacity(0.16))
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child("Bring work into the calendar"),
-                        )
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(
-                            "Set a due date on the board, or make a task return automatically.",
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
+                            if self.is_board_calendar() {
+                                "Bring work into the calendar"
+                            } else {
+                                "Add a reminder to any day"
+                            },
                         ))
-                        .child(
-                            Button::new("calendar-empty-open-recurring")
-                                .label("Set up recurring work")
-                                .outline()
-                                .small()
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(CalendarWorkspaceEvent::Navigate(
-                                        CalendarRoute::Recurring,
-                                    ));
-                                })),
-                        ),
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(
+                            if self.is_board_calendar() {
+                                "Set a due date on the board, or make a task return automatically."
+                            } else {
+                                "Select a day to see its agenda or add a personal reminder."
+                            },
+                        ))
+                        .when(self.is_board_calendar(), |this| {
+                            this.child(
+                                Button::new("calendar-empty-open-recurring")
+                                    .label("Set up recurring work")
+                                    .outline()
+                                    .small()
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(CalendarWorkspaceEvent::Navigate(
+                                            CalendarRoute::Recurring,
+                                        ));
+                                    })),
+                            )
+                        }),
                 )
             })
             .into_any_element()
     }
 
     fn render_inspector(&self, full: bool, cx: &mut Context<Self>) -> AnyElement {
-        let content = self
-            .selected_calendar_entry()
-            .map(|entry| self.render_calendar_entry_details(entry, cx));
+        let content = if let Some(entry) = self.selected_calendar_entry() {
+            Some(self.render_calendar_entry_details(entry, cx))
+        } else if let Some(reminder_id) = self.state.selected_reminder_id {
+            self.state
+                .reminders
+                .iter()
+                .find(|reminder| reminder.id == reminder_id)
+                .map(|reminder| self.render_calendar_reminder_details(Some(reminder), cx))
+        } else if self.state.new_reminder_date.is_some() {
+            Some(self.render_calendar_reminder_details(None, cx))
+        } else { self.state.selected_date.map(|date| self.render_calendar_day_agenda(date, cx)) };
         div()
             .debug_selector(|| "calendar-sidebar-scroll-owner".into())
             .h_full()
@@ -438,6 +562,189 @@ impl CalendarWorkspace {
                     .children(content)
                     .overflow_y_scrollbar()
                     .id("calendar-sidebar-scroll"),
+            )
+            .into_any_element()
+    }
+
+    fn render_calendar_day_agenda(&self, date: NaiveDate, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let date_string = date.format("%Y-%m-%d").to_string();
+        let mut entries = self
+            .state
+            .entries
+            .iter()
+            .filter(|entry| entry.due_on == date_string)
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            let rank = |entry: &CalendarEntryRecord| match calendar_entry_lifecycle(entry) {
+                EntryLifecycleState::Open => 0,
+                EntryLifecycleState::Completed => 1,
+                EntryLifecycleState::Cancelled => 2,
+            };
+            rank(left)
+                .cmp(&rank(right))
+                .then_with(|| left.title.cmp(&right.title))
+        });
+        let reminders = self
+            .state
+            .reminders
+            .iter()
+            .filter(|reminder| reminder.date == date_string)
+            .collect::<Vec<_>>();
+        let item_count = entries.len() + reminders.len();
+        let task_rows = entries.into_iter().map(|entry| {
+            let entry_id = entry.entry_id;
+            let status = calendar_entry_lifecycle(entry);
+            let status_label = calendar_entry_lifecycle_label(status);
+            let status_color = match status {
+                EntryLifecycleState::Open => theme.primary,
+                EntryLifecycleState::Completed => theme.success,
+                EntryLifecycleState::Cancelled => theme.danger,
+            };
+            Button::new(("calendar-day-entry", entry_id as u64))
+                .accessibility_label(format!("Open {} in {}", entry.title, entry.list_title))
+                .ghost()
+                .w_full()
+                .h_auto()
+                .px_2()
+                .py_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .items_start()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(entry.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(format!(
+                                            "{} · {}",
+                                            entry.board_title, entry.list_title
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(status_color)
+                                .child(status_label),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_calendar_entry(entry_id, window, cx);
+                }))
+                .into_any_element()
+        });
+        let reminder_rows = reminders.into_iter().map(|reminder| {
+            let reminder_id = reminder.id;
+            Button::new(("calendar-day-reminder", reminder_id as u64))
+                .accessibility_label(format!("Open reminder {}", reminder.title))
+                .ghost()
+                .w_full()
+                .h_auto()
+                .px_2()
+                .py_2()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_start()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .truncate()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.warning)
+                                .child(reminder.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("Reminder"),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_calendar_reminder(reminder_id, window, cx);
+                }))
+                .into_any_element()
+        });
+        v_flex()
+            .debug_selector(|| "calendar-day-agenda".into())
+            .w_full()
+            .h_full()
+            .min_h_0()
+            .gap_3()
+            .child(
+                v_flex()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(date.format("%A, %B %-d").to_string()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!(
+                                "{item_count} scheduled item{}",
+                                if item_count == 1 { "" } else { "s" }
+                            )),
+                    )
+                    .child(
+                        Button::new("calendar-day-add-reminder")
+                            .icon(IconName::Plus)
+                            .label("Add reminder")
+                            .outline()
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.create_calendar_reminder(date_string.clone(), window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .gap_1()
+                    .children(task_rows.chain(reminder_rows))
+                    .when(item_count == 0, |this| {
+                        this.child(
+                            div()
+                                .pt_2()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child("Nothing planned for this day."),
+                        )
+                    })
+                    .overflow_y_scrollbar()
+                    .id("calendar-day-agenda-scroll"),
             )
             .into_any_element()
     }

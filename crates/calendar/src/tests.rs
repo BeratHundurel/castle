@@ -4,7 +4,7 @@ use super::{
     CalendarEntryRecord, CalendarListEntry, CalendarListRecord, CalendarListRole, CalendarPage,
     CalendarRoute, CalendarService, CalendarSnapshot, CalendarTask, CalendarWorkspace,
     CalendarWorkspaceEvent, CreateCalendarRecurrence, EntryLifecycleState, RecurringTaskRecord,
-    SaveCalendarEntry,
+    SaveCalendarEntry, SaveCalendarReminder,
 };
 use chrono::NaiveDate;
 use gpui_kit::{
@@ -79,7 +79,7 @@ impl CalendarService for TestCalendarService {
     fn load(
         &self,
         executor: gpui_kit::BackgroundExecutor,
-        _: u32,
+        _: Option<u32>,
         _: NaiveDate,
     ) -> CalendarTask<CalendarSnapshot> {
         let result = self
@@ -209,6 +209,67 @@ impl CalendarService for TestCalendarService {
             });
         Self::task(executor, result)
     }
+
+    fn save_reminder(
+        &self,
+        executor: gpui_kit::BackgroundExecutor,
+        request: SaveCalendarReminder,
+    ) -> CalendarTask<super::CalendarReminderRecord> {
+        if self.fail_writes {
+            return Self::task(executor, Err(anyhow::anyhow!("service unavailable")));
+        }
+        let result = self
+            .snapshot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("calendar test service lock poisoned"))
+            .map(|mut snapshot| {
+                let id = request.id.unwrap_or_else(|| {
+                    snapshot
+                        .reminders
+                        .iter()
+                        .map(|reminder| reminder.id)
+                        .max()
+                        .unwrap_or(0)
+                        + 1
+                });
+                let reminder = super::CalendarReminderRecord {
+                    id,
+                    title: request.title,
+                    date: request.date,
+                };
+                if let Some(existing) = snapshot
+                    .reminders
+                    .iter_mut()
+                    .find(|existing| existing.id == id)
+                {
+                    *existing = reminder.clone();
+                } else {
+                    snapshot.reminders.push(reminder.clone());
+                }
+                reminder
+            });
+        Self::task(executor, result)
+    }
+
+    fn delete_reminder(
+        &self,
+        executor: gpui_kit::BackgroundExecutor,
+        reminder_id: i64,
+    ) -> CalendarTask<()> {
+        if self.fail_writes {
+            return Self::task(executor, Err(anyhow::anyhow!("service unavailable")));
+        }
+        let result = self
+            .snapshot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("calendar test service lock poisoned"))
+            .map(|mut snapshot| {
+                snapshot
+                    .reminders
+                    .retain(|reminder| reminder.id != reminder_id)
+            });
+        Self::task(executor, result)
+    }
 }
 
 #[gpui_kit::test]
@@ -219,7 +280,7 @@ fn retained_routes_do_not_share_responsive_measurement(cx: &mut TestAppContext) 
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service, window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service, window, cx));
             let month = cx.new(|cx| CalendarPage::new(model.clone(), CalendarRoute::Month, cx));
             let recurring = cx.new(|cx| CalendarPage::new(model, CalendarRoute::Recurring, cx));
             let pages = cx.new(|_| RetainedCalendarPages { month, recurring });
@@ -251,7 +312,7 @@ fn calendar_click_scroll_and_drafts(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 model.state.entries = vec![entry(42), entry(43)];
@@ -382,7 +443,7 @@ fn calendar_loading_does_not_shift_month_content(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 model.state.entries = vec![entry(42)];
@@ -425,12 +486,68 @@ fn calendar_loading_does_not_shift_month_content(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn calendar_month_truncates_event_and_reminder_titles(cx: &mut TestAppContext) {
+    let service = TestCalendarService::failing();
+    let mut short_entry = entry(42);
+    short_entry.due_on = "2026-09-12".into();
+    short_entry.title = "Short title".into();
+    let mut long_entry = entry(43);
+    long_entry.due_on = "2026-09-13".into();
+    long_entry.title =
+        "A very long calendar event title that should not wrap into the following week".into();
+    let window = cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.open_window(Default::default(), |window, cx| {
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service, window, cx));
+            model.update(cx, |model, cx| {
+                model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
+                model.state.entries = vec![short_entry, long_entry];
+                model.state.reminders = vec![super::CalendarReminderRecord {
+                    id: 44,
+                    title: "A very long calendar reminder title that should remain in its box"
+                        .into(),
+                    date: "2026-09-14".into(),
+                }];
+                cx.notify();
+            });
+            let page = cx.new(|cx| CalendarPage::new(model, CalendarRoute::Month, cx));
+            cx.new(|cx| gpui_kit::component::Root::new(page, window, cx))
+        })
+        .expect("window")
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.simulate_resize(size(px(1200.), px(600.)));
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+
+    let short_event = cx
+        .debug_bounds("calendar-entry-42-2026-09-12")
+        .expect("short calendar event");
+    let long_event = cx
+        .debug_bounds("calendar-entry-43-2026-09-13")
+        .expect("long calendar event");
+    let reminder = cx
+        .debug_bounds("calendar-reminder-44-2026-09-14")
+        .expect("long calendar reminder");
+
+    assert_eq!(
+        long_event.size.height, short_event.size.height,
+        "long event titles should stay on one line in month cells"
+    );
+    assert_eq!(
+        reminder.size.height, short_event.size.height,
+        "long reminder titles should stay on one line in month cells"
+    );
+}
+
+#[gpui_kit::test]
 fn calendar_month_owns_only_vertical_scroll_gestures(cx: &mut TestAppContext) {
     let service = TestCalendarService::failing();
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 model.state.entries = vec![entry(42)];
@@ -493,7 +610,7 @@ fn calendar_scrollbar_stays_aligned_with_its_viewport_at_bottom(cx: &mut TestApp
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 model.state.entries = vec![entry(42)];
@@ -542,7 +659,7 @@ fn calendar_header_uses_one_typographic_scale(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service, window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service, window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 cx.notify();
@@ -587,7 +704,7 @@ fn empty_calendar_month_keeps_the_grid_primary_and_guidance_in_the_sidebar(
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 cx.notify();
@@ -646,7 +763,7 @@ fn calendar_refresh_only_reports_actual_board_changes(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             workspace = Some(model.clone());
             let page = cx.new(|cx| CalendarPage::new(model, CalendarRoute::Month, cx));
             cx.new(|cx| gpui_kit::component::Root::new(page, window, cx))
@@ -695,7 +812,7 @@ fn recurrence_validation_stays_inside_the_form(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.lists = vec![CalendarListRecord {
                     id: 7,
@@ -752,7 +869,7 @@ fn recurring_view_form_scrolls_at_small_height(cx: &mut TestAppContext) {
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.recurrence_form_open = true;
                 cx.notify();
@@ -824,6 +941,7 @@ fn calendar_save_and_recurrence_complete_after_selection_changes(cx: &mut TestAp
     let second_id = 43;
     let service = TestCalendarService::in_memory(CalendarSnapshot {
         entries: vec![entry(first_id), entry(second_id)],
+        reminders: Vec::new(),
         recurring: Vec::new(),
         lists: vec![CalendarListRecord {
             id: 7,
@@ -848,7 +966,7 @@ fn calendar_save_and_recurrence_complete_after_selection_changes(cx: &mut TestAp
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.open_window(Default::default(), |window, cx| {
-            let model = cx.new(|cx| CalendarWorkspace::new(7, service.clone(), window, cx));
+            let model = cx.new(|cx| CalendarWorkspace::new(Some(7), service.clone(), window, cx));
             model.update(cx, |model, cx| {
                 model.state.month = NaiveDate::from_ymd_opt(2026, 9, 1).expect("date");
                 model.refresh(window, cx);

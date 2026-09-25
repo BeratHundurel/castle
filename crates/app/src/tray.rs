@@ -111,13 +111,20 @@ pub fn init(
     };
 
     let capture_saved: CaptureSavedHandler = Rc::new(|cx| {
-        let shell = cx
+        let main_window = cx
             .global::<TrayController>()
             .main_window
             .as_ref()
-            .and_then(|main_window| main_window.shell.upgrade());
-        if let Some(shell) = shell {
-            shell.update(cx, |shell, cx| shell.refresh_after_quick_capture(cx));
+            .map(|main_window| (main_window.handle(), main_window.shell()));
+
+        if let Some((window_handle, shell)) = main_window {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if let Some(shell) = shell.upgrade() {
+                    shell.update(cx, |shell, cx| {
+                        shell.refresh_after_quick_capture(window, cx)
+                    });
+                }
+            });
         }
     });
 
@@ -475,12 +482,14 @@ fn try_release_hidden_window(handle: AnyWindowHandle, generation: u64, cx: &mut 
     if controller.hide_generation != generation {
         return true;
     }
+
     let state = controller
         .main_window
         .as_ref()
         .and_then(|main_window| main_window.shell.upgrade())
         .map(|shell| shell.read(cx).tray_release_state(cx))
         .unwrap_or(TrayReleaseState::Ready);
+
     match state {
         TrayReleaseState::Ready => {
             if let Err(error) = handle.update(cx, |_, window, _| window.remove_window()) {
@@ -535,6 +544,7 @@ fn castle_icon() -> Result<Icon> {
     let image = image::load_from_memory(include_bytes!("../assets/icon/castle-tray.png"))
         .context("failed to decode Castle tray icon")?
         .into_rgba8();
+
     let (width, height) = image.dimensions();
 
     Icon::from_rgba(image.into_raw(), width, height).context("invalid tray icon")
