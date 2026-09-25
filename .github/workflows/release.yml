@@ -79,6 +79,23 @@ jobs:
         with:
           ref: ${{ needs.metadata.outputs.tag }}
 
+      - name: Install GPUI system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libasound2-dev \
+            libfontconfig-dev \
+            libgit2-dev \
+            libglib2.0-dev \
+            libssl-dev \
+            libva-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libzstd-dev \
+            libsqlite3-dev
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
