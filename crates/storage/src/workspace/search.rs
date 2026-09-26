@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use entity::{
     board, board::Entity as Board, card, card::Entity as Card, entry, entry::Entity as Entry, note,
@@ -17,6 +17,7 @@ const SEARCH_PREVIEW_LOOKBACK: u32 = 1200;
 const SEARCH_PREVIEW_WINDOW: u32 = SEARCH_PREVIEW_CHARS + SEARCH_PREVIEW_LOOKBACK;
 const SEARCH_ANCHOR_BODY_LIMIT: u32 = 65536;
 const SEARCH_ANCHOR_DEPTH_LIMIT: u32 = 256;
+const SEARCH_PARENT_LOOKUP_BATCH_SIZE: usize = 900;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SearchResultKind {
@@ -312,9 +313,7 @@ pub async fn search_workspace(
         });
     }
 
-    let workspace_catalog = crate::workspace::links::load_workspace_link_catalog(db)
-        .await
-        .map_err(|error| DbErr::Custom(error.to_string()))?;
+    let parent_titles = load_search_parent_titles(db, &search_rows).await?;
 
     let mut results = Vec::with_capacity(search_rows.len());
     for row in search_rows {
@@ -327,26 +326,8 @@ pub async fn search_workspace(
         };
 
         let parent_title = match &kind {
-            SearchResultKind::Card => workspace_catalog
-                .iter()
-                .find(|entry| {
-                    entry.item.kind == crate::workspace::links::WorkspaceItemKind::List
-                        && entry.item.id == row.item_id
-                })
-                .and_then(|entry| entry.board_title.clone()),
-            SearchResultKind::Entry => workspace_catalog
-                .iter()
-                .find(|entry| {
-                    entry.item.kind == crate::workspace::links::WorkspaceItemKind::Card
-                        && entry.item.id == row.item_id
-                })
-                .and_then(|entry| {
-                    entry
-                        .board_title
-                        .as_ref()
-                        .zip(entry.list_title.as_ref())
-                        .map(|(board, list)| format!("{board} / {list}"))
-                }),
+            SearchResultKind::Card => parent_titles.get(&("card", row.item_id)).cloned(),
+            SearchResultKind::Entry => parent_titles.get(&("entry", row.item_id)).cloned(),
             SearchResultKind::Note | SearchResultKind::Board => None,
         };
         results.push(SearchResult {
@@ -364,6 +345,99 @@ pub async fn search_workspace(
     }
 
     Ok(results)
+}
+
+async fn load_search_parent_titles(
+    db: &impl ConnectionTrait,
+    search_rows: &[SearchRow],
+) -> Result<HashMap<(&'static str, i64), String>, DbErr> {
+    let card_ids = search_rows
+        .iter()
+        .filter(|row| row.item_type == "card")
+        .map(|row| row.item_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let entry_ids = search_rows
+        .iter()
+        .filter(|row| row.item_type == "entry")
+        .map(|row| row.item_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let mut parent_titles = HashMap::with_capacity(card_ids.len() + entry_ids.len());
+
+    for batch in card_ids.chunks(SEARCH_PARENT_LOOKUP_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "SELECT card.id AS item_id, board.title AS board_title \
+             FROM card \
+             JOIN board ON board.id = card.board_id \
+             LEFT JOIN project ON project.id = board.project_id \
+                 AND project.archived = 0 AND project.deleted_at IS NULL \
+             WHERE card.id IN ({placeholders}) \
+                 AND card.deleted_at IS NULL \
+                 AND board.deleted_at IS NULL \
+                 AND (board.project_id IS NULL OR project.id IS NOT NULL)"
+        );
+
+        let rows = db
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                batch.iter().copied().map(Value::from),
+            ))
+            .await?;
+
+        for row in rows {
+            parent_titles.insert(
+                ("card", row.try_get("", "item_id")?),
+                row.try_get("", "board_title")?,
+            );
+        }
+    }
+
+    for batch in entry_ids.chunks(SEARCH_PARENT_LOOKUP_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql = format!(
+            "SELECT entry.id AS item_id, board.title AS board_title, card.title AS list_title \
+             FROM entry \
+             JOIN card ON card.id = entry.card_id \
+             JOIN board ON board.id = card.board_id \
+             LEFT JOIN project ON project.id = board.project_id \
+                 AND project.archived = 0 AND project.deleted_at IS NULL \
+             WHERE entry.id IN ({placeholders}) \
+                 AND entry.deleted_at IS NULL \
+                 AND card.deleted_at IS NULL \
+                 AND board.deleted_at IS NULL \
+                 AND (board.project_id IS NULL OR project.id IS NOT NULL)"
+        );
+
+        let rows = db
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                batch.iter().copied().map(Value::from),
+            ))
+            .await?;
+
+        for row in rows {
+            let item_id = row.try_get("", "item_id")?;
+            let board_title: String = row.try_get("", "board_title")?;
+            let list_title: String = row.try_get("", "list_title")?;
+            parent_titles.insert(("entry", item_id), format!("{board_title} / {list_title}"));
+        }
+    }
+
+    Ok(parent_titles)
 }
 
 fn preview_anchor_terms(match_query: &str) -> Vec<String> {
@@ -1838,6 +1912,42 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn note_and_board_search_results_skip_parent_lookup() -> Result<()> {
+        let result_row = |item_type: &str, item_id: i64, title: &str| {
+            BTreeMap::from([
+                ("item_type".to_string(), Value::from(item_type)),
+                ("item_id".to_string(), Value::from(item_id)),
+                ("open_id".to_string(), Value::from(item_id)),
+                ("project_id".to_string(), Value::from(Option::<i64>::None)),
+                ("title".to_string(), Value::from(title)),
+                ("highlighted_title".to_string(), Value::from(title)),
+                ("snippet".to_string(), Value::from("matched text")),
+                ("preview".to_string(), Value::from("matched text")),
+                ("match_start".to_string(), Value::from(Option::<i64>::None)),
+                ("match_end".to_string(), Value::from(Option::<i64>::None)),
+            ])
+        };
+        let db = MockDatabase::new(DbBackend::Sqlite)
+            .append_query_results([vec![
+                result_row("note", 1, "Note title"),
+                result_row("board", 2, "Board title"),
+            ]])
+            .into_connection();
+
+        let results = search_workspace(&db, "match", 20).await?;
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.parent_title.is_none()));
+        assert_eq!(
+            db.into_transaction_log().len(),
+            1,
+            "note and board results should only issue the search query"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn anchor_terms_derive_from_match_query() {
         assert_eq!(
@@ -1917,6 +2027,93 @@ mod tests {
             plain_preview.contains("first root fix"),
             "preview should cover the late co-occurrence region, preview starts with: {}",
             plain_preview.chars().take(200).collect::<String>()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "single-thread performance regression; run with --ignored --exact --test-threads=1"]
+    async fn note_search_skips_unrelated_workspace_catalog() -> Result<()> {
+        use std::time::Instant;
+
+        const UNRELATED_NOTE_COUNT: usize = 1_024;
+        const TITLE_PADDING_BYTES: usize = 128;
+        const BASELINE_ELAPSED_MICROS: u128 = 6_212;
+        const BASELINE_ALLOCATED_BYTES: usize = 554_997;
+        const BASELINE_PEAK_GROWTH_BYTES: usize = 305_077;
+
+        let db = Database::connect("sqlite::memory:").await?;
+        Migrator::up(&db, None).await?;
+        let project = project::ActiveModel {
+            name: Set("Search baseline".to_string()),
+            archived: Set(false),
+            position: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        note::ActiveModel {
+            id: Set(1),
+            title: Set("Unique signalneedle target".to_string()),
+            project_id: Set(Some(project.id)),
+            file_path: Set(None),
+            file_managed_by_app: Set(false),
+            cached_content: Set(String::new()),
+            file_missing_since: Set(None),
+            created_at: Set(1),
+            updated_at: Set(1),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await?;
+        let padding = "x".repeat(TITLE_PADDING_BYTES);
+        for index in 0..UNRELATED_NOTE_COUNT {
+            note::ActiveModel {
+                title: Set(format!("Unrelated note {index} {padding}")),
+                project_id: Set(Some(project.id)),
+                file_path: Set(None),
+                file_managed_by_app: Set(false),
+                cached_content: Set(String::new()),
+                file_missing_since: Set(None),
+                created_at: Set(index as i64 + 2),
+                updated_at: Set(index as i64 + 2),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await?;
+        }
+        rebuild_search_index(&db).await?;
+
+        let started = Instant::now();
+        let allocation = test_alloc::start_measurement();
+        let results = search_workspace(&db, "signalneedle", 20).await?;
+        let allocation = allocation.finish();
+        let elapsed = started.elapsed();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Unique signalneedle target");
+        assert!(
+            allocation.allocated_bytes < BASELINE_ALLOCATED_BYTES,
+            "note search allocated {} bytes, expected less than the catalog-loading baseline of {BASELINE_ALLOCATED_BYTES}",
+            allocation.allocated_bytes,
+        );
+        assert!(
+            allocation.peak_growth_bytes < BASELINE_PEAK_GROWTH_BYTES,
+            "note search peak heap growth was {} bytes, expected less than the catalog-loading baseline of {BASELINE_PEAK_GROWTH_BYTES}",
+            allocation.peak_growth_bytes,
+        );
+        assert!(
+            elapsed.as_micros() < BASELINE_ELAPSED_MICROS,
+            "note search took {} µs, expected less than the catalog-loading baseline of {BASELINE_ELAPSED_MICROS} µs",
+            elapsed.as_micros(),
+        );
+        eprintln!(
+            "PERF note_search unrelated_notes={UNRELATED_NOTE_COUNT} title_bytes={} hits={} baseline_elapsed_micros={BASELINE_ELAPSED_MICROS} elapsed_micros={} baseline_allocated_bytes={BASELINE_ALLOCATED_BYTES} allocated_bytes={} baseline_peak_heap_growth_bytes={BASELINE_PEAK_GROWTH_BYTES} peak_heap_growth_bytes={}",
+            UNRELATED_NOTE_COUNT * TITLE_PADDING_BYTES,
+            results.len(),
+            elapsed.as_micros(),
+            allocation.allocated_bytes,
+            allocation.peak_growth_bytes,
         );
         Ok(())
     }
