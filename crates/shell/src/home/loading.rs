@@ -282,15 +282,17 @@ impl AppShell {
                 match result {
                     Ok(tasks) => {
                         for task in &tasks {
-                            if !this.home.planner_calendars.contains_key(&task.entry_id) {
-                                let picker = Self::new_planner_calendar_picker(
-                                    task.entry_id,
-                                    task.due_on.as_deref(),
-                                    window,
-                                    cx,
-                                );
-                                this.home.planner_calendars.insert(task.entry_id, picker);
-                            }
+                            this.home
+                                .planner_calendars
+                                .entry(task.entry_id)
+                                .or_insert_with(|| {
+                                    Self::new_planner_calendar_picker(
+                                        task.entry_id,
+                                        task.due_on.as_deref(),
+                                        window,
+                                        cx,
+                                    )
+                                });
                         }
                         match group {
                             PlannerTaskGroup::Today => this.home.data.today.extend(tasks),
