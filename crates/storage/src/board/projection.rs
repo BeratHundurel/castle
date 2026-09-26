@@ -63,6 +63,40 @@ pub trait BoardViewEntry {
     fn view_related_note_count(&self) -> usize;
 }
 
+impl<T: BoardViewEntry + ?Sized> BoardViewEntry for &T {
+    fn view_id(&self) -> i64 {
+        (**self).view_id()
+    }
+
+    fn view_position(&self) -> i32 {
+        (**self).view_position()
+    }
+
+    fn view_due_on(&self) -> Option<&str> {
+        (**self).view_due_on()
+    }
+
+    fn view_has_labels(&self) -> bool {
+        (**self).view_has_labels()
+    }
+
+    fn view_has_any_label(&self, label_ids: &[i64]) -> bool {
+        (**self).view_has_any_label(label_ids)
+    }
+
+    fn view_has_no_labels(&self, label_ids: &[i64]) -> bool {
+        (**self).view_has_no_labels(label_ids)
+    }
+
+    fn view_label_sort_key(&self) -> String {
+        (**self).view_label_sort_key()
+    }
+
+    fn view_related_note_count(&self) -> usize {
+        (**self).view_related_note_count()
+    }
+}
+
 impl BoardViewEntry for BoardCardRecord {
     fn view_id(&self) -> i64 {
         i64::from(self.id)
@@ -356,7 +390,7 @@ pub fn compare_entries_for_view(
     })
 }
 
-fn sort_entries_for_view<T: BoardViewEntry>(
+pub fn sort_entries_for_view<T: BoardViewEntry>(
     entries: &mut [T],
     sort: &crate::board::properties::ViewSort,
     values: &HashMap<(i64, i64), PropertyValue>,
@@ -366,6 +400,7 @@ fn sort_entries_for_view<T: BoardViewEntry>(
         .iter()
         .map(|entry| sort_value(entry, &sort.property, values, definitions))
         .collect::<Vec<_>>();
+
     let mut ordered_indices = (0..entries.len()).collect::<Vec<_>>();
     ordered_indices.sort_by(|left_index, right_index| {
         let left = &entries[*left_index];
@@ -379,11 +414,13 @@ fn sort_entries_for_view<T: BoardViewEntry>(
             (left.view_position(), left.view_id()).cmp(&(right.view_position(), right.view_id()))
         })
     });
+
     let mut destinations = vec![0usize; entries.len()];
     for (destination, source) in ordered_indices.into_iter().enumerate() {
         destinations[source] = destination;
     }
     drop(sort_values);
+
     for source in 0..entries.len() {
         while destinations[source] != source {
             let destination = destinations[source];
@@ -847,6 +884,44 @@ mod tests {
             .sum::<usize>();
         eprintln!("entries={ENTRY_COUNT} label_sort_key_calls={key_generation_calls}");
         assert_eq!(key_generation_calls, ENTRY_COUNT);
+    }
+
+    #[test]
+    fn board_ui_sort_precomputes_label_keys_once_per_entry() {
+        const ENTRY_COUNT: usize = 4_096;
+        let values = HashMap::new();
+        let definitions = [];
+        let sort = ViewSort {
+            property: PropertyKey::Labels,
+            direction: SortDirection::Ascending,
+        };
+        let mut comparator_sorted_entries = large_label_entry_set(ENTRY_COUNT);
+        comparator_sorted_entries.sort_by(|left, right| {
+            compare_entries_for_view(left, right, &sort, &values, &definitions)
+        });
+        let comparator_key_generation_calls = comparator_sorted_entries
+            .iter()
+            .map(|entry| entry.label_sort_key_calls.get())
+            .sum::<usize>();
+
+        let ui_entry_storage = large_label_entry_set(ENTRY_COUNT);
+        let mut ui_sorted_entries = ui_entry_storage.iter().collect::<Vec<_>>();
+        sort_entries_for_view(&mut ui_sorted_entries, &sort, &values, &definitions);
+        let ui_key_generation_calls = ui_entry_storage
+            .iter()
+            .map(|entry| entry.label_sort_key_calls.get())
+            .sum::<usize>();
+        let ui_sorted_entry_ids = ui_sorted_entries
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ui_sorted_entry_ids, entry_ids(&comparator_sorted_entries));
+        assert_eq!(ui_key_generation_calls, ENTRY_COUNT);
+        assert!(comparator_key_generation_calls > ui_key_generation_calls);
+        eprintln!(
+            "board_ui_label_sort entries={ENTRY_COUNT} comparator_baseline_key_calls={comparator_key_generation_calls} precomputed_key_calls={ui_key_generation_calls}"
+        );
     }
 
     #[test]

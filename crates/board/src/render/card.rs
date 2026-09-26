@@ -29,6 +29,7 @@ impl BoardView {
         let card_id = card.id;
         let card_drag_info =
             CardDragInfo::new(card_id, board_id, card.title.clone(), card.entries.len());
+
         let cards_are_filterable =
             self.filters.is_active() || self.properties.active_view_config.sort.is_some();
 
@@ -39,9 +40,13 @@ impl BoardView {
             .filter(|entry| self.entry_matches_filters(entry))
             .collect::<Vec<_>>();
 
-        if self.properties.active_view_config.sort.is_some() {
-            matching_entries
-                .sort_by(|left, right| self.compare_entries_for_active_sort(left, right));
+        if let Some(sort) = self.properties.active_view_config.sort.as_ref() {
+            storage::board::projection::sort_entries_for_view(
+                &mut matching_entries,
+                sort,
+                &self.properties.values,
+                &self.properties.data.definitions,
+            );
         }
 
         for entry in matching_entries {
